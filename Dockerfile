@@ -32,21 +32,24 @@ FROM debian:trixie-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --uid 10001 --home-dir /data --shell /usr/sbin/nologin cloudit \
-    && mkdir -p /data \
-    && chown cloudit:cloudit /data
+    && mkdir -p /data
 COPY --from=server /usr/local/bin/cloudit-server /usr/local/bin/cloudit-server
 COPY --from=web /src/apps/web/build /app/web
+COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
+# The container starts as root: the entrypoint chowns DATA_DIR to PUID:PGID and then
+# drops privileges with setpriv (util-linux), so the server never runs as root.
 ENV BIND_ADDR=0.0.0.0 \
     PORT=8080 \
     DATA_DIR=/data \
     WEB_DIR=/app/web \
-    LOG_FORMAT=json
-USER cloudit
+    LOG_FORMAT=json \
+    PUID=10001 \
+    PGID=10001 \
+    HOME=/data
 WORKDIR /data
 VOLUME ["/data"]
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ["cloudit-server", "healthcheck"]
-ENTRYPOINT ["cloudit-server"]
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

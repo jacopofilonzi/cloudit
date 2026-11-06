@@ -14,13 +14,13 @@ health checks and serves a placeholder web page. Nothing syncs yet; don't use it
 
 ```sh
 cp .env.example .env        # optional: adjust settings
-mkdir data
-sudo chown 10001:10001 data # the container runs as the non-root user 10001
 docker compose up -d --build
 curl http://localhost:8080/health
 ```
 
-Then open <http://localhost:8080>. Data lives in `./data` (mounted at `/data`).
+Then open <http://localhost:8080>. Data lives in `./data` (mounted at `/data`). The container
+starts as root only to give `./data` to the runtime user (`PUID`/`PGID`, default `10001`), then
+drops privileges; set `PUID`/`PGID` in `.env` to your own `id -u`/`id -g` to own the files yourself.
 
 ## Development
 

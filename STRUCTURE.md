@@ -24,6 +24,7 @@ repo/
 ├── Cargo.toml            Cargo workspace (edition 2024, shared version, clippy lints)
 ├── package.json          pnpm workspace root (lint/format tooling, `packageManager`)
 ├── Dockerfile            stages: web (node, pnpm build) → server (rust, release build) → runtime (debian trixie-slim)
+├── docker/entrypoint.sh  runs as root: chowns DATA_DIR to PUID:PGID, then setpriv → cloudit-server
 ├── docker-compose.yml    single instance, `./data:/data`, port 8080
 ├── .env.example          every supported env var, documented; `.env` is git-ignored
 └── Makefile              dev commands (run `make help`)
@@ -98,6 +99,7 @@ Read once at startup (`config/mod.rs`); empty values count as unset. Documented 
 | `LOG_LEVEL` | `info` | Log level, used when `RUST_LOG` is unset |
 | `RUST_LOG` | unset | Full tracing filter; wins over `LOG_LEVEL` |
 | `LOG_FORMAT` | `pretty` | `pretty` or `json` (Docker: `json`) |
+| `PUID` / `PGID` | `10001` | Docker only, read by the entrypoint (not the server): user/group the server runs as and owner of `DATA_DIR` |
 
 ## Frontend
 

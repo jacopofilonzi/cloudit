@@ -218,7 +218,9 @@ and align this project's copies with it:
   comes from `TS_RS_EXPORT_DIR` in `.cargo/config.toml`.
 - The server binary also serves as the container probe (`cloudit-server healthcheck`), so the
   runtime image needs no curl.
-- The Docker image runs as uid 10001: a host-mounted `./data` must be writable by it.
+- The Docker image starts as root on purpose: `docker/entrypoint.sh` chowns `DATA_DIR` to
+  `PUID:PGID` (default 10001) and drops privileges with `setpriv`. Don't add `USER` to the
+  Dockerfile; the server itself never runs as root.
 - The web app is an SPA (`ssr = false`, adapter-static `fallback: 'index.html'`); in production the
   Rust server serves `WEB_DIR` and falls back to `index.html`, while unknown `/api/*` paths answer a
   JSON `not_found`.
