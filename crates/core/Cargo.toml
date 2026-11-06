@@ -1,0 +1,15 @@
+[package]
+name = "cloudit-core"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+ts-rs.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,7 @@
+# ts-rs writes the generated TypeScript bindings here when the `export_bindings_*`
+# tests run (`make types`). Relative to the repo root.
+[env]
+TS_RS_EXPORT_DIR = { value = "packages/api-types/src/generated", relative = true }
+# u64/i64 become `number` in TS: JSON.parse yields numbers, and the values we
+# expose (sizes, timestamps) stay below 2^53.
+TS_RS_LARGE_INT = "number"
