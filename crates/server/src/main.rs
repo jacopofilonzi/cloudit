@@ -5,11 +5,16 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use cloudit_server::config::Config;
 use cloudit_server::routes::{AppState, router};
-use cloudit_server::{logging, shutdown};
+use cloudit_server::{healthcheck, logging, shutdown};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let config = Config::from_env().context("reading configuration")?;
+
+    if std::env::args().nth(1).as_deref() == Some("healthcheck") {
+        return healthcheck::run(&config);
+    }
+
     logging::init(&config)?;
 
     tracing::info!(

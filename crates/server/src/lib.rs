@@ -8,9 +8,11 @@
 //! - [`routes`]: the axum router (health probes, `/api/v1`, SPA static files).
 //! - [`logging`]: tracing subscriber setup (`pretty` or `json`).
 //! - [`shutdown`]: graceful-shutdown signal (the only OS-specific code).
+//! - [`healthcheck`]: `cloudit-server healthcheck` probe for the Docker `HEALTHCHECK`.
 
 pub mod config;
 pub mod errors;
+pub mod healthcheck;
 pub mod logging;
 pub mod routes;
 pub mod shutdown;
