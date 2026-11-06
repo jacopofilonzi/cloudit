@@ -21,6 +21,7 @@
 pub mod chunk;
 pub mod error;
 pub mod hash;
+pub mod manifest;
 pub mod path;
 pub mod protocol;
 
