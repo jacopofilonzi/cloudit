@@ -1,6 +1,7 @@
 {
   "name": "@cloudit/ui",
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "description": "Shared Svelte 5 components, Tailwind 4 theme and EN/IT i18n, consumed as source by Vite.",
