@@ -5,6 +5,7 @@
 //!
 //! A chunk is identified by [`crate::hash::ChunkHash`], the SHA-256 of its uncompressed bytes.
 
+pub mod chunker;
 pub mod codec;
 
 /// Minimum chunk size in bytes (64 KiB). Only the last chunk of a file can be smaller.
