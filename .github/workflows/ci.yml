@@ -1,0 +1,50 @@
+name: CI
+
+# Checks and tests only: no artifacts are built or published here (see release.yml).
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: make check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Version comes from `packageManager` in package.json.
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: GNU make (Windows)
+        if: runner.os == 'Windows'
+        run: choco install make --no-progress -y
+
+      - run: pnpm install --frozen-lockfile
+
+      # pwsh on Windows, so the Makefile recipes are exercised under cmd.exe too.
+      - name: make check
+        shell: ${{ runner.os == 'Windows' && 'pwsh' || 'bash' }}
+        run: make check
