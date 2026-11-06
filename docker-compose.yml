@@ -1,0 +1,14 @@
+# Single-instance deployment: SQLite and filesystem storage under ./data.
+# (The HA setup with PostgreSQL, S3-compatible storage and Redis comes later.)
+services:
+  cloudit:
+    build: .
+    image: cloudit:local
+    restart: unless-stopped
+    ports:
+      - '8080:8080'
+    volumes:
+      - ./data:/data
+    env_file:
+      - path: .env
+        required: false
