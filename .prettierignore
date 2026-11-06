@@ -1,0 +1,18 @@
+# Lockfiles and generated code
+pnpm-lock.yaml
+Cargo.lock
+packages/api-types/src/generated/
+
+# Build outputs and caches
+target/
+node_modules/
+.svelte-kit/
+build/
+dist/
+data/
+
+# Formatted by other tools or written by hand
+*.rs
+*.md
+Makefile
+apps/web/static/

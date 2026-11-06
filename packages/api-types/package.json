@@ -1,0 +1,10 @@
+{
+  "name": "@cloudit/api-types",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "TypeScript API models generated from the Rust types (ts-rs). Do not hand-write models here.",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}
