@@ -1,0 +1,89 @@
+/*
+ * Shared theme for every cloudit UI (web and desktop).
+ * Import it after `@import 'tailwindcss';` in the app's global CSS.
+ *
+ * Colours are semantic tokens (`bg-surface`, `text-muted`, `border-border`…); markup
+ * never uses raw colours. Light values live in `:root`, dark values in the
+ * `prefers-color-scheme: dark` block; `@theme inline` maps them to Tailwind utilities.
+ *
+ * PLACEHOLDER VALUES: the palette, layout and components have not been designed yet.
+ * They are deliberately neutral (greys) and will be replaced by the user-approved
+ * mockup (milestone 5). Keep the token names; change only the values then.
+ */
+
+/* Scan this package's components for class names. */
+@source './lib';
+
+:root {
+  color-scheme: light dark;
+  --cl-surface: oklch(0.99 0 0);
+  --cl-surface-alt: oklch(0.96 0 0);
+  --cl-text: oklch(0.22 0 0);
+  --cl-muted: oklch(0.5 0 0);
+  --cl-border: oklch(0.88 0 0);
+  --cl-primary: oklch(0.35 0 0);
+  --cl-primary-hover: oklch(0.25 0 0);
+  --cl-on-primary: oklch(0.99 0 0);
+  --cl-danger: oklch(0.56 0.2 25);
+  --cl-danger-hover: oklch(0.5 0.2 25);
+  --cl-on-danger: oklch(0.99 0 0);
+  --cl-success: oklch(0.6 0.15 150);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --cl-surface: oklch(0.19 0 0);
+    --cl-surface-alt: oklch(0.24 0 0);
+    --cl-text: oklch(0.94 0 0);
+    --cl-muted: oklch(0.7 0 0);
+    --cl-border: oklch(0.34 0 0);
+    --cl-primary: oklch(0.85 0 0);
+    --cl-primary-hover: oklch(0.93 0 0);
+    --cl-on-primary: oklch(0.18 0 0);
+    --cl-danger: oklch(0.66 0.19 25);
+    --cl-danger-hover: oklch(0.72 0.17 25);
+    --cl-on-danger: oklch(0.18 0 0);
+    --cl-success: oklch(0.72 0.15 150);
+  }
+}
+
+@theme inline {
+  --color-surface: var(--cl-surface);
+  --color-surface-alt: var(--cl-surface-alt);
+  --color-text: var(--cl-text);
+  --color-muted: var(--cl-muted);
+  --color-border: var(--cl-border);
+  --color-primary: var(--cl-primary);
+  --color-primary-hover: var(--cl-primary-hover);
+  --color-on-primary: var(--cl-on-primary);
+  --color-danger: var(--cl-danger);
+  --color-danger-hover: var(--cl-danger-hover);
+  --color-on-danger: var(--cl-on-danger);
+  --color-success: var(--cl-success);
+}
+
+@layer base {
+  body {
+    @apply bg-surface text-text antialiased;
+  }
+}
+
+@utility card {
+  @apply rounded-lg border border-border bg-surface-alt p-4 shadow-sm;
+}
+
+@utility btn {
+  @apply inline-flex cursor-pointer items-center justify-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+@utility btn-primary {
+  @apply border-transparent bg-primary text-on-primary hover:bg-primary-hover;
+}
+
+@utility btn-secondary {
+  @apply border-border bg-surface text-text hover:bg-surface-alt;
+}
+
+@utility btn-danger {
+  @apply border-transparent bg-danger text-on-danger hover:bg-danger-hover;
+}
