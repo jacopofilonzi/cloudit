@@ -6,9 +6,12 @@ use std::collections::BTreeMap;
 
 use axum::http::StatusCode;
 use cloudit_core::chunk::chunker::chunk_slice;
-use cloudit_core::chunk::codec::encode_chunk;
+use cloudit_core::chunk::codec::{decode_chunk, encode_chunk};
 use cloudit_core::hash::ChunkHash;
-use cloudit_core::manifest::{ChunkRef, Manifest, ManifestEntry, Timestamp};
+use cloudit_core::manifest::{
+    ChunkRef, DEFAULT_MAX_MANIFEST_BYTES, EntryKind, Manifest, ManifestEntry, Timestamp,
+    decode_manifest,
+};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -201,6 +204,58 @@ impl<'a> SyncClient<'a> {
         let resp = self.commit(&manifest, parent, "normal").await;
         resp.assert(StatusCode::CREATED);
         resp.body["snapshot"]["id"].as_str().unwrap().to_owned()
+    }
+
+    /// Downloads a snapshot the way a client restores it: the stored manifest, then
+    /// every chunk through its download transfer, decoded and verified.
+    pub async fn download(&self, snapshot: &str) -> Tree {
+        let raw = self
+            .app
+            .get_bytes(&format!("/api/v1/snapshots/{snapshot}/manifest"), &self.who)
+            .await;
+        raw.assert(StatusCode::OK);
+        let (manifest, hash) = decode_manifest(&raw.body, DEFAULT_MAX_MANIFEST_BYTES).unwrap();
+        assert_eq!(raw.headers["etag"], format!("\"{hash}\""));
+        let hashes: Vec<String> = manifest
+            .chunk_hashes()
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        let resp = self
+            .app
+            .post(
+                &self.url("/chunks/download"),
+                &self.who,
+                json!({ "hashes": hashes }),
+            )
+            .await;
+        resp.assert(StatusCode::OK);
+        assert_eq!(resp.body["missing"], json!([]));
+        let mut chunks = BTreeMap::new();
+        for item in resp.body["chunks"].as_array().unwrap() {
+            let hash: ChunkHash = item["hash"].as_str().unwrap().parse().unwrap();
+            let url = item["download"]["url"].as_str().unwrap();
+            let stored = self.app.get_bytes(local_path(url), &self.who).await;
+            stored.assert(StatusCode::OK);
+            chunks.insert(hash, decode_chunk(&stored.body, &hash).unwrap());
+        }
+        let mut tree = Tree::default();
+        for entry in manifest.entries {
+            let item = match entry.kind {
+                EntryKind::Dir => Item::Dir { mtime: entry.mtime },
+                EntryKind::File => Item::File {
+                    data: entry
+                        .chunks
+                        .iter()
+                        .flat_map(|c| chunks[&c.hash].iter().copied())
+                        .collect(),
+                    mtime: entry.mtime,
+                    executable: entry.executable,
+                },
+            };
+            tree.0.insert(entry.path, item);
+        }
+        tree
     }
 
     /// Check + upload; the number of chunks uploaded.

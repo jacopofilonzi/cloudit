@@ -1,31 +1,37 @@
 //! `/api/v1/folders/{id}/snapshots` and `/api/v1/snapshots/{id}*`: commits, conflicts
-//! and their resolution. Session or device token; reading needs viewer, everything
+//! and their resolution, history, manifests, pin and label, restores. Session or device token; reading needs viewer, everything
 //! that writes editor (`scopes::access`).
 
 use std::collections::BTreeMap;
 
+use anyhow::Context as _;
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::rejection::{BytesRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::response::{IntoResponse as _, Response};
 use cloudit_core::hash::ChunkHash;
 use cloudit_core::manifest::{EntryKind, Manifest};
-use cloudit_core::protocol::{CommitResponse, ScopeRole, SnapshotInfo, SnapshotKind};
+use cloudit_core::protocol::{
+    CommitResponse, Patch, RestoreSnapshotRequest, ScopeRole, SnapshotInfo, SnapshotKind,
+    SnapshotList, UpdateSnapshotRequest,
+};
 use futures::{StreamExt as _, TryStreamExt as _};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use super::extract::{body_bytes, parse_id};
+use super::extract::{ApiJson, body_bytes, optional_json, parse_id};
 use crate::auth::extractors::AnyUser;
 use crate::db::entities::{folders as folder_entity, scopes, snapshots as snapshot_entity};
 use crate::errors::ApiError;
 use crate::scopes::access::{FolderAccess, SnapshotAccess};
 use crate::state::AppState;
 use crate::sync::chunks::{self, Adopted};
-use crate::sync::snapshots::{self, NewSnapshot};
+use crate::sync::snapshots::{self, ListFilter, NewSnapshot};
 use crate::sync::{manifests, usage};
 use crate::time::{rfc3339, rfc3339_opt};
+use crate::validate;
 
 /// Most hashes listed in a `chunk_missing` error.
 const MAX_LISTED: usize = 1000;
@@ -276,4 +282,184 @@ pub async fn resolve(
         .ok_or(ApiError::NotFound)?;
     let head = current_head(&state, snapshot.folder_id).await?;
     Ok(Json(snapshot_info(&snapshot, head)?))
+}
+
+/// Default and maximum page size of the history.
+const DEFAULT_LIMIT: u64 = 50;
+const MAX_LIMIT: u64 = 200;
+/// Longest label, in characters.
+const MAX_LABEL_CHARS: usize = 100;
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ListParams {
+    /// The last id of the previous page.
+    cursor: Option<String>,
+    limit: Option<u64>,
+    kind: Option<SnapshotKind>,
+    /// `true`: only conflicts not resolved yet.
+    unresolved: Option<bool>,
+}
+
+/// `GET /folders/{id}/snapshots?cursor=&limit=&kind=&unresolved=` (viewer): newest
+/// first; `next_cursor` continues with older ones.
+pub async fn list(
+    State(state): State<AppState>,
+    me: AnyUser,
+    Path(id): Path<String>,
+    params: Result<Query<ListParams>, QueryRejection>,
+) -> Result<Json<SnapshotList>, ApiError> {
+    let access = FolderAccess::load(&state.db, me.user.id, parse_id(&id)?).await?;
+    let Query(params) = params.map_err(|r| ApiError::BadRequest(r.body_text()))?;
+    let limit = params.limit.unwrap_or(DEFAULT_LIMIT);
+    if !(1..=MAX_LIMIT).contains(&limit) {
+        return Err(ApiError::validation("limit", format!("1 to {MAX_LIMIT}")));
+    }
+    let before = params
+        .cursor
+        .as_deref()
+        .map(str::parse::<Uuid>)
+        .transpose()
+        .map_err(|_| ApiError::validation("cursor", "not a snapshot id"))?;
+    let filter = ListFilter {
+        before,
+        kind: params.kind,
+        unresolved: params.unresolved.unwrap_or(false),
+    };
+    let mut page = snapshots::list(&state.db, access.folder.id, filter, limit + 1).await?;
+    let more = page.len() as u64 > limit;
+    page.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+    let head = access.folder.head_snapshot_id;
+    Ok(Json(SnapshotList {
+        next_cursor: if more {
+            page.last().map(|s| s.id.to_string())
+        } else {
+            None
+        },
+        snapshots: page
+            .iter()
+            .map(|s| snapshot_info(s, head))
+            .collect::<anyhow::Result<_>>()?,
+    }))
+}
+
+/// Answer format of the manifest download.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManifestFormat {
+    /// The stored bytes (zstd canonical JSON), for clients.
+    #[default]
+    Stored,
+    /// The canonical JSON, for the web UI.
+    Json,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestParams {
+    format: Option<ManifestFormat>,
+}
+
+/// `GET /snapshots/{id}/manifest[?format=json]` (viewer): the stored manifest bytes
+/// (`application/octet-stream`), or the canonical JSON. `ETag` = the quoted manifest
+/// hash; `If-None-Match` with it → 304.
+pub async fn manifest(
+    State(state): State<AppState>,
+    me: AnyUser,
+    Path(id): Path<String>,
+    params: Result<Query<ManifestParams>, QueryRejection>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let access = SnapshotAccess::load(&state.db, me.user.id, parse_id(&id)?).await?;
+    let Query(params) = params.map_err(|r| ApiError::BadRequest(r.body_text()))?;
+    let hash = snapshots::manifest_hash(&access.snapshot)?;
+    let etag = format!("\"{hash}\"");
+    let cache = [
+        (header::ETAG, etag.clone()),
+        (header::CACHE_CONTROL, "private, no-cache".to_owned()),
+    ];
+    let matches = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.split(',').any(|t| t.trim() == etag || t.trim() == "*"));
+    if matches {
+        return Ok((StatusCode::NOT_MODIFIED, cache).into_response());
+    }
+    let scope = access.snapshot.scope_id;
+    match params.format.unwrap_or_default() {
+        ManifestFormat::Stored => {
+            let stored = manifests::stored_bytes(&state, scope, &hash).await?;
+            Ok((
+                cache,
+                [(header::CONTENT_TYPE, "application/octet-stream")],
+                stored,
+            )
+                .into_response())
+        }
+        ManifestFormat::Json => {
+            let manifest = manifests::load(&state, scope, &hash).await?;
+            let json = manifest.canonical_json().context("encoding a manifest")?;
+            Ok((cache, [(header::CONTENT_TYPE, "application/json")], json).into_response())
+        }
+    }
+}
+
+/// `PATCH /snapshots/{id} {pinned?, label?}` (editor).
+pub async fn update(
+    State(state): State<AppState>,
+    me: AnyUser,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<UpdateSnapshotRequest>,
+) -> Result<Json<SnapshotInfo>, ApiError> {
+    let access = SnapshotAccess::load(&state.db, me.user.id, parse_id(&id)?).await?;
+    access.require(ScopeRole::Editor)?;
+    let label = match body.label {
+        Patch::Missing => None,
+        Patch::Null => Some(None),
+        Patch::Value(raw) if raw.trim().is_empty() => Some(None),
+        Patch::Value(raw) => Some(Some(validate::text(&raw, "label", MAX_LABEL_CHARS)?)),
+    };
+    snapshots::update(&state.db, access.snapshot.id, body.pinned, label).await?;
+    let snapshot = snapshots::find(&state.db, access.snapshot.id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let head = current_head(&state, snapshot.folder_id).await?;
+    Ok(Json(snapshot_info(&snapshot, head)?))
+}
+
+/// `POST /snapshots/{id}/restore {expected_head?}` (editor) → 201: a `restore`
+/// snapshot with the same content becomes the head. With `expected_head`, `conflict`
+/// if the head is another one. Restoring a conflict snapshot resolves it ("keep
+/// local").
+pub async fn restore(
+    State(state): State<AppState>,
+    me: AnyUser,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Result<(StatusCode, Json<SnapshotInfo>), ApiError> {
+    let access = SnapshotAccess::load(&state.db, me.user.id, parse_id(&id)?).await?;
+    access.require(ScopeRole::Editor)?;
+    let body: RestoreSnapshotRequest = optional_json(&body)?;
+    let head = access.folder.folder.head_snapshot_id;
+    if let Some(expected) = body.expected_head {
+        let expected = expected
+            .parse::<Uuid>()
+            .map_err(|_| ApiError::validation("expected_head", "not a snapshot id"))?;
+        if head != Some(expected) {
+            return Err(ApiError::Conflict { head });
+        }
+    }
+    let snapshot =
+        snapshots::restore(&state.db, &access.snapshot, head, me.user.id, me.device_id).await?;
+    tracing::info!(
+        user_id = %me.user.id,
+        folder_id = %snapshot.folder_id,
+        snapshot_id = %snapshot.id,
+        restored_from = %access.snapshot.id,
+        "snapshot restored"
+    );
+    Ok((
+        StatusCode::CREATED,
+        Json(snapshot_info(&snapshot, Some(snapshot.id))?),
+    ))
 }

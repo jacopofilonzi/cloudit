@@ -1,5 +1,5 @@
 //! The `snapshots` and `snapshot_chunks` tables: commits (with the conditional head
-//! update), conflicts, folder summaries.
+//! update), conflicts, history, pin and label, restores, folder summaries.
 //!
 //! A commit is one transaction: insert the snapshot (the first statement is a write,
 //! see the `db` conventions), insert its distinct chunk hashes in batches, then, for a
@@ -7,17 +7,18 @@
 //! deleted_at IS NULL AND head_snapshot_id = parent` (`IS NULL` without a parent). No
 //! row updated → rollback and `conflict` with the current head, so of two clients
 //! committing on the same parent exactly one wins, whatever the timing or instance.
-//! `conflict` snapshots never touch the head.
+//! `conflict` snapshots never touch the head. A restore is the same with a copy of an
+//! older snapshot (its `snapshot_chunks` copied with one `INSERT … SELECT`).
 
 use std::collections::HashMap;
 
 use anyhow::Context as _;
 use cloudit_core::hash::{ChunkHash, ManifestHash};
 use cloudit_core::protocol::SnapshotKind;
-use sea_orm::sea_query::Expr;
+use sea_orm::sea_query::{Expr, ExprTrait as _, Query};
 use sea_orm::{
     ActiveValue::Set, ColumnTrait as _, ConnectionTrait, DatabaseConnection, EntityTrait as _,
-    QueryFilter as _, QuerySelect as _, TransactionTrait as _,
+    QueryFilter as _, QueryOrder as _, QuerySelect as _, TransactionTrait as _,
 };
 use uuid::Uuid;
 
@@ -206,4 +207,121 @@ pub async fn folder_sync(
         out.entry(folder).or_default().unresolved_conflicts = u64::try_from(count).unwrap_or(0);
     }
     Ok(out)
+}
+
+/// Filters of [`list`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ListFilter {
+    /// Only snapshots older than this one (the previous page's last id).
+    pub before: Option<Uuid>,
+    pub kind: Option<SnapshotKind>,
+    /// Only conflicts not resolved yet.
+    pub unresolved: bool,
+}
+
+/// A folder's snapshots, newest first (UUID v7 ids are time-ordered), at most `limit`.
+pub async fn list(
+    db: &impl ConnectionTrait,
+    folder: Uuid,
+    filter: ListFilter,
+    limit: u64,
+) -> anyhow::Result<Vec<snapshots::Model>> {
+    let mut query = snapshots::Entity::find().filter(snapshots::Column::FolderId.eq(folder));
+    if let Some(before) = filter.before {
+        query = query.filter(snapshots::Column::Id.lt(before));
+    }
+    if let Some(kind) = filter.kind {
+        query = query.filter(snapshots::Column::Kind.eq(kind.as_str()));
+    }
+    if filter.unresolved {
+        query = query
+            .filter(snapshots::Column::Kind.eq(SnapshotKind::Conflict.as_str()))
+            .filter(snapshots::Column::ConflictResolvedAt.is_null());
+    }
+    query
+        .order_by_desc(snapshots::Column::Id)
+        .limit(limit)
+        .all(db)
+        .await
+        .context("listing snapshots")
+}
+
+/// Sets `pinned` and/or `label` (`Some(None)` clears it).
+pub async fn update(
+    db: &impl ConnectionTrait,
+    id: Uuid,
+    pinned: Option<bool>,
+    label: Option<Option<String>>,
+) -> anyhow::Result<()> {
+    if pinned.is_none() && label.is_none() {
+        return Ok(());
+    }
+    let mut update = snapshots::Entity::update_many().filter(snapshots::Column::Id.eq(id));
+    if let Some(pinned) = pinned {
+        update = update.col_expr(snapshots::Column::Pinned, Expr::value(pinned));
+    }
+    if let Some(label) = label {
+        update = update.col_expr(snapshots::Column::Label, Expr::value(label));
+    }
+    update.exec(db).await.context("updating a snapshot")?;
+    Ok(())
+}
+
+/// Makes a copy of `source` (same manifest and chunks) the folder's head, on top of
+/// `head` (the head the caller read): kind `restore`, `restored_from` = the source. A
+/// conflict source is marked resolved in the same transaction ("keep local").
+/// `conflict` if the head is no longer `head`.
+pub async fn restore(
+    db: &DatabaseConnection,
+    source: &snapshots::Model,
+    head: Option<Uuid>,
+    author: Uuid,
+    device: Option<Uuid>,
+) -> Result<snapshots::Model, ApiError> {
+    let new = NewSnapshot {
+        folder: source.folder_id,
+        scope: source.scope_id,
+        parent: head,
+        kind: SnapshotKind::Restore,
+        manifest_hash: manifest_hash(source)?,
+        file_count: u64::try_from(source.file_count).unwrap_or(0),
+        logical_size: u64::try_from(source.logical_size).unwrap_or(0),
+        author,
+        device,
+        restored_from: Some(source.id),
+    };
+    let tx = db.begin().await.context("starting a transaction")?;
+    let snapshot = snapshots::Entity::insert(model(&new)?)
+        .exec_with_returning(&tx)
+        .await
+        .context("inserting a restore snapshot")?;
+    let copy = Query::select()
+        .expr(Expr::value(snapshot.id))
+        .column(snapshot_chunks::Column::ScopeId)
+        .column(snapshot_chunks::Column::Hash)
+        .from(snapshot_chunks::Entity)
+        .and_where(Expr::col(snapshot_chunks::Column::SnapshotId).eq(source.id))
+        .to_owned();
+    let insert = Query::insert()
+        .into_table(snapshot_chunks::Entity)
+        .columns([
+            snapshot_chunks::Column::SnapshotId,
+            snapshot_chunks::Column::ScopeId,
+            snapshot_chunks::Column::Hash,
+        ])
+        .select_from(copy)
+        .context("building the chunk copy")?
+        .to_owned();
+    tx.execute(&insert)
+        .await
+        .context("copying snapshot chunks")?;
+    if source.kind() == SnapshotKind::Conflict {
+        resolve(&tx, source.id).await?;
+    }
+    if !move_head(&tx, new.folder, head, snapshot.id).await? {
+        tx.rollback().await.context("rolling back")?;
+        return Err(head_moved(db, new.folder).await);
+    }
+    tx.commit().await.context("committing a restore")?;
+    Ok(snapshot)
 }

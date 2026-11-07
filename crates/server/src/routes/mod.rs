@@ -146,9 +146,16 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/folders/{id}/snapshots",
-            post(snapshots::commit).layer(DefaultBodyLimit::max(MAX_MANIFEST_BODY)),
+            get(snapshots::list)
+                .post(snapshots::commit)
+                .layer(DefaultBodyLimit::max(MAX_MANIFEST_BODY)),
         )
-        .route("/snapshots/{id}", get(snapshots::get))
+        .route(
+            "/snapshots/{id}",
+            get(snapshots::get).patch(snapshots::update),
+        )
+        .route("/snapshots/{id}/manifest", get(snapshots::manifest))
+        .route("/snapshots/{id}/restore", post(snapshots::restore))
         .route("/snapshots/{id}/resolve", post(snapshots::resolve))
         .route("/trash", get(trash::list))
         .layer(axum::middleware::from_fn_with_state(

@@ -5,6 +5,7 @@ mod chunks;
 mod devices;
 mod fake_idp;
 mod folders;
+mod history;
 mod me;
 mod oauth;
 mod onboarding;
