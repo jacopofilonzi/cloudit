@@ -3,7 +3,7 @@
 //! - [`model`]: the types and the JSON schema;
 //! - [`codec`]: canonical JSON, hashing and zstd compression;
 //! - [`validate`]: the rules every stored manifest satisfies;
-//! - [`diff`]: comparing two manifests and chunk-set helpers.
+//! - [`mod@diff`]: comparing two manifests and chunk-set helpers.
 //!
 //! A manifest is immutable and content-addressed by its [`crate::hash::ManifestHash`].
 
