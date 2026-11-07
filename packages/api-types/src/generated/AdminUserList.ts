@@ -2,10 +2,11 @@
 import type { AdminUser } from "./AdminUser";
 
 /**
- * `GET /api/v1/admin/users?limit=&offset=` (oldest first; limit 1..=200, default 50).
+ * `GET /api/v1/admin/users?limit=&offset=&approval_status=` (oldest first; limit
+ * 1..=200, default 50; `approval_status` filters).
  */
 export type AdminUserList = { users: Array<AdminUser>, 
 /**
- * Number of accounts in total.
+ * Number of accounts matching the filter.
  */
 total: number, };

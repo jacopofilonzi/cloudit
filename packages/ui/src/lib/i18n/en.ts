@@ -49,6 +49,9 @@ export const en = {
   'error.onboarding_expired': 'This sign-up has expired. Sign in again.',
   'error.last_login_method':
     'This is your last way to sign in: set a password or link another account first.',
+  'error.account_pending':
+    'Your account is waiting for approval by an administrator. Try again later.',
+  'error.account_rejected': 'This account has been rejected by an administrator.',
   'error.network': 'Cannot reach the server.',
   'error.unknown': 'Unexpected error.'
 } as const;

@@ -13,7 +13,7 @@
 //! Apple is not offered: its client secret is a short-lived signed JWT, which needs key
 //! management of its own (future work).
 
-use cloudit_core::protocol::{ProviderKind, ProviderPreset, ProviderProtocol};
+use cloudit_core::protocol::{NewAccounts, ProviderKind, ProviderPreset, ProviderProtocol};
 
 /// Scopes of OIDC presets.
 const OIDC_SCOPES: &str = "openid email profile";
@@ -162,6 +162,7 @@ impl Preset {
             tenant_required: self.tenant_required,
             default_scopes: self.default_scopes.to_owned(),
             supports_groups: self.supports_groups,
+            new_accounts: NewAccounts::default(),
         }
     }
 }

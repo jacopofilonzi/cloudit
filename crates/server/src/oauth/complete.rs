@@ -50,6 +50,13 @@ pub enum Outcome {
     Onboarding { token: Secret },
 }
 
+/// `true` if `identity` gets admin from `provider`'s groups (OIDC providers only).
+#[must_use]
+pub fn admin_by_groups(provider: &Provider, identity: &ExternalIdentity) -> bool {
+    provider.protocol() == ProviderProtocol::Oidc
+        && identity.admin_from_groups(&provider.fields.admin_groups)
+}
+
 /// Recomputes `admin_from_groups` after a sign-in through `provider` (OIDC only).
 pub async fn apply_groups(
     state: &AppState,

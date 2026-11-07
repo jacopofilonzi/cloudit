@@ -6,7 +6,7 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::Response;
-use cloudit_core::protocol::{SetupRequest, SetupStatus};
+use cloudit_core::protocol::{ApprovalStatus, SetupRequest, SetupStatus};
 use sea_orm::TransactionTrait as _;
 
 use super::auth::signed_in;
@@ -60,6 +60,9 @@ pub async fn complete(
             display_name,
             password_hash: Some(password_hash),
             admin: true,
+            // The first admin is always approved.
+            approval: ApprovalStatus::Approved,
+            signup_source: None,
         },
     )
     .await?;

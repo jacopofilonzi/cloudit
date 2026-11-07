@@ -21,6 +21,8 @@ pub struct Model {
     pub groups_claim: Option<String>,
     pub admin_groups: String,
     pub allowed_groups: String,
+    /// `auto` or `approval` (`NewAccounts`).
+    pub new_accounts: String,
     pub enabled: bool,
     pub position: i32,
     pub created_at: DateTimeUtc,

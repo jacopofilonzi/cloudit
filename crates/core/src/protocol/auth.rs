@@ -19,6 +19,94 @@ pub enum RegistrationMode {
     Closed,
 }
 
+/// Whether accounts created through a sign-up path (password registration, or a sign-in
+/// provider) are active immediately. Accounts created with a valid invite are always
+/// active (the invite is an admin's approval).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub enum NewAccounts {
+    /// Active immediately.
+    Auto,
+    /// Created pending: the account can't sign in until an admin approves it
+    /// (default).
+    #[default]
+    Approval,
+}
+
+impl NewAccounts {
+    /// The stored and serialized name.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Approval => "approval",
+        }
+    }
+
+    /// Parses [`NewAccounts::as_str`].
+    #[must_use]
+    pub fn parse(name: &str) -> Option<Self> {
+        [Self::Auto, Self::Approval]
+            .into_iter()
+            .find(|v| v.as_str() == name)
+    }
+}
+
+/// Admin approval state of an account.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub enum ApprovalStatus {
+    /// Can sign in (accounts created before approvals existed, the first admin,
+    /// invited accounts, and accounts approved automatically or by an admin).
+    Approved,
+    /// Waiting for an admin: can't sign in yet (`account_pending`).
+    Pending,
+    /// Refused or banned by an admin: can't sign in by any method
+    /// (`account_rejected`); kept, never deleted.
+    Rejected,
+}
+
+impl ApprovalStatus {
+    pub const ALL: [Self; 3] = [Self::Approved, Self::Pending, Self::Rejected];
+
+    /// The stored and serialized name.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Approved => "approved",
+            Self::Pending => "pending",
+            Self::Rejected => "rejected",
+        }
+    }
+
+    /// Parses [`ApprovalStatus::as_str`].
+    #[must_use]
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|v| v.as_str() == name)
+    }
+}
+
+/// HTTP 202 answer of `POST /api/v1/auth/register` and
+/// `POST /api/v1/auth/onboarding/create` when the new account waits for an admin's
+/// approval: no session is created. (An active account gets 201 with its
+/// `UserProfile` and a session cookie instead.)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct SignupPending {
+    /// Always `pending`.
+    pub status: ApprovalStatus,
+}
+
+impl Default for SignupPending {
+    fn default() -> Self {
+        Self {
+            status: ApprovalStatus::Pending,
+        }
+    }
+}
+
 /// A sign-in provider shown on the login page: enabled, not deleted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
@@ -37,6 +125,9 @@ pub struct AuthProvider {
 pub struct AuthConfig {
     pub setup_required: bool,
     pub registration_mode: RegistrationMode,
+    /// A password registration without an invite creates a pending account (the
+    /// `password_new_accounts` setting is `approval`).
+    pub password_requires_approval: bool,
     /// In display order.
     pub providers: Vec<AuthProvider>,
 }
@@ -112,6 +203,29 @@ mod tests {
         assert_eq!(
             serde_json::to_value(RegistrationMode::Closed).unwrap(),
             serde_json::json!("closed")
+        );
+    }
+
+    #[test]
+    fn approval_names_match_serde() {
+        for status in ApprovalStatus::ALL {
+            assert_eq!(
+                serde_json::to_value(status).unwrap(),
+                serde_json::json!(status.as_str())
+            );
+            assert_eq!(ApprovalStatus::parse(status.as_str()), Some(status));
+        }
+        for policy in [NewAccounts::Auto, NewAccounts::Approval] {
+            assert_eq!(
+                serde_json::to_value(policy).unwrap(),
+                serde_json::json!(policy.as_str())
+            );
+            assert_eq!(NewAccounts::parse(policy.as_str()), Some(policy));
+        }
+        assert_eq!(NewAccounts::default(), NewAccounts::Approval);
+        assert_eq!(
+            serde_json::to_value(SignupPending::default()).unwrap(),
+            serde_json::json!({ "status": "pending" })
         );
     }
 

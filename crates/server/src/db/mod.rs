@@ -27,7 +27,9 @@
 //! - Secrets are stored as SHA-256 hex in `*_hash` columns (`auth::tokens`), passwords as
 //!   argon2id PHC strings; the setup token is the one plaintext secret (`setup_state`).
 //! - Booleans are `boolean()` (SQLite stores 0/1); nullable timestamps mark state
-//!   changes (`used_at`, `revoked_at`, `disabled_at`) instead of status columns.
+//!   changes (`used_at`, `revoked_at`, `disabled_at`) instead of status columns. The
+//!   exception is an enumerated state that moves back and forth (`users.approval_status`,
+//!   lowercase text); text enums are always stored as their API names.
 //! - A transaction that writes starts with a write: on SQLite a transaction that read
 //!   first can't take the write lock while another connection writes, and fails with
 //!   `SQLITE_BUSY` instead of waiting for the busy timeout.

@@ -155,7 +155,7 @@ async fn concurrent_demotions_keep_one_admin() {
             .filter(|r| r.status == StatusCode::OK)
             .count();
         assert_eq!(ok, 1, "round {round}: {ra:?} {rb:?}");
-        let (users, _) = crate::accounts::users::list(&app.state.db, 10, 0)
+        let (users, _) = crate::accounts::users::list(&app.state.db, None, 10, 0)
             .await
             .unwrap();
         assert_eq!(users.iter().filter(|u| u.is_admin()).count(), 1);
@@ -234,7 +234,8 @@ async fn settings_round_trip() {
     assert_eq!(
         resp.body,
         json!({
-            "registration_mode": "invite", "autolink_email": false, "public_url": null,
+            "registration_mode": "invite", "password_new_accounts": "approval",
+            "autolink_email": false, "public_url": null,
             "public_url_from_env": false, "effective_public_url": null
         })
     );
@@ -245,7 +246,7 @@ async fn settings_round_trip() {
             &admin,
             Some(json!({
                 "registration_mode": "closed", "autolink_email": true,
-                "public_url": "https://Sync.Example.com/"
+                "password_new_accounts": "auto", "public_url": "https://Sync.Example.com/"
             })),
         )
         .await;
@@ -253,13 +254,23 @@ async fn settings_round_trip() {
     assert_eq!(
         resp.body,
         json!({
-            "registration_mode": "closed", "autolink_email": true,
+            "registration_mode": "closed", "password_new_accounts": "auto",
+            "autolink_email": true,
             "public_url": "https://sync.example.com", "public_url_from_env": false,
             "effective_public_url": "https://sync.example.com"
         })
     );
     let resp = app.get("/api/v1/auth/config", &As::Anon).await;
     assert_eq!(resp.body["registration_mode"], "closed");
+    assert_eq!(resp.body["password_requires_approval"], false);
+    app.call(
+        "PATCH",
+        "/api/v1/admin/settings",
+        &admin,
+        Some(json!({ "password_new_accounts": "sometimes" })),
+    )
+    .await
+    .assert_error(StatusCode::BAD_REQUEST, "bad_request");
     app.call(
         "PATCH",
         "/api/v1/admin/settings",

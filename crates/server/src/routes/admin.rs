@@ -8,8 +8,9 @@ use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use cloudit_core::protocol::{
-    AdminUser as AdminUserInfo, AdminUserList, AdminUserUpdate, CreateInviteRequest, InviteInfo,
-    InviteLink, PasswordResetLink, Sensitive, ServerSettings, TokenTtl, UpdateSettingsRequest,
+    AdminUser as AdminUserInfo, AdminUserList, AdminUserUpdate, ApprovalStatus,
+    CreateInviteRequest, InviteInfo, InviteLink, PasswordResetLink, Sensitive, ServerSettings,
+    TokenTtl, UpdateSettingsRequest,
 };
 use serde::Deserialize;
 
@@ -31,9 +32,10 @@ const MAX_LIMIT: u64 = 200;
 pub struct ListParams {
     limit: Option<u64>,
     offset: Option<u64>,
+    approval_status: Option<ApprovalStatus>,
 }
 
-/// `GET /admin/users?limit=&offset=`: oldest first.
+/// `GET /admin/users?limit=&offset=&approval_status=`: oldest first.
 pub async fn list_users(
     State(state): State<AppState>,
     _admin: AdminUser,
@@ -44,7 +46,13 @@ pub async fn list_users(
     if !(1..=MAX_LIMIT).contains(&limit) {
         return Err(ApiError::validation("limit", format!("1 to {MAX_LIMIT}")));
     }
-    let (list, total) = users::list(&state.db, limit, params.offset.unwrap_or(0)).await?;
+    let (list, total) = users::list(
+        &state.db,
+        params.approval_status,
+        limit,
+        params.offset.unwrap_or(0),
+    )
+    .await?;
     let ids: Vec<_> = list.iter().map(|u| u.id).collect();
     let mut providers = identities::provider_ids_by_user(&state.db, &ids).await?;
     Ok(Json(AdminUserList {
@@ -164,6 +172,7 @@ pub async fn get_settings(
 ) -> Result<Json<ServerSettings>, ApiError> {
     Ok(Json(ServerSettings {
         registration_mode: settings::registration_mode(&state.db).await?,
+        password_new_accounts: settings::password_new_accounts(&state.db).await?,
         autolink_email: settings::autolink_email(&state.db).await?,
         public_url: settings::public_url(&state.db).await?,
         public_url_from_env: state.config.public_url.is_some(),
@@ -192,6 +201,10 @@ pub async fn update_settings(
     if let Some(on) = body.autolink_email {
         settings::set_autolink_email(&state.db, on, Some(me.user.id)).await?;
         tracing::info!(admin_id = %me.user.id, on, "email auto-link changed");
+    }
+    if let Some(policy) = body.password_new_accounts {
+        settings::set_password_new_accounts(&state.db, policy, Some(me.user.id)).await?;
+        tracing::info!(admin_id = %me.user.id, policy = policy.as_str(), "password sign-up approval changed");
     }
     if let Some(mode) = body.registration_mode {
         settings::set_registration_mode(&state.db, mode, Some(me.user.id)).await?;

@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{ErrorCode, Sensitive};
+use super::{ErrorCode, NewAccounts, Sensitive};
 
 /// Kind of identity provider: decides the protocol and the preset defaults. Stored
 /// with each provider and never changed afterwards.
@@ -106,6 +106,8 @@ pub struct ProviderPreset {
     /// The provider can send groups (`groups_claim`, `admin_groups`,
     /// `allowed_groups` are accepted).
     pub supports_groups: bool,
+    /// `new_accounts` of a provider created without one (`approval`).
+    pub new_accounts: NewAccounts,
 }
 
 /// A configured provider as admins see it (`GET /api/v1/admin/providers`). The client
@@ -134,6 +136,10 @@ pub struct ProviderInfo {
     pub admin_groups: Vec<String>,
     /// If not empty, only members of one of these groups may sign in.
     pub allowed_groups: Vec<String>,
+    /// Accounts created through this provider without an invite: active at once
+    /// (`auto`) or pending until an admin approves them (`approval`). An OIDC account
+    /// that is in one of `admin_groups` is always approved.
+    pub new_accounts: NewAccounts,
     pub enabled: bool,
     /// Display order on the login page (ascending).
     pub position: i32,
@@ -178,6 +184,10 @@ pub struct CreateProviderRequest {
     #[serde(default)]
     #[cfg_attr(test, ts(optional))]
     pub allowed_groups: Option<Vec<String>>,
+    /// Default `approval`.
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
+    pub new_accounts: Option<NewAccounts>,
     /// Default `true`.
     #[serde(default)]
     #[cfg_attr(test, ts(optional))]
@@ -225,6 +235,9 @@ pub struct UpdateProviderRequest {
     #[serde(default)]
     #[cfg_attr(test, ts(optional))]
     pub allowed_groups: Option<Vec<String>>,
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
+    pub new_accounts: Option<NewAccounts>,
     #[serde(default)]
     #[cfg_attr(test, ts(optional))]
     pub enabled: Option<bool>,

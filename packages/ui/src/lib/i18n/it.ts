@@ -51,6 +51,9 @@ export const it: Dictionary = {
   'error.onboarding_expired': 'Questa registrazione è scaduta. Accedi di nuovo.',
   'error.last_login_method':
     "È l'ultimo modo che hai per accedere: imposta una password o collega prima un altro account.",
+  'error.account_pending':
+    'Il tuo account è in attesa di approvazione da parte di un amministratore. Riprova più tardi.',
+  'error.account_rejected': 'Questo account è stato rifiutato da un amministratore.',
   'error.network': 'Impossibile raggiungere il server.',
   'error.unknown': 'Errore imprevisto.'
 };

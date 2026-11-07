@@ -10,6 +10,8 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
+use cloudit_core::protocol::{ApprovalStatus, NewAccounts};
+
 use crate::db::entities::users;
 use crate::errors::ApiError;
 
@@ -21,6 +23,10 @@ pub struct NewUser {
     pub display_name: String,
     pub password_hash: Option<String>,
     pub admin: bool,
+    /// `Pending` waits for an admin (see `approval_for_signup`).
+    pub approval: ApprovalStatus,
+    /// `password`, `invite` or the provider id; `None` for the first admin.
+    pub signup_source: Option<String>,
 }
 
 /// `true` if `err` is a unique-constraint violation (on either backend).
@@ -40,6 +46,10 @@ pub async fn insert(db: &impl ConnectionTrait, new: NewUser) -> Result<users::Mo
         admin: Set(new.admin),
         admin_from_groups: Set(false),
         disabled_at: Set(None),
+        approval_status: Set(new.approval.as_str().to_owned()),
+        approval_decided_at: Set(None),
+        approval_decided_by: Set(None),
+        signup_source: Set(new.signup_source),
         created_at: Set(now),
         updated_at: Set(now),
     };
@@ -135,13 +145,45 @@ pub async fn grant_admin_from_groups(db: &impl ConnectionTrait, id: Uuid) -> any
     Ok(())
 }
 
-/// A page of accounts, oldest first, and the total count.
+/// The approval state of a new account created without an invite under `policy`;
+/// `vouched` (an OIDC identity in the provider's admin groups) is always approved.
+/// Accounts created with an invite are approved by the caller.
+#[must_use]
+pub fn approval_for_signup(policy: NewAccounts, vouched: bool) -> ApprovalStatus {
+    if vouched || policy == NewAccounts::Auto {
+        ApprovalStatus::Approved
+    } else {
+        ApprovalStatus::Pending
+    }
+}
+
+/// Refuses an account that can't sign in or use its credentials: `account_disabled`,
+/// then `account_rejected`, then `account_pending`.
+pub fn ensure_active(user: &users::Model) -> Result<(), ApiError> {
+    if user.is_disabled() {
+        return Err(ApiError::AccountDisabled);
+    }
+    match user.approval() {
+        ApprovalStatus::Approved => Ok(()),
+        ApprovalStatus::Pending => Err(ApiError::AccountPending),
+        ApprovalStatus::Rejected => Err(ApiError::AccountRejected),
+    }
+}
+
+/// A page of accounts (only those in `approval` if set), oldest first, and the total
+/// count of matching accounts.
 pub async fn list(
     db: &impl ConnectionTrait,
+    approval: Option<ApprovalStatus>,
     limit: u64,
     offset: u64,
 ) -> anyhow::Result<(Vec<users::Model>, u64)> {
-    let users = users::Entity::find()
+    let mut query = users::Entity::find();
+    if let Some(status) = approval {
+        query = query.filter(users::Column::ApprovalStatus.eq(status.as_str()));
+    }
+    let total = query.clone().count(db).await.context("counting users")?;
+    let users = query
         .order_by_asc(users::Column::CreatedAt)
         .order_by_asc(users::Column::Id)
         .limit(limit)
@@ -149,9 +191,14 @@ pub async fn list(
         .all(db)
         .await
         .context("listing users")?;
-    let total = users::Entity::find()
+    Ok((users, total))
+}
+
+/// Number of accounts waiting for approval.
+pub async fn count_pending(db: &impl ConnectionTrait) -> anyhow::Result<u64> {
+    users::Entity::find()
+        .filter(users::Column::ApprovalStatus.eq(ApprovalStatus::Pending.as_str()))
         .count(db)
         .await
-        .context("counting users")?;
-    Ok((users, total))
+        .context("counting pending users")
 }

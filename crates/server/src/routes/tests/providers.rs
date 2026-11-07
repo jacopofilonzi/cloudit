@@ -75,6 +75,7 @@ async fn presets_list_every_kind() {
     assert_eq!(github["protocol"], "oauth2");
     assert_eq!(github["default_scopes"], "read:user user:email");
     assert_eq!(github["supports_groups"], false);
+    assert_eq!(github["new_accounts"], "approval");
     assert_eq!(resp.body[8]["icon"], "generic");
 }
 
@@ -100,6 +101,7 @@ async fn create_list_update_and_soft_delete() {
     assert_eq!(resp.body["has_secret"], true);
     assert_eq!(resp.body["enabled"], true);
     assert_eq!(resp.body["position"], 0);
+    assert_eq!(resp.body["new_accounts"], "approval", "default");
     assert_eq!(resp.body["callback_url"], Value::Null, "no public URL yet");
     assert!(!resp.body.to_string().contains(SECRET));
 
@@ -123,11 +125,15 @@ async fn create_list_update_and_soft_delete() {
         .post(
             "/api/v1/admin/providers",
             &admin,
-            json!({ "id": "gh", "kind": "github", "client_id": "Iv1", "client_secret": "s" }),
+            json!({
+                "id": "gh", "kind": "github", "client_id": "Iv1", "client_secret": "s",
+                "new_accounts": "auto"
+            }),
         )
         .await;
     resp.assert(StatusCode::CREATED);
     assert_eq!(resp.body["position"], 1);
+    assert_eq!(resp.body["new_accounts"], "auto");
 
     // Ids are unique, deleted ones included.
     app.post(
@@ -185,6 +191,15 @@ async fn create_list_update_and_soft_delete() {
     assert_eq!(resp.body["display_name"], "Company SSO");
     assert_eq!(resp.body["admin_groups"], json!(["admins"]));
     assert_eq!(resp.body["groups_claim"], "roles");
+    assert_eq!(resp.body["new_accounts"], "approval", "unchanged");
+    let resp = patch("company-sso", json!({ "new_accounts": "auto" })).await;
+    resp.assert(StatusCode::OK);
+    assert_eq!(resp.body["new_accounts"], "auto");
+    let listed = app.get("/api/v1/admin/providers", &admin).await;
+    assert_eq!(listed.body[0]["new_accounts"], "auto");
+    patch("company-sso", json!({ "new_accounts": "never" }))
+        .await
+        .assert_error(StatusCode::BAD_REQUEST, "bad_request");
     let provider = crate::idp::store::find(&app.state.db, "company-sso")
         .await
         .unwrap();

@@ -7,6 +7,11 @@ import type { RegistrationMode } from "./RegistrationMode";
  */
 export type AuthConfig = { setup_required: boolean, registration_mode: RegistrationMode, 
 /**
+ * A password registration without an invite creates a pending account (the
+ * `password_new_accounts` setting is `approval`).
+ */
+password_requires_approval: boolean, 
+/**
  * In display order.
  */
 providers: Array<AuthProvider>, };

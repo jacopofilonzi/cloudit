@@ -58,6 +58,10 @@ pub fn admin_user(user: &users::Model, identity_providers: Vec<String>) -> Admin
         disabled_at: rfc3339_opt(user.disabled_at),
         has_password: user.password_hash.is_some(),
         identity_providers,
+        approval_status: user.approval(),
+        signup_source: user.signup_source.clone(),
+        approval_decided_at: rfc3339_opt(user.approval_decided_at),
+        approval_decided_by: user.approval_decided_by.map(|id| id.to_string()),
         created_at: rfc3339(user.created_at),
     }
 }

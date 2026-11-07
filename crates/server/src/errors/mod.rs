@@ -81,6 +81,10 @@ pub enum ApiError {
     OnboardingExpired,
     #[error("this is the last way to sign in")]
     LastLoginMethod,
+    #[error("account waiting for approval")]
+    AccountPending,
+    #[error("account rejected")]
+    AccountRejected,
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -128,6 +132,8 @@ impl ApiError {
             Self::IdentityNotLinked => ErrorCode::IdentityNotLinked,
             Self::OnboardingExpired => ErrorCode::OnboardingExpired,
             Self::LastLoginMethod => ErrorCode::LastLoginMethod,
+            Self::AccountPending => ErrorCode::AccountPending,
+            Self::AccountRejected => ErrorCode::AccountRejected,
             Self::Internal(_) => ErrorCode::Internal,
         }
     }
@@ -145,6 +151,8 @@ impl ApiError {
             Self::Unauthorized | Self::InvalidCredentials => StatusCode::UNAUTHORIZED,
             Self::Forbidden
             | Self::AccountDisabled
+            | Self::AccountPending
+            | Self::AccountRejected
             | Self::RegistrationClosed
             | Self::CsrfFailed
             | Self::SetupTokenInvalid

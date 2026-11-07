@@ -80,7 +80,10 @@ async fn setup_flow_creates_the_first_admin_once() {
     let resp = app.get("/api/v1/auth/config", &As::Anon).await;
     assert_eq!(
         resp.body,
-        json!({ "setup_required": false, "registration_mode": "open", "providers": [] })
+        json!({
+            "setup_required": false, "registration_mode": "open",
+            "password_requires_approval": true, "providers": []
+        })
     );
 }
 
@@ -137,7 +140,7 @@ async fn concurrent_setup_has_exactly_one_winner() {
     for resp in responses.iter().filter(|r| r.status != StatusCode::CREATED) {
         resp.assert_error(StatusCode::CONFLICT, "setup_already_done");
     }
-    let (users, total) = crate::accounts::users::list(&app.state.db, 10, 0)
+    let (users, total) = crate::accounts::users::list(&app.state.db, None, 10, 0)
         .await
         .unwrap();
     assert_eq!(total, 1);

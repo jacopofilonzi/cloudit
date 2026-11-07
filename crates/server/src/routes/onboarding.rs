@@ -20,8 +20,8 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse as _, Response};
 use cloudit_core::protocol::{
-    OnboardingCreateRequest, OnboardingInfo, OnboardingLinkRequest, OnboardingProvider,
-    RegistrationMode,
+    ApprovalStatus, OnboardingCreateRequest, OnboardingInfo, OnboardingLinkRequest,
+    OnboardingProvider, RegistrationMode,
 };
 use sea_orm::TransactionTrait as _;
 
@@ -34,12 +34,11 @@ use crate::auth::{limits, password, sessions, tokens};
 use crate::db::entities::{pending_signups, users as user_entity};
 use crate::errors::ApiError;
 use crate::idp::store::{self, Provider};
-use crate::oauth::complete::apply_groups;
+use crate::oauth::complete::{admin_by_groups, apply_groups};
 use crate::oauth::flows::{NewFlow, Purpose};
 use crate::oauth::{cookies, identities, pending};
 use crate::state::AppState;
 use crate::validate;
-use cloudit_core::protocol::ProviderProtocol;
 
 /// The pending signup of the request's onboarding cookie.
 async fn current(
@@ -92,8 +91,14 @@ pub async fn info(
         .await?
         .ok_or(ApiError::OnboardingExpired)?;
     let mode = settings::registration_mode(&state.db).await?;
-    let invite_required = mode == RegistrationMode::Invite
-        && !invite_usable(&state, pending.invite_token_hash.as_deref()).await?;
+    let invite_carried = invite_usable(&state, pending.invite_token_hash.as_deref()).await?;
+    let invite_required = mode == RegistrationMode::Invite && !invite_carried;
+    let identity = pending::identity(&pending)?;
+    let requires_approval = !invite_carried
+        && users::approval_for_signup(
+            provider.fields.new_accounts,
+            admin_by_groups(&provider, &identity),
+        ) == ApprovalStatus::Pending;
     Ok(Json(OnboardingInfo {
         provider: OnboardingProvider {
             id: provider.id.clone(),
@@ -107,6 +112,7 @@ pub async fn info(
         display_name: pending.display_name,
         registration_mode: mode,
         invite_required,
+        requires_approval,
     }))
 }
 
@@ -180,6 +186,12 @@ pub async fn create(
             display_name,
             password_hash,
             admin: false,
+            approval: ApprovalStatus::Approved,
+            signup_source: Some(if invite.is_some() {
+                "invite".to_owned()
+            } else {
+                provider.id.clone()
+            }),
         },
     )
     .await?;
@@ -189,9 +201,7 @@ pub async fn create(
     {
         return Err(ApiError::InviteInvalid);
     }
-    if provider.protocol() == ProviderProtocol::Oidc
-        && identity.admin_from_groups(&provider.fields.admin_groups)
-    {
+    if admin_by_groups(&provider, &identity) {
         users::grant_admin_from_groups(&tx, user.id).await?;
     }
     tx.commit().await.map_err(anyhow::Error::from)?;

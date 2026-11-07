@@ -185,6 +185,10 @@ pub enum ErrorCode {
     /// Unlinking this identity would leave the account without a password or another
     /// identity on an enabled provider (409).
     LastLoginMethod,
+    /// The account is waiting for an admin's approval: it can't sign in yet (403).
+    AccountPending,
+    /// The account was rejected (banned) by an admin: it can't sign in (403).
+    AccountRejected,
 }
 
 /// JSON body of every API error response.

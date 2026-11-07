@@ -33,6 +33,11 @@ pub struct OnboardingInfo {
     /// Creating an account needs an invite (mode `invite` and no usable invite was
     /// carried from the sign-in start).
     pub invite_required: bool,
+    /// Creating an account now would leave it pending until an admin approves it: the
+    /// provider requires approval, no usable invite is carried from the sign-in start
+    /// and the identity is not in the provider's admin groups. (An invite typed on
+    /// the page skips approval too.)
+    pub requires_approval: bool,
 }
 
 /// `POST /api/v1/auth/onboarding/create`: a new account for the pending identity.

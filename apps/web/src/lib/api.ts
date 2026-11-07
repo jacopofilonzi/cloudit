@@ -61,7 +61,9 @@ const SERVER_CODES: Record<ErrorCode, true> = {
   identity_in_use: true,
   identity_not_linked: true,
   onboarding_expired: true,
-  last_login_method: true
+  last_login_method: true,
+  account_pending: true,
+  account_rejected: true
 };
 
 function isErrorBody(value: unknown): value is ApiErrorBody {

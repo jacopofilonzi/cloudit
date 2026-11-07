@@ -80,7 +80,8 @@ async fn create_with_the_providers_email() {
         json!({
             "provider": { "id": "sso", "kind": "oidc", "display_name": "OpenID Connect", "icon": "generic" },
             "email": "new@example.com", "email_from_provider": true, "email_verified": true,
-            "display_name": "New Person", "registration_mode": "open", "invite_required": false
+            "display_name": "New Person", "registration_mode": "open", "invite_required": false,
+            "requires_approval": false
         })
     );
     let resp = create(&env, &token, json!({ "display_name": "Newbie" })).await;

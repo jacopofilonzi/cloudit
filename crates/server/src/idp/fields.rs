@@ -18,10 +18,11 @@
 //! - `groups_claim`, `admin_groups`, `allowed_groups`: only for kinds that support
 //!   groups; claim names 1..=100 characters without whitespace; at most 100 groups of
 //!   1..=256 characters each, trimmed and deduplicated;
+//! - `new_accounts`: `auto` or `approval` (default `approval`);
 //! - `position`: 0..=1_000_000.
 
 use cloudit_core::protocol::{
-    CreateProviderRequest, ProviderKind, ProviderProtocol, UpdateProviderRequest,
+    CreateProviderRequest, NewAccounts, ProviderKind, ProviderProtocol, UpdateProviderRequest,
 };
 
 use super::presets::{self, MULTI_TENANT};
@@ -47,6 +48,7 @@ pub struct ProviderFields {
     pub groups_claim: Option<String>,
     pub admin_groups: Vec<String>,
     pub allowed_groups: Vec<String>,
+    pub new_accounts: NewAccounts,
     pub enabled: bool,
     pub position: i32,
 }
@@ -199,6 +201,7 @@ impl ProviderFields {
             groups_claim: None,
             admin_groups: Vec::new(),
             allowed_groups: Vec::new(),
+            new_accounts: req.new_accounts.unwrap_or_default(),
             enabled: req.enabled.unwrap_or(true),
             position: req.position.unwrap_or(default_position),
         };
@@ -229,6 +232,9 @@ impl ProviderFields {
         }
         if let Some(position) = req.position {
             fields.position = position;
+        }
+        if let Some(policy) = req.new_accounts {
+            fields.new_accounts = policy;
         }
         fields.apply(
             req.display_name.as_deref(),
@@ -362,6 +368,7 @@ mod tests {
             groups_claim: None,
             admin_groups: None,
             allowed_groups: None,
+            new_accounts: None,
             enabled: None,
             position: None,
         }
@@ -518,6 +525,7 @@ mod tests {
             groups_claim: Some(String::new()),
             admin_groups: None,
             allowed_groups: None,
+            new_accounts: None,
             enabled: Some(false),
             position: Some(-1),
         };

@@ -1,10 +1,11 @@
 //! Server settings in the `settings` table: one JSON value per key, editable by admins.
 //! A missing key means the default. Keys: `registration_mode` (default `invite`),
+//! `password_new_accounts` (default `approval`),
 //! `autolink_email` (default `false`), `public_url` (`null`/missing = none) and
 //! `secret_key_check` (see `crypto::canary`).
 
 use anyhow::Context as _;
-use cloudit_core::protocol::RegistrationMode;
+use cloudit_core::protocol::{NewAccounts, RegistrationMode};
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{ActiveValue::Set, ConnectionTrait, EntityTrait as _};
 use serde::Serialize;
@@ -14,6 +15,7 @@ use uuid::Uuid;
 use crate::db::entities::settings;
 
 pub const REGISTRATION_MODE: &str = "registration_mode";
+pub const PASSWORD_NEW_ACCOUNTS: &str = "password_new_accounts";
 pub const AUTOLINK_EMAIL: &str = "autolink_email";
 pub const PUBLIC_URL: &str = "public_url";
 
@@ -145,4 +147,17 @@ pub async fn set_public_url(
     by: Option<Uuid>,
 ) -> anyhow::Result<()> {
     set(db, PUBLIC_URL, &url, by).await
+}
+
+/// Whether password registrations without an invite need an admin's approval.
+pub async fn password_new_accounts(db: &impl ConnectionTrait) -> anyhow::Result<NewAccounts> {
+    Ok(get(db, PASSWORD_NEW_ACCOUNTS).await?.unwrap_or_default())
+}
+
+pub async fn set_password_new_accounts(
+    db: &impl ConnectionTrait,
+    policy: NewAccounts,
+    by: Option<Uuid>,
+) -> anyhow::Result<()> {
+    set(db, PASSWORD_NEW_ACCOUNTS, &policy, by).await
 }

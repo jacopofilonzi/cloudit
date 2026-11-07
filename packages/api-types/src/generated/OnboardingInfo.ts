@@ -27,4 +27,11 @@ display_name: string, registration_mode: RegistrationMode,
  * Creating an account needs an invite (mode `invite` and no usable invite was
  * carried from the sign-in start).
  */
-invite_required: boolean, };
+invite_required: boolean, 
+/**
+ * Creating an account now would leave it pending until an admin approves it: the
+ * provider requires approval, no usable invite is carried from the sign-in start
+ * and the identity is not in the provider's admin groups. (An invite typed on
+ * the page skips approval too.)
+ */
+requires_approval: boolean, };

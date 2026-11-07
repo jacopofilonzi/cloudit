@@ -7,7 +7,9 @@
 
 use anyhow::Context as _;
 use chrono::{DateTime, Utc};
-use cloudit_core::protocol::{AuthProvider, ProviderInfo, ProviderKind, ProviderProtocol};
+use cloudit_core::protocol::{
+    AuthProvider, NewAccounts, ProviderInfo, ProviderKind, ProviderProtocol,
+};
 use sea_orm::sea_query::{Expr, Func};
 use sea_orm::{
     ActiveValue::Set, ColumnTrait as _, ConnectionTrait, EntityTrait as _, QueryFilter as _,
@@ -63,6 +65,8 @@ impl Provider {
                 groups_claim: m.groups_claim,
                 admin_groups: groups(&m.admin_groups, "admin_groups")?,
                 allowed_groups: groups(&m.allowed_groups, "allowed_groups")?,
+                // An unknown value (written by a newer version) fails closed.
+                new_accounts: NewAccounts::parse(&m.new_accounts).unwrap_or(NewAccounts::Approval),
                 enabled: m.enabled,
                 position: m.position,
             },
@@ -127,6 +131,7 @@ impl Provider {
             groups_claim: f.groups_claim.clone(),
             admin_groups: f.admin_groups.clone(),
             allowed_groups: f.allowed_groups.clone(),
+            new_accounts: f.new_accounts,
             enabled: f.enabled,
             position: f.position,
             callback_url: public_url.map(|base| callback_url(base, &self.id)),
@@ -238,6 +243,7 @@ pub async fn insert(
         groups_claim: Set(fields.groups_claim.clone()),
         admin_groups: Set(groups_json(&fields.admin_groups)?),
         allowed_groups: Set(groups_json(&fields.allowed_groups)?),
+        new_accounts: Set(fields.new_accounts.as_str().to_owned()),
         enabled: Set(fields.enabled),
         position: Set(fields.position),
         created_at: Set(now),
@@ -303,6 +309,10 @@ pub async fn update(
         .col_expr(
             auth_providers::Column::AllowedGroups,
             Expr::value(groups_json(&fields.allowed_groups)?),
+        )
+        .col_expr(
+            auth_providers::Column::NewAccounts,
+            Expr::value(fields.new_accounts.as_str()),
         )
         .col_expr(auth_providers::Column::Enabled, Expr::value(fields.enabled))
         .col_expr(

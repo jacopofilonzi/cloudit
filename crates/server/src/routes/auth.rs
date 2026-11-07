@@ -5,7 +5,8 @@ use axum::extract::State;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse as _, Response};
 use cloudit_core::protocol::{
-    AuthConfig, LoginRequest, PasswordResetRequest, RegisterRequest, RegistrationMode,
+    ApprovalStatus, AuthConfig, LoginRequest, NewAccounts, PasswordResetRequest, RegisterRequest,
+    RegistrationMode,
 };
 use sea_orm::TransactionTrait as _;
 
@@ -37,6 +38,8 @@ pub async fn config(State(state): State<AppState>) -> Result<Json<AuthConfig>, A
     Ok(Json(AuthConfig {
         setup_required: setup_pending(&state).await?,
         registration_mode: settings::registration_mode(&state.db).await?,
+        password_requires_approval: settings::password_new_accounts(&state.db).await?
+            == NewAccounts::Approval,
         providers: crate::idp::store::list(&state.db, true)
             .await?
             .iter()
@@ -91,6 +94,15 @@ pub async fn register(
             display_name,
             password_hash: Some(password_hash),
             admin: false,
+            approval: ApprovalStatus::Approved,
+            signup_source: Some(
+                if invite.is_some() {
+                    "invite"
+                } else {
+                    "password"
+                }
+                .to_owned(),
+            ),
         },
     )
     .await?;

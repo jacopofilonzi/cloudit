@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{RegistrationMode, Sensitive, TokenTtl};
+use super::{ApprovalStatus, NewAccounts, RegistrationMode, Sensitive, TokenTtl};
 
 /// One account as seen by admins.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,15 +23,27 @@ pub struct AdminUser {
     /// Ids of the providers this account has identities at (sorted; deleted
     /// providers included).
     pub identity_providers: Vec<String>,
+    pub approval_status: ApprovalStatus,
+    /// How the account was created: `password` (registration without an invite),
+    /// `invite` (any sign-up that consumed an invite), or the id of the identity
+    /// provider it signed up with; `null` for the first admin and for accounts created
+    /// before approvals existed.
+    pub signup_source: Option<String>,
+    /// When an admin last approved or rejected the account (`null` if never: approved
+    /// automatically or still pending).
+    pub approval_decided_at: Option<String>,
+    /// The admin who made that decision.
+    pub approval_decided_by: Option<String>,
     pub created_at: String,
 }
 
-/// `GET /api/v1/admin/users?limit=&offset=` (oldest first; limit 1..=200, default 50).
+/// `GET /api/v1/admin/users?limit=&offset=&approval_status=` (oldest first; limit
+/// 1..=200, default 50; `approval_status` filters).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct AdminUserList {
     pub users: Vec<AdminUser>,
-    /// Number of accounts in total.
+    /// Number of accounts matching the filter.
     pub total: u64,
 }
 
@@ -116,6 +128,9 @@ pub struct InviteInfo {
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct ServerSettings {
     pub registration_mode: RegistrationMode,
+    /// Whether password registrations without an invite need an admin's approval.
+    /// Default `approval`.
+    pub password_new_accounts: NewAccounts,
     /// Sign in an unknown identity-provider account into the existing account with the
     /// same email, when the provider says the email is verified and the existing
     /// account's email is verified too. Default `false`.
@@ -140,10 +155,21 @@ pub struct UpdateSettingsRequest {
     pub registration_mode: Option<RegistrationMode>,
     #[serde(default)]
     #[cfg_attr(test, ts(optional))]
+    pub password_new_accounts: Option<NewAccounts>,
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
     pub autolink_email: Option<bool>,
     /// `http(s)://host[:port]` (a trailing `/` is removed; no path, query or fragment);
     /// an empty string clears it.
     #[serde(default)]
     #[cfg_attr(test, ts(optional))]
     pub public_url: Option<String>,
+}
+
+/// `GET /api/v1/admin/summary`: counters for the admin UI (badges).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct AdminSummary {
+    /// Accounts waiting for approval.
+    pub pending_users: u64,
 }
