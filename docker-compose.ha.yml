@@ -1,0 +1,130 @@
+# High-availability deployment example: two stateless cloudit replicas behind a Caddy
+# load balancer, sharing PostgreSQL, S3-compatible storage (MinIO) and Valkey.
+#
+#   make up-ha     # build and start everything; http://localhost:8080
+#   make down-ha   # stop (data volumes are kept)
+#   docker compose -f docker-compose.ha.yml down -v   # stop and delete all data
+#
+# `make test-ha` starts only postgres, minio, minio-init and valkey from this file
+# (as project `cloudit-test`) and runs the server tests against them.
+#
+# The credentials below are for local testing only: change them for a real deployment
+# (and keep them in an env file, not here). Backing services publish ports on
+# 127.0.0.1 only, on random host ports (`docker compose -f docker-compose.ha.yml port
+# postgres 5432` shows which), for debugging and `make test-ha`.
+#
+# Official MinIO images are no longer published: `pgsty/minio` is a community-maintained
+# build of the same server. Any S3-compatible service works (AWS S3, Garage, RustFS…),
+# and Redis works in place of Valkey.
+
+name: cloudit-ha
+
+x-cloudit: &cloudit
+  build: .
+  image: cloudit:ha
+  restart: unless-stopped
+  environment:
+    DATABASE_URL: postgres://cloudit:cloudit-dev-password@postgres:5432/cloudit
+    DB_MAX_CONNECTIONS: '10'
+    STORAGE: s3
+    S3_ENDPOINT: http://minio:9000
+    S3_REGION: us-east-1
+    S3_BUCKET: cloudit
+    S3_ACCESS_KEY_ID: cloudit
+    S3_SECRET_ACCESS_KEY: cloudit-dev-secret
+    S3_FORCE_PATH_STYLE: 'true'
+    # Presigned URLs need an S3 endpoint the clients can reach (S3_PUBLIC_ENDPOINT);
+    # here MinIO is private, so the server proxies blobs.
+    S3_PRESIGN: 'false'
+    REDIS_URL: redis://valkey:6379
+  depends_on:
+    postgres:
+      condition: service_healthy
+    minio-init:
+      condition: service_completed_successfully
+    valkey:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cloudit
+      POSTGRES_PASSWORD: cloudit-dev-password
+      POSTGRES_DB: cloudit
+    volumes:
+      # PostgreSQL 18+ images keep data in a versioned subdirectory of this path.
+      - postgres:/var/lib/postgresql
+    ports:
+      - '127.0.0.1::5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U cloudit -d cloudit']
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  minio:
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+    restart: unless-stopped
+    command: ['server', '/data']
+    environment:
+      MINIO_ROOT_USER: cloudit
+      MINIO_ROOT_PASSWORD: cloudit-dev-secret
+    volumes:
+      - minio:/data
+    ports:
+      - '127.0.0.1::9000'
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://localhost:9000/minio/health/live']
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  # One-shot: creates the bucket, then exits.
+  minio-init:
+    image: pgsty/mc:RELEASE.2026-10-26T00-00-00Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        mc alias set local http://minio:9000 cloudit cloudit-dev-secret &&
+        mc mb --ignore-existing local/cloudit
+    restart: 'no'
+
+  valkey:
+    image: valkey/valkey:9
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1::6379'
+    healthcheck:
+      test: ['CMD', 'valkey-cli', 'ping']
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  cloudit-1:
+    <<: *cloudit
+
+  cloudit-2:
+    <<: *cloudit
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - '8080:8080'
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy:/data
+    depends_on:
+      - cloudit-1
+      - cloudit-2
+
+volumes:
+  postgres:
+  minio:
+  caddy:

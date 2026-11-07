@@ -3,7 +3,7 @@
 # Targets documented with `## ` show up in `make help`.
 
 .DEFAULT_GOAL := help
-.PHONY: help install dev dev-server dev-web types fmt fmt-check lint test check check-types build docker up down clean version
+.PHONY: help install dev dev-server dev-web types fmt fmt-check lint test check check-types build docker up down up-ha down-ha test-ha clean version
 
 IMAGE ?= cloudit:dev
 
@@ -60,6 +60,15 @@ up: ## Start the single-instance stack (docker compose)
 
 down: ## Stop the docker compose stack
 	docker compose down
+
+up-ha: ## Start the HA example stack (2 replicas, Caddy on :8080, PostgreSQL, MinIO, Valkey)
+	docker compose -f docker-compose.ha.yml up -d --build
+
+down-ha: ## Stop the HA example stack (volumes kept; add -v by hand to wipe them)
+	docker compose -f docker-compose.ha.yml down
+
+test-ha: ## Server tests against PostgreSQL, MinIO and Valkey in Docker (cleaned up after)
+	node scripts/test-ha.mjs
 
 clean: ## Remove build outputs (target, web build, .svelte-kit)
 	cargo clean
