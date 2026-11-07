@@ -54,6 +54,8 @@ export const it: Dictionary = {
   'error.account_pending':
     'Il tuo account è in attesa di approvazione da parte di un amministratore. Riprova più tardi.',
   'error.account_rejected': 'Questo account è stato rifiutato da un amministratore.',
+  'error.name_taken': 'Questo nome è già in uso qui.',
+  'error.user_not_found': 'Nessun account trovato con questa email.',
   'error.network': 'Impossibile raggiungere il server.',
   'error.unknown': 'Errore imprevisto.'
 };

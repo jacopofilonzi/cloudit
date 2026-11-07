@@ -85,6 +85,10 @@ pub enum ApiError {
     AccountPending,
     #[error("account rejected")]
     AccountRejected,
+    #[error("name already taken")]
+    NameTaken,
+    #[error("no such user")]
+    UserNotFound,
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -134,6 +138,8 @@ impl ApiError {
             Self::LastLoginMethod => ErrorCode::LastLoginMethod,
             Self::AccountPending => ErrorCode::AccountPending,
             Self::AccountRejected => ErrorCode::AccountRejected,
+            Self::NameTaken => ErrorCode::NameTaken,
+            Self::UserNotFound => ErrorCode::UserNotFound,
             Self::Internal(_) => ErrorCode::Internal,
         }
     }
@@ -146,7 +152,7 @@ impl ApiError {
             | Self::TokenInvalid
             | Self::OauthStateInvalid
             | Self::OauthCancelled => StatusCode::BAD_REQUEST,
-            Self::NotFound | Self::ProviderNotFound => StatusCode::NOT_FOUND,
+            Self::NotFound | Self::ProviderNotFound | Self::UserNotFound => StatusCode::NOT_FOUND,
             Self::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::Unauthorized | Self::InvalidCredentials => StatusCode::UNAUTHORIZED,
             Self::Forbidden
@@ -166,7 +172,8 @@ impl ApiError {
             | Self::PublicUrlRequired
             | Self::IdentityInUse
             | Self::IdentityNotLinked
-            | Self::LastLoginMethod => StatusCode::CONFLICT,
+            | Self::LastLoginMethod
+            | Self::NameTaken => StatusCode::CONFLICT,
             Self::OnboardingExpired => StatusCode::GONE,
             Self::ProviderDiscoveryFailed | Self::ProviderError => StatusCode::BAD_GATEWAY,
             Self::Validation { .. } => StatusCode::UNPROCESSABLE_ENTITY,

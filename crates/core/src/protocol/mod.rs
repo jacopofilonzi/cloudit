@@ -16,24 +16,30 @@
 //! - [`admin`]: user management, invites, password resets and server settings;
 //! - [`providers`]: identity providers (presets, admin configuration);
 //! - [`oauth`]: sign-in through providers and linked identities;
-//! - [`onboarding`]: first sign-in of an unknown identity.
+//! - [`onboarding`]: first sign-in of an unknown identity;
+//! - [`scopes`]: scopes, roles, sharing and the trash;
+//! - [`folders`]: folders and their retention overrides.
 
 mod admin;
 mod auth;
 mod devices;
+mod folders;
 mod me;
 mod oauth;
 mod onboarding;
 mod providers;
+mod scopes;
 mod sensitive;
 
 pub use admin::*;
 pub use auth::*;
 pub use devices::*;
+pub use folders::*;
 pub use me::*;
 pub use oauth::*;
 pub use onboarding::*;
 pub use providers::*;
+pub use scopes::*;
 pub use sensitive::Sensitive;
 
 use serde::{Deserialize, Serialize};
@@ -189,6 +195,11 @@ pub enum ErrorCode {
     AccountPending,
     /// The account was rejected (banned) by an admin: it can't sign in (403).
     AccountRejected,
+    /// Another scope of the owner, or another folder of the scope, outside the trash
+    /// already has this name, ignoring case (409).
+    NameTaken,
+    /// No approved, enabled account has this email (sharing a scope) (404).
+    UserNotFound,
 }
 
 /// JSON body of every API error response.

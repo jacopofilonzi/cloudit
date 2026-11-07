@@ -38,6 +38,8 @@ const MESSAGE_KEYS: Record<ClientErrorCode, MessageKey> = {
   last_login_method: 'error.last_login_method',
   account_pending: 'error.account_pending',
   account_rejected: 'error.account_rejected',
+  name_taken: 'error.name_taken',
+  user_not_found: 'error.user_not_found',
   network: 'error.network',
   unknown: 'error.unknown'
 };

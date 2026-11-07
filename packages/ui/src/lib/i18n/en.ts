@@ -52,6 +52,8 @@ export const en = {
   'error.account_pending':
     'Your account is waiting for approval by an administrator. Try again later.',
   'error.account_rejected': 'This account has been rejected by an administrator.',
+  'error.name_taken': 'This name is already in use here.',
+  'error.user_not_found': 'No account with this email was found.',
   'error.network': 'Cannot reach the server.',
   'error.unknown': 'Unexpected error.'
 } as const;
