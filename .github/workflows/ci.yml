@@ -48,3 +48,61 @@ jobs:
       - name: make check
         shell: ${{ runner.os == 'Windows' && 'pwsh' || 'bash' }}
         run: make check
+
+  # Server tests against real PostgreSQL, S3 (MinIO) and Valkey: the same tests as
+  # `make test-ha`. Without these TEST_* variables the tests use SQLite and skip S3/Redis.
+  server-services:
+    name: server tests (PostgreSQL, MinIO, Valkey)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: cloudit
+          POSTGRES_PASSWORD: cloudit-ci
+          POSTGRES_DB: cloudit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cloudit -d cloudit"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+      valkey:
+        image: valkey/valkey:9
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    env:
+      TEST_DATABASE_URL: postgres://cloudit:cloudit-ci@127.0.0.1:5432/cloudit
+      TEST_S3_ENDPOINT: http://127.0.0.1:9000
+      TEST_S3_REGION: us-east-1
+      TEST_S3_BUCKET: cloudit
+      TEST_S3_ACCESS_KEY_ID: cloudit
+      TEST_S3_SECRET_ACCESS_KEY: cloudit-ci-secret
+      TEST_REDIS_URL: redis://127.0.0.1:6379
+    steps:
+      - uses: actions/checkout@v7
+
+      # Service containers can't take a command, and MinIO needs `server /data`.
+      # Official MinIO images are discontinued: pgsty/minio is a community build.
+      - name: Start MinIO and create the bucket
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=cloudit -e MINIO_ROOT_PASSWORD=cloudit-ci-secret \
+            pgsty/minio:RELEASE.2026-08-04T00-00-00Z server /data
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:9000/minio/health/live && break
+            sleep 1
+          done
+          docker run --rm --network host --entrypoint /bin/sh \
+            pgsty/mc:RELEASE.2026-10-26T00-00-00Z -c \
+            'mc alias set local http://127.0.0.1:9000 cloudit cloudit-ci-secret && mc mb --ignore-existing local/cloudit'
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo test (server)
+        run: cargo test -p cloudit-server --locked
