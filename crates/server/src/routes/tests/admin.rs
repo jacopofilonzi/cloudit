@@ -16,6 +16,15 @@ async fn admin_routes_need_an_admin_session() {
         ("POST", "/api/v1/admin/invites"),
         ("GET", "/api/v1/admin/settings"),
         ("PATCH", "/api/v1/admin/settings"),
+        ("GET", "/api/v1/admin/summary"),
+        (
+            "POST",
+            "/api/v1/admin/users/00000000-0000-0000-0000-000000000000/approve",
+        ),
+        (
+            "POST",
+            "/api/v1/admin/users/00000000-0000-0000-0000-000000000000/reject",
+        ),
     ] {
         app.call(method, uri, &user, Some(json!({})))
             .await

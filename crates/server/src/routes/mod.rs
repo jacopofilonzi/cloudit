@@ -70,6 +70,9 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/admin/users", get(admin::list_users))
         .route("/admin/users/{id}", patch(admin::update_user))
+        .route("/admin/users/{id}/approve", post(admin::approve_user))
+        .route("/admin/users/{id}/reject", post(admin::reject_user))
+        .route("/admin/summary", get(admin::summary))
         .route(
             "/admin/users/{id}/password-reset",
             post(admin::create_password_reset),

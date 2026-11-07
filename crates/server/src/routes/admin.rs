@@ -1,5 +1,5 @@
-//! `/api/v1/admin/*` (web session of an effective admin): users, password resets,
-//! invites, settings.
+//! `/api/v1/admin/*` (web session of an effective admin): users (flags, approval),
+//! password resets, invites, settings, summary.
 
 use std::time::Duration;
 
@@ -8,7 +8,7 @@ use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use cloudit_core::protocol::{
-    AdminUser as AdminUserInfo, AdminUserList, AdminUserUpdate, ApprovalStatus,
+    AdminSummary, AdminUser as AdminUserInfo, AdminUserList, AdminUserUpdate, ApprovalStatus,
     CreateInviteRequest, InviteInfo, InviteLink, PasswordResetLink, Sensitive, ServerSettings,
     TokenTtl, UpdateSettingsRequest,
 };
@@ -17,6 +17,7 @@ use serde::Deserialize;
 use super::extract::{ApiJson, admin_user, invite_info, parse_id};
 use crate::accounts::{admin, invites, password_resets, settings, users};
 use crate::auth::extractors::AdminUser;
+use crate::db::entities::users as user_entity;
 use crate::errors::ApiError;
 use crate::oauth::identities;
 use crate::state::AppState;
@@ -81,11 +82,57 @@ pub async fn update_user(
         disabled = user.is_disabled(),
         "account flags changed"
     );
+    Ok(Json(user_view(&state, &user).await?))
+}
+
+async fn user_view(state: &AppState, user: &user_entity::Model) -> Result<AdminUserInfo, ApiError> {
     let mut providers = identities::provider_ids_by_user(&state.db, &[user.id]).await?;
-    Ok(Json(admin_user(
-        &user,
+    Ok(admin_user(
+        user,
         providers.remove(&user.id).unwrap_or_default(),
-    )))
+    ))
+}
+
+/// `POST /admin/users/{id}/approve`: pending → approved, or rejected → approved
+/// (lifts the ban). An approved account is answered unchanged.
+pub async fn approve_user(
+    State(state): State<AppState>,
+    AdminUser(me): AdminUser,
+    Path(id): Path<String>,
+) -> Result<Json<AdminUserInfo>, ApiError> {
+    let id = parse_id(&id)?;
+    let decision = admin::approve(&state.db, id, me.user.id).await?;
+    if decision.changed {
+        tracing::info!(admin_id = %me.user.id, user_id = %id, "account approved");
+    }
+    Ok(Json(user_view(&state, &decision.user).await?))
+}
+
+/// `POST /admin/users/{id}/reject`: pending or approved → rejected (a ban: no sign-in
+/// by any method, web sessions deleted, device tokens refused). `forbidden` for the
+/// caller's own account, `last_admin` if no enabled approved admin would remain. A
+/// rejected account is answered unchanged.
+pub async fn reject_user(
+    State(state): State<AppState>,
+    AdminUser(me): AdminUser,
+    Path(id): Path<String>,
+) -> Result<Json<AdminUserInfo>, ApiError> {
+    let id = parse_id(&id)?;
+    let decision = admin::reject(&state.db, id, me.user.id).await?;
+    if decision.changed {
+        tracing::info!(admin_id = %me.user.id, user_id = %id, "account rejected");
+    }
+    Ok(Json(user_view(&state, &decision.user).await?))
+}
+
+/// `GET /admin/summary`: counters for the admin UI.
+pub async fn summary(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+) -> Result<Json<AdminSummary>, ApiError> {
+    Ok(Json(AdminSummary {
+        pending_users: users::count_pending(&state.db).await?,
+    }))
 }
 
 /// `POST /admin/users/{id}/password-reset` → 201 with a 24-hour single-use link. Works

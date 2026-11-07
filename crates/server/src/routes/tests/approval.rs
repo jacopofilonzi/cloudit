@@ -287,3 +287,229 @@ async fn pending_accounts_cant_be_linked_into() {
     .assert_error(StatusCode::FORBIDDEN, "account_pending");
     assert_eq!(env.identity_rows().await.len(), 0, "nothing linked");
 }
+
+async fn decide(app: &TestApp, admin: &As, id: &str, action: &str) -> Resp {
+    app.call(
+        "POST",
+        &format!("/api/v1/admin/users/{id}/{action}"),
+        admin,
+        None,
+    )
+    .await
+}
+
+async fn summary(app: &TestApp, admin: &As) -> Value {
+    let resp = app.get("/api/v1/admin/summary", admin).await;
+    resp.assert(StatusCode::OK);
+    resp.body["pending_users"].clone()
+}
+
+#[tokio::test]
+async fn admins_list_and_approve_pending_accounts() {
+    let app = TestApp::new().await;
+    let admin = app.setup_admin().await;
+    let admin_id = app.user_id(&admin).await;
+    app.set_mode(RegistrationMode::Open).await;
+    for email in ["p1@example.com", "p2@example.com"] {
+        app.post("/api/v1/auth/register", &As::Anon, register_body(email))
+            .await
+            .assert(StatusCode::ACCEPTED);
+    }
+    assert_eq!(summary(&app, &admin).await, 2);
+    let resp = app
+        .get("/api/v1/admin/users?approval_status=pending", &admin)
+        .await;
+    resp.assert(StatusCode::OK);
+    assert_eq!(resp.body["total"], 2);
+    assert_eq!(resp.body["users"][0]["email"], "p1@example.com");
+    let resp = app
+        .get(
+            "/api/v1/admin/users?approval_status=approved&limit=1",
+            &admin,
+        )
+        .await;
+    assert_eq!(resp.body["total"], 1);
+    assert_eq!(resp.body["users"][0]["email"], super::support::ADMIN_EMAIL);
+    app.get("/api/v1/admin/users?approval_status=maybe", &admin)
+        .await
+        .assert_error(StatusCode::BAD_REQUEST, "bad_request");
+
+    let p1 = admin_view(&app, &admin, "p1@example.com").await;
+    let p1_id = p1["id"].as_str().unwrap().to_owned();
+    let resp = decide(&app, &admin, &p1_id, "approve").await;
+    resp.assert(StatusCode::OK);
+    assert_eq!(resp.body["approval_status"], "approved");
+    assert_eq!(resp.body["approval_decided_by"], admin_id.as_str());
+    let decided_at = resp.body["approval_decided_at"].clone();
+    assert!(decided_at.is_string());
+    assert_eq!(summary(&app, &admin).await, 1);
+    // Approving again changes nothing.
+    let resp = decide(&app, &admin, &p1_id, "approve").await;
+    resp.assert(StatusCode::OK);
+    assert_eq!(resp.body["approval_decided_at"], decided_at);
+
+    // Now the account signs in, but it is no admin.
+    let resp = app.login("p1@example.com", PASSWORD).await;
+    resp.assert(StatusCode::OK);
+    let p1_session = As::Cookie(resp.cookie().unwrap());
+    decide(&app, &p1_session, &p1_id, "approve")
+        .await
+        .assert_error(StatusCode::FORBIDDEN, "forbidden");
+    app.get("/api/v1/admin/summary", &p1_session)
+        .await
+        .assert_error(StatusCode::FORBIDDEN, "forbidden");
+    decide(
+        &app,
+        &admin,
+        "00000000-0000-0000-0000-000000000000",
+        "approve",
+    )
+    .await
+    .assert_error(StatusCode::NOT_FOUND, "not_found");
+    decide(&app, &admin, "not-a-uuid", "reject")
+        .await
+        .assert_error(StatusCode::NOT_FOUND, "not_found");
+
+    // Rejecting a pending account.
+    let p2 = admin_view(&app, &admin, "p2@example.com").await;
+    let p2_id = p2["id"].as_str().unwrap();
+    let resp = decide(&app, &admin, p2_id, "reject").await;
+    resp.assert(StatusCode::OK);
+    assert_eq!(resp.body["approval_status"], "rejected");
+    assert_eq!(summary(&app, &admin).await, 0);
+    app.login("p2@example.com", "wrong password")
+        .await
+        .assert_error(StatusCode::UNAUTHORIZED, "invalid_credentials");
+    app.login("p2@example.com", PASSWORD)
+        .await
+        .assert_error(StatusCode::FORBIDDEN, "account_rejected");
+    decide(&app, &admin, p2_id, "reject")
+        .await
+        .assert(StatusCode::OK);
+}
+
+#[tokio::test]
+async fn rejecting_an_active_account_bans_it_until_approved() {
+    let app = TestApp::new().await;
+    let admin = app.setup_admin().await;
+    let (session, device_token, _) = super::devices::device(&app).await;
+    let id = app.user_id(&session).await;
+    let bearer = As::Bearer(device_token);
+    app.get("/api/v1/me", &bearer).await.assert(StatusCode::OK);
+
+    decide(&app, &admin, &id, "reject")
+        .await
+        .assert(StatusCode::OK);
+    // Web sessions are gone; the device token is refused while rejected.
+    app.get("/api/v1/me", &session)
+        .await
+        .assert_error(StatusCode::UNAUTHORIZED, "unauthorized");
+    app.get("/api/v1/me", &bearer)
+        .await
+        .assert_error(StatusCode::FORBIDDEN, "account_rejected");
+    app.login("user@example.com", PASSWORD)
+        .await
+        .assert_error(StatusCode::FORBIDDEN, "account_rejected");
+
+    // Lifting the ban: password and device work again; old sessions stay dead.
+    let resp = decide(&app, &admin, &id, "approve").await;
+    resp.assert(StatusCode::OK);
+    assert_eq!(resp.body["approval_status"], "approved");
+    app.get("/api/v1/me", &bearer).await.assert(StatusCode::OK);
+    app.get("/api/v1/me", &session)
+        .await
+        .assert_error(StatusCode::UNAUTHORIZED, "unauthorized");
+    app.login("user@example.com", PASSWORD)
+        .await
+        .assert(StatusCode::OK);
+}
+
+#[tokio::test]
+async fn rejected_identities_cant_sign_in_or_sign_up_again() {
+    let env = Env::new().await;
+    env.app.set_mode(RegistrationMode::Open).await;
+    let resp = env
+        .github(11, Some("octo@example.com"), "login", &As::Anon)
+        .await;
+    let token = resp.cookie_named("cloudit_onboarding").unwrap();
+    let resp = create(&env, &token, json!({ "display_name": "Octo" })).await;
+    resp.assert(StatusCode::CREATED);
+    let id = resp.body["id"].as_str().unwrap().to_owned();
+
+    decide(&env.app, &env.admin, &id, "reject")
+        .await
+        .assert(StatusCode::OK);
+    assert_login_error(
+        &env.github(11, Some("octo@example.com"), "login", &As::Anon)
+            .await,
+        "account_rejected",
+    );
+    let list = env.app.get("/api/v1/admin/users", &env.admin).await;
+    assert_eq!(list.body["total"], 2, "no new account");
+    assert_eq!(env.identity_rows().await.len(), 1);
+
+    decide(&env.app, &env.admin, &id, "approve")
+        .await
+        .assert(StatusCode::OK);
+    assert_signed_in(
+        &env.github(11, Some("octo@example.com"), "login", &As::Anon)
+            .await,
+        "/after",
+    );
+}
+
+#[tokio::test]
+async fn reject_guards_the_admins() {
+    let app = TestApp::new().await;
+    let admin = app.setup_admin().await;
+    let admin_id = app.user_id(&admin).await;
+    decide(&app, &admin, &admin_id, "reject")
+        .await
+        .assert_error(StatusCode::FORBIDDEN, "forbidden");
+
+    // A second admin can reject the first...
+    let other = app.user("other@example.com").await;
+    let other_id = app.user_id(&other).await;
+    app.call(
+        "PATCH",
+        &format!("/api/v1/admin/users/{other_id}"),
+        &admin,
+        Some(json!({ "admin": true })),
+    )
+    .await
+    .assert(StatusCode::OK);
+    decide(&app, &other, &admin_id, "reject")
+        .await
+        .assert(StatusCode::OK);
+    app.get("/api/v1/admin/summary", &admin)
+        .await
+        .assert_error(StatusCode::UNAUTHORIZED, "unauthorized");
+    // ...and is then the last admin: a rejected admin doesn't count.
+    app.call(
+        "PATCH",
+        &format!("/api/v1/admin/users/{other_id}"),
+        &other,
+        Some(json!({ "admin": false })),
+    )
+    .await
+    .assert_error(StatusCode::CONFLICT, "last_admin");
+    // Rejecting the last admin is refused (through the API only reachable in a race,
+    // since the caller is an admin too).
+    let err = crate::accounts::admin::reject(
+        &app.state.db,
+        other_id.parse().unwrap(),
+        uuid::Uuid::now_v7(),
+    )
+    .await
+    .err()
+    .unwrap();
+    assert!(matches!(err, crate::errors::ApiError::LastAdmin), "{err:?}");
+    // Lifting the ban restores the first admin.
+    decide(&app, &other, &admin_id, "approve")
+        .await
+        .assert(StatusCode::OK);
+    let resp = app.login(super::support::ADMIN_EMAIL, PASSWORD).await;
+    resp.assert(StatusCode::OK);
+    let admin = As::Cookie(resp.cookie().unwrap());
+    assert_eq!(summary(&app, &admin).await, 0);
+}
