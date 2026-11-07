@@ -10,6 +10,7 @@ mod history;
 mod me;
 mod oauth;
 mod onboarding;
+mod presign;
 mod providers;
 mod quota;
 mod scopes;
