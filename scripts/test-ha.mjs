@@ -44,7 +44,7 @@ function hostPort(service, port) {
   return match[1];
 }
 
-let status = 1;
+let status;
 try {
   must('docker', [...compose, 'up', '-d', '--wait', 'postgres', 'minio', 'valkey']);
   must('docker', [...compose, 'run', '--rm', 'minio-init']);
