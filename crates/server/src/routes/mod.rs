@@ -8,11 +8,22 @@
 //! - everything else serves the built web UI from `WEB_DIR`, with `index.html` as the
 //!   fallback so client-side routes work on reload. If `WEB_DIR` is missing (e.g. API
 //!   only, or the UI isn't built yet) a warning is logged and those paths 404.
+//!
+//! Every `/api/v1` route runs behind `auth::middleware::layer` (setup gate, CSRF,
+//! credentials); each handler states what it accepts through its extractors
+//! (`SessionUser`, `AnyUser`, `AdminUser` or none). The route table with the auth
+//! requirement of each endpoint is in STRUCTURE.md ("API").
 
+mod admin;
+mod auth;
+mod devices;
+mod extract;
 mod health;
+mod me;
+mod setup;
 
 use axum::Router;
-use axum::routing::get;
+use axum::routing::{delete, get, patch, post};
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
@@ -21,7 +32,44 @@ pub use crate::state::AppState;
 
 /// Builds the complete application router.
 pub fn router(state: AppState) -> Router {
-    let api_v1 = Router::new().route("/health", get(health::health));
+    let api_v1 = Router::new()
+        .route("/health", get(health::health))
+        .route("/setup", get(setup::status).post(setup::complete))
+        .route("/auth/config", get(auth::config))
+        .route("/auth/register", post(auth::register))
+        .route("/auth/login", post(auth::login))
+        .route("/auth/logout", post(auth::logout))
+        .route("/auth/password-reset", post(auth::password_reset))
+        .route("/me", get(me::get).patch(me::update))
+        .route("/me/password", post(me::change_password))
+        .route("/me/sessions", get(me::list_sessions))
+        .route("/me/sessions/{id}", delete(me::delete_session))
+        .route("/devices", get(devices::list))
+        .route("/devices/authorize", post(devices::authorize))
+        .route("/devices/token", post(devices::token))
+        .route(
+            "/devices/{id}",
+            patch(devices::rename).delete(devices::revoke),
+        )
+        .route("/admin/users", get(admin::list_users))
+        .route("/admin/users/{id}", patch(admin::update_user))
+        .route(
+            "/admin/users/{id}/password-reset",
+            post(admin::create_password_reset),
+        )
+        .route(
+            "/admin/invites",
+            get(admin::list_invites).post(admin::create_invite),
+        )
+        .route("/admin/invites/{id}", delete(admin::revoke_invite))
+        .route(
+            "/admin/settings",
+            get(admin::get_settings).patch(admin::update_settings),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::auth::middleware::layer,
+        ));
 
     let api = Router::new()
         .nest("/v1", api_v1)

@@ -1,14 +1,17 @@
 //! [`AppState`]: the shared handles every request needs, built once at startup.
 //!
 //! Nothing correctness-relevant may live here in memory: instances must stay
-//! interchangeable (HA). The rate limiter's in-memory fallback is the one exception,
-//! and it only weakens abuse protection, never correctness.
+//! interchangeable (HA). Two exceptions, harmless by design: the rate limiter's
+//! in-memory fallback (it only weakens abuse protection) and `setup_done`, a cache of a
+//! fact that can never revert (setup, once completed, stays completed).
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use anyhow::Context as _;
 use sea_orm::DatabaseConnection;
 
+use crate::accounts::setup;
 use crate::cache::Redis;
 use crate::cache::rate_limit::RateLimiter;
 use crate::config::Config;
@@ -27,6 +30,8 @@ pub struct AppState {
     /// Random per process start; identifies this instance as a lease holder and in logs.
     pub instance_id: Arc<str>,
     pub leases: Leases,
+    /// Set once first-run setup is seen completed (see `auth::middleware`).
+    pub setup_done: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -44,6 +49,10 @@ impl AppState {
         db::migrate::run(&db, &config.data_dir.join("backups"))
             .await
             .context("migrating the database")?;
+
+        let setup_status = setup::init(&db, config.setup_token.as_ref())
+            .await
+            .context("preparing first-run setup")?;
 
         let blobs = BlobStore::from_config(&config.storage)?;
         tracing::info!(
@@ -75,6 +84,7 @@ impl AppState {
             redis,
             instance_id,
             leases,
+            setup_done: Arc::new(AtomicBool::new(!setup_status.is_pending())),
         })
     }
 }

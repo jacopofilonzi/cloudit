@@ -1,3 +1,10 @@
+mod admin;
+mod auth;
+mod devices;
+mod me;
+mod setup;
+mod support;
+
 use std::path::{Path, PathBuf};
 
 use axum::body::Body;

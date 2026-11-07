@@ -50,7 +50,16 @@ pub struct Config {
     pub storage: StorageConfig,
     /// `REDIS_URL` (`redis://…`; may hold a password). Optional.
     pub redis_url: Option<Secret>,
+    /// `SETUP_TOKEN`: fixed first-run setup token (at least 16 characters) instead of a
+    /// random one.
+    pub setup_token: Option<Secret>,
+    /// `TRUST_PROXY_HEADERS`, default `false`: trust `X-Forwarded-For/-Proto/-Host` from
+    /// a reverse proxy (client IP, https detection, CSRF origin).
+    pub trust_proxy_headers: bool,
 }
+
+/// Minimum length of `SETUP_TOKEN`.
+const MIN_SETUP_TOKEN_LEN: usize = 16;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -151,6 +160,19 @@ impl Config {
             }
         };
 
+        let setup_token = match get("SETUP_TOKEN") {
+            None => None,
+            Some(v) if v.chars().count() >= MIN_SETUP_TOKEN_LEN => Some(Secret::new(v)),
+            Some(_) => {
+                return Err(invalid(
+                    "SETUP_TOKEN",
+                    "***",
+                    format!("must be at least {MIN_SETUP_TOKEN_LEN} characters"),
+                ));
+            }
+        };
+        let trust_proxy_headers = env.bool_or("TRUST_PROXY_HEADERS", false)?;
+
         Ok(Self {
             bind_addr,
             port,
@@ -164,6 +186,8 @@ impl Config {
             db_max_connections,
             storage,
             redis_url,
+            setup_token,
+            trust_proxy_headers,
         })
     }
 
@@ -198,6 +222,25 @@ mod tests {
         );
         assert_eq!(config.log_filter, "info");
         assert_eq!(config.log_format, LogFormat::Pretty);
+        assert!(config.setup_token.is_none());
+        assert!(!config.trust_proxy_headers);
+    }
+
+    #[test]
+    fn reads_auth_values() {
+        let config = parse(&[
+            ("SETUP_TOKEN", "0123456789abcdef"),
+            ("TRUST_PROXY_HEADERS", "true"),
+        ])
+        .unwrap();
+        assert_eq!(
+            config.setup_token.as_ref().map(Secret::expose),
+            Some("0123456789abcdef")
+        );
+        assert!(config.trust_proxy_headers);
+        let err = parse(&[("SETUP_TOKEN", "short-secret")]).unwrap_err();
+        assert!(!err.to_string().contains("short-secret"), "{err}");
+        assert!(parse(&[("TRUST_PROXY_HEADERS", "maybe")]).is_err());
     }
 
     #[test]
