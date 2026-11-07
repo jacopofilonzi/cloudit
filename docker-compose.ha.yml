@@ -24,6 +24,9 @@ x-cloudit: &cloudit
   environment:
     DATABASE_URL: postgres://cloudit:cloudit-dev-password@postgres:5432/cloudit
     DB_MAX_CONNECTIONS: '10'
+    # Required with PostgreSQL, identical on every replica (encrypts identity-provider
+    # client secrets). Example value: generate your own with `cloudit-server gen-secret-key`.
+    SECRET_KEY: Y2xvdWRpdC1oYS1leGFtcGxlLWtleS1ub3QtZm9yLXA=
     STORAGE: s3
     S3_ENDPOINT: http://garage:3900
     # Garage's region is whatever s3_region says in docker/garage.toml.

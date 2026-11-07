@@ -14,6 +14,8 @@ use std::path::PathBuf;
 pub use secret::Secret;
 pub use storage::{S3Config, StorageConfig};
 
+use crate::crypto::SecretKey;
+
 use env::{Env, invalid};
 
 /// Log output format (`LOG_FORMAT`).
@@ -53,6 +55,9 @@ pub struct Config {
     /// `SETUP_TOKEN`: fixed first-run setup token (at least 16 characters) instead of a
     /// random one.
     pub setup_token: Option<Secret>,
+    /// `SECRET_KEY`: base64 of 32 bytes, encrypts provider client secrets. Unset: an
+    /// auto-generated `<DATA_DIR>/secret.key` (SQLite only; see `crypto::key`).
+    pub secret_key: Option<SecretKey>,
     /// `TRUST_PROXY_HEADERS`, default `false`: trust `X-Forwarded-For/-Proto/-Host` from
     /// a reverse proxy (client IP, https detection, CSRF origin).
     pub trust_proxy_headers: bool,
@@ -172,6 +177,13 @@ impl Config {
             }
         };
         let trust_proxy_headers = env.bool_or("TRUST_PROXY_HEADERS", false)?;
+        let secret_key = match get("SECRET_KEY") {
+            None => None,
+            // Never echo the value.
+            Some(v) => {
+                Some(SecretKey::parse(&v).map_err(|reason| invalid("SECRET_KEY", "***", reason))?)
+            }
+        };
 
         Ok(Self {
             bind_addr,
@@ -187,6 +199,7 @@ impl Config {
             storage,
             redis_url,
             setup_token,
+            secret_key,
             trust_proxy_headers,
         })
     }
@@ -241,6 +254,19 @@ mod tests {
         let err = parse(&[("SETUP_TOKEN", "short-secret")]).unwrap_err();
         assert!(!err.to_string().contains("short-secret"), "{err}");
         assert!(parse(&[("TRUST_PROXY_HEADERS", "maybe")]).is_err());
+    }
+
+    #[test]
+    fn reads_secret_key() {
+        let key = "q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s=";
+        let config = parse(&[("SECRET_KEY", key)]).unwrap();
+        assert_eq!(config.secret_key, Some(SecretKey::from_bytes([0xab; 32])));
+        assert!(parse(&[]).unwrap().secret_key.is_none());
+        let err = parse(&[("SECRET_KEY", "dG9vIHNob3J0")])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("32 bytes"), "{err}");
+        assert!(!err.contains("dG9vIHNob3J0"), "{err}");
     }
 
     #[test]

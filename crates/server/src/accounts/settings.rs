@@ -63,6 +63,47 @@ async fn set<T: Serialize>(
     Ok(())
 }
 
+/// Reads `key`; unlike the typed getters an unreadable value is an error.
+pub async fn get_strict<T: DeserializeOwned>(
+    db: &impl ConnectionTrait,
+    key: &str,
+) -> anyhow::Result<Option<T>> {
+    let Some(row) = settings::Entity::find_by_id(key.to_owned())
+        .one(db)
+        .await
+        .with_context(|| format!("reading setting {key}"))?
+    else {
+        return Ok(None);
+    };
+    serde_json::from_str(&row.value)
+        .map(Some)
+        .with_context(|| format!("decoding setting {key}"))
+}
+
+/// Writes `key` only if it has no value yet (the first concurrent writer wins).
+pub async fn insert_if_absent<T: Serialize>(
+    db: &impl ConnectionTrait,
+    key: &str,
+    value: &T,
+) -> anyhow::Result<()> {
+    let model = settings::ActiveModel {
+        key: Set(key.to_owned()),
+        value: Set(serde_json::to_string(value).context("encoding a setting")?),
+        updated_at: Set(crate::time::now()),
+        updated_by: Set(None),
+    };
+    settings::Entity::insert(model)
+        .on_conflict(
+            OnConflict::column(settings::Column::Key)
+                .do_nothing()
+                .to_owned(),
+        )
+        .exec_without_returning(db)
+        .await
+        .with_context(|| format!("writing setting {key}"))?;
+    Ok(())
+}
+
 pub async fn registration_mode(db: &impl ConnectionTrait) -> anyhow::Result<RegistrationMode> {
     Ok(get(db, REGISTRATION_MODE).await?.unwrap_or_default())
 }

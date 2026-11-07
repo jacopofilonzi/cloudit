@@ -5,6 +5,7 @@
 //! - `setup-token`: prints the pending first-run setup token, or says setup is done.
 //! - `admin reset-password <email>`: emergency password-reset link for an account (also
 //!   one without a password), printed as a path and, with `PUBLIC_URL`, a full URL.
+//! - `gen-secret-key`: prints a new random `SECRET_KEY` (needs no configuration).
 //! - `healthcheck`: the Docker probe (see [`crate::healthcheck`]).
 
 use std::io::Write as _;
@@ -22,6 +23,7 @@ usage: cloudit-server [COMMAND]
 Without a command, runs the server. Commands:
   setup-token                    print the pending first-run setup token
   admin reset-password <email>   create a password-reset link for an account (24 h)
+  gen-secret-key                 print a new random SECRET_KEY (base64 of 32 bytes)
   healthcheck                    probe GET /health on 127.0.0.1:$PORT (Docker HEALTHCHECK)
   help                           show this help
 ";
@@ -32,6 +34,7 @@ pub enum Command {
     Serve,
     Healthcheck,
     SetupToken,
+    GenSecretKey,
     AdminResetPassword { email: String },
     Help,
 }
@@ -43,6 +46,7 @@ pub fn parse(args: &[String]) -> anyhow::Result<Command> {
         [] => Command::Serve,
         ["healthcheck"] => Command::Healthcheck,
         ["setup-token"] => Command::SetupToken,
+        ["gen-secret-key"] => Command::GenSecretKey,
         ["admin", "reset-password", email] => Command::AdminResetPassword {
             email: (*email).to_owned(),
         },
@@ -108,6 +112,14 @@ pub async fn reset_password_text(config: &Config, email: &str) -> anyhow::Result
     Ok(text)
 }
 
+/// `gen-secret-key`: the key alone on a line.
+pub fn gen_secret_key() -> anyhow::Result<()> {
+    print(&format!(
+        "{}\n",
+        crate::crypto::SecretKey::generate()?.encode()
+    ))
+}
+
 /// Prints the help text.
 pub fn help() -> anyhow::Result<()> {
     print(USAGE)
@@ -129,6 +141,10 @@ mod tests {
             Command::Healthcheck
         );
         assert_eq!(parse(&args(&["setup-token"])).unwrap(), Command::SetupToken);
+        assert_eq!(
+            parse(&args(&["gen-secret-key"])).unwrap(),
+            Command::GenSecretKey
+        );
         assert_eq!(
             parse(&args(&["admin", "reset-password", "a@b.c"])).unwrap(),
             Command::AdminResetPassword {

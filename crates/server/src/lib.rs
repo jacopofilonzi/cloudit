@@ -8,6 +8,7 @@
 //! - [`db`]: SeaORM connection (SQLite or PostgreSQL), migrations, leases.
 //! - [`storage`]: [`storage::BlobStore`] over `object_store` (filesystem or S3).
 //! - [`cache`]: optional Redis and the rate limiter.
+//! - [`crypto`]: the server key and encryption of stored secrets.
 //! - [`accounts`]: users, first-run setup, settings, invites, password resets.
 //! - [`auth`]: passwords, sessions, device tokens, CSRF, extractors, rate limits.
 //! - [`devices`]: desktop devices and their loopback + PKCE login.
@@ -16,7 +17,8 @@
 //! - [`errors`]: [`errors::ApiError`] and its JSON shape with stable error codes.
 //! - [`routes`]: the axum router (health probes, `/api/v1`, SPA static files).
 //! - [`logging`]: tracing subscriber setup (`pretty` or `json`).
-//! - [`shutdown`]: graceful-shutdown signal (the only OS-specific code).
+//! - [`shutdown`], [`platform`]: graceful-shutdown signal and private files (the only
+//!   OS-specific code).
 //! - [`healthcheck`]: `cloudit-server healthcheck` probe for the Docker `HEALTHCHECK`.
 
 pub mod accounts;
@@ -24,11 +26,13 @@ pub mod auth;
 pub mod cache;
 pub mod cli;
 pub mod config;
+pub mod crypto;
 pub mod db;
 pub mod devices;
 pub mod errors;
 pub mod healthcheck;
 pub mod logging;
+pub mod platform;
 pub mod routes;
 pub mod shutdown;
 pub mod state;

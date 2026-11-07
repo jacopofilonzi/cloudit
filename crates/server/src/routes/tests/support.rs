@@ -22,6 +22,8 @@ use crate::state::AppState;
 pub const ORIGIN: &str = "http://localhost";
 pub const ADMIN_EMAIL: &str = "admin@example.com";
 pub const PASSWORD: &str = "correct horse battery";
+/// `SECRET_KEY` used with PostgreSQL (base64 of 32 × 0x01).
+pub const TEST_SECRET_KEY: &str = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
 
 /// Credentials of a request.
 #[derive(Debug, Clone)]
@@ -105,6 +107,10 @@ impl TestApp {
                 .iter()
                 .map(|(k, v)| ((*k).to_owned(), (*v).to_owned())),
         );
+        // PostgreSQL refuses to start without a key (SQLite generates its key file).
+        if db.url().is_some() && !extra.iter().any(|(k, _)| *k == "SECRET_KEY") {
+            vars.push(("SECRET_KEY".to_owned(), TEST_SECRET_KEY.to_owned()));
+        }
         let state = AppState::init(Self::config(&vars)).await.unwrap();
         let app = router(state.clone());
         let origin = state.config.public_url.as_deref().map_or_else(

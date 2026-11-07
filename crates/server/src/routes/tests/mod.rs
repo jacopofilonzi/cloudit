@@ -2,6 +2,7 @@ mod admin;
 mod auth;
 mod devices;
 mod me;
+mod secret_key;
 mod setup;
 mod support;
 

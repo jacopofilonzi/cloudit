@@ -15,6 +15,8 @@ use crate::accounts::setup;
 use crate::cache::Redis;
 use crate::cache::rate_limit::RateLimiter;
 use crate::config::Config;
+use crate::crypto::key::KeySource;
+use crate::crypto::{self, SecretBox};
 use crate::db;
 use crate::db::lease::Leases;
 use crate::storage::BlobStore;
@@ -32,6 +34,8 @@ pub struct AppState {
     pub leases: Leases,
     /// Set once first-run setup is seen completed (see `auth::middleware`).
     pub setup_done: Arc<AtomicBool>,
+    /// Encryption with the server key (provider client secrets).
+    pub secrets: SecretBox,
 }
 
 impl AppState {
@@ -46,9 +50,28 @@ impl AppState {
             backend = db::backend_name(db.get_database_backend()),
             "database connected"
         );
+        // Before migrating: a PostgreSQL deployment without SECRET_KEY stops here.
+        let (key, key_source) = crypto::key::resolve(
+            config.secret_key.as_ref(),
+            db.get_database_backend(),
+            &config.data_dir,
+        )?;
+        match &key_source {
+            KeySource::Env => tracing::info!("secret key from SECRET_KEY"),
+            KeySource::File(path) => {
+                tracing::info!(path = %path.display(), "secret key from the key file");
+            }
+            KeySource::Generated(path) => tracing::warn!(
+                path = %path.display(),
+                "generated a new secret key file: back it up together with the database"
+            ),
+        }
+        let secrets = SecretBox::new(&key);
+
         db::migrate::run(&db, &config.data_dir.join("backups"))
             .await
             .context("migrating the database")?;
+        crypto::canary::verify_or_store(&db, &secrets).await?;
 
         let setup_status = setup::init(&db, config.setup_token.as_ref())
             .await
@@ -85,6 +108,7 @@ impl AppState {
             instance_id,
             leases,
             setup_done: Arc::new(AtomicBool::new(!setup_status.is_pending())),
+            secrets,
         })
     }
 }

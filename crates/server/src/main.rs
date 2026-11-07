@@ -14,8 +14,10 @@ use cloudit_server::{healthcheck, logging, shutdown};
 async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let command = cli::parse(&args)?;
-    if command == Command::Help {
-        return cli::help();
+    match command {
+        Command::Help => return cli::help(),
+        Command::GenSecretKey => return cli::gen_secret_key(),
+        _ => {}
     }
 
     let config = Config::from_env().context("reading configuration")?;
@@ -25,6 +27,7 @@ async fn main() -> anyhow::Result<()> {
         Command::SetupToken => cli::setup_token(&config).await,
         Command::AdminResetPassword { email } => cli::reset_password(&config, &email).await,
         Command::Help => cli::help(),
+        Command::GenSecretKey => cli::gen_secret_key(),
     }
 }
 
