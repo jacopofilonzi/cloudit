@@ -19,13 +19,25 @@ axum = "0.8.9"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 thiserror = "2.0.21"
-tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "net", "signal"] }
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "net", "signal", "time", "sync", "fs"] }
 tower = { version = "0.5.3", features = ["util"] }
 tower-http = { version = "0.7.1", features = ["fs", "trace"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 ts-rs = "12.0.1"
 http-body-util = "0.1.5"
+sea-orm = { version = "2.0.4", default-features = false, features = ["macros", "runtime-tokio-rustls", "sqlx-sqlite", "sqlx-postgres", "with-chrono", "with-uuid"] }
+sea-orm-migration = { version = "2.0.4", default-features = false, features = ["runtime-tokio-rustls", "sqlx-sqlite", "sqlx-postgres"] }
+object_store = { version = "0.14.2", features = ["aws"] }
+redis = { version = "1.8.1", default-features = false, features = ["tokio-comp", "connection-manager"] }
+uuid = { version = "1.29.1", features = ["v4", "v7"] }
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+url = "2.5.8"
+futures = "0.3.34"
+bytes = "1.12.1"
+tempfile = "3.27.0"
+# Tests only (already in the tree through object_store): presigned URL checks.
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
