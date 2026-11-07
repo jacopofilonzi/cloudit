@@ -1,13 +1,16 @@
 //! API error type: every handler returns `Result<_, ApiError>`, and every error
 //! leaves the server as JSON `{ "code": "...", "message": "..." }` (see
-//! [`cloudit_core::protocol::ApiErrorBody`]).
+//! [`cloudit_core::protocol::ApiErrorBody`]), plus `field` for validation errors and a
+//! `Retry-After` header for rate limits.
 //!
 //! `code` is stable and machine-readable; `message` is English for logs. Internal
 //! errors are logged with their full context but answered with a generic message,
 //! so causes (paths, SQL, upstream bodies) never leak to clients.
 
+use std::time::Duration;
+
 use axum::Json;
-use axum::http::StatusCode;
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use cloudit_core::protocol::{ApiErrorBody, ErrorCode};
 
@@ -19,17 +22,73 @@ pub enum ApiError {
     NotFound,
     #[error("service unavailable: {0}")]
     Unavailable(String),
+    #[error("authentication required")]
+    Unauthorized,
+    #[error("forbidden")]
+    Forbidden,
+    #[error("invalid email or password")]
+    InvalidCredentials,
+    #[error("account disabled")]
+    AccountDisabled,
+    #[error("registration is closed")]
+    RegistrationClosed,
+    #[error("invalid invite")]
+    InviteInvalid,
+    #[error("invalid or expired token")]
+    TokenInvalid,
+    #[error("email already in use")]
+    EmailTaken,
+    #[error("invalid {field}: {message}")]
+    Validation {
+        field: &'static str,
+        message: String,
+    },
+    #[error("too many requests")]
+    RateLimited { retry_after: Duration },
+    #[error("cross-site request refused")]
+    CsrfFailed,
+    #[error("first-run setup required")]
+    SetupRequired,
+    #[error("setup already completed")]
+    SetupAlreadyDone,
+    #[error("invalid setup token")]
+    SetupTokenInvalid,
+    #[error("this would leave no enabled admin")]
+    LastAdmin,
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
 
 impl ApiError {
+    /// A `validation_failed` error on `field`.
+    pub fn validation(field: &'static str, message: impl Into<String>) -> Self {
+        Self::Validation {
+            field,
+            message: message.into(),
+        }
+    }
+
     #[must_use]
     pub fn code(&self) -> ErrorCode {
         match self {
             Self::BadRequest(_) => ErrorCode::BadRequest,
             Self::NotFound => ErrorCode::NotFound,
             Self::Unavailable(_) => ErrorCode::Unavailable,
+            Self::Unauthorized => ErrorCode::Unauthorized,
+            Self::Forbidden => ErrorCode::Forbidden,
+            Self::InvalidCredentials => ErrorCode::InvalidCredentials,
+            Self::AccountDisabled => ErrorCode::AccountDisabled,
+            Self::RegistrationClosed => ErrorCode::RegistrationClosed,
+            Self::InviteInvalid => ErrorCode::InviteInvalid,
+            Self::TokenInvalid => ErrorCode::TokenInvalid,
+            Self::EmailTaken => ErrorCode::EmailTaken,
+            Self::Validation { .. } => ErrorCode::ValidationFailed,
+            Self::RateLimited { .. } => ErrorCode::RateLimited,
+            Self::CsrfFailed => ErrorCode::CsrfFailed,
+            Self::SetupRequired => ErrorCode::SetupRequired,
+            Self::SetupAlreadyDone => ErrorCode::SetupAlreadyDone,
+            Self::SetupTokenInvalid => ErrorCode::SetupTokenInvalid,
+            Self::LastAdmin => ErrorCode::LastAdmin,
             Self::Internal(_) => ErrorCode::Internal,
         }
     }
@@ -37,9 +96,22 @@ impl ApiError {
     #[must_use]
     pub fn status(&self) -> StatusCode {
         match self {
-            Self::BadRequest(_) => StatusCode::BAD_REQUEST,
+            Self::BadRequest(_) | Self::InviteInvalid | Self::TokenInvalid => {
+                StatusCode::BAD_REQUEST
+            }
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            Self::Unauthorized | Self::InvalidCredentials => StatusCode::UNAUTHORIZED,
+            Self::Forbidden
+            | Self::AccountDisabled
+            | Self::RegistrationClosed
+            | Self::CsrfFailed
+            | Self::SetupTokenInvalid => StatusCode::FORBIDDEN,
+            Self::EmailTaken | Self::SetupRequired | Self::SetupAlreadyDone | Self::LastAdmin => {
+                StatusCode::CONFLICT
+            }
+            Self::Validation { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -54,11 +126,24 @@ impl IntoResponse for ApiError {
             }
             other => other.to_string(),
         };
+        let field = match &self {
+            Self::Validation { field, .. } => Some((*field).to_owned()),
+            _ => None,
+        };
         let body = ApiErrorBody {
             code: self.code(),
             message,
+            field,
         };
-        (self.status(), Json(body)).into_response()
+        let mut response = (self.status(), Json(body)).into_response();
+        if let Self::RateLimited { retry_after } = self {
+            // Whole seconds, rounded up, at least 1.
+            let secs = retry_after.as_secs() + u64::from(retry_after.subsec_nanos() > 0);
+            response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, HeaderValue::from(secs.max(1)));
+        }
+        response
     }
 }
 
@@ -79,6 +164,7 @@ mod tests {
         let (status, body) = body_of(ApiError::NotFound).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert_eq!(body["code"], "not_found");
+        assert!(body.get("field").is_none());
     }
 
     #[tokio::test]
@@ -88,5 +174,23 @@ mod tests {
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(body["code"], "internal");
         assert_eq!(body["message"], "internal server error");
+    }
+
+    #[tokio::test]
+    async fn validation_names_the_field() {
+        let (status, body) = body_of(ApiError::validation("email", "not an email")).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(body["code"], "validation_failed");
+        assert_eq!(body["field"], "email");
+    }
+
+    #[tokio::test]
+    async fn rate_limited_sets_retry_after() {
+        let response = ApiError::RateLimited {
+            retry_after: Duration::from_millis(1500),
+        }
+        .into_response();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(response.headers()[header::RETRY_AFTER], "2");
     }
 }

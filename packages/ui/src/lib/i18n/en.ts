@@ -15,6 +15,23 @@ export const en = {
   'error.not_found': 'Not found.',
   'error.unavailable': 'The server is temporarily unavailable. Try again later.',
   'error.internal': 'Something went wrong on the server.',
+  'error.unauthorized': 'Please sign in.',
+  'error.forbidden': 'You are not allowed to do this.',
+  'error.invalid_credentials': 'Wrong email or password.',
+  'error.account_disabled': 'This account has been disabled.',
+  'error.registration_closed': 'Registration is closed on this server.',
+  'error.invite_invalid':
+    'This invite is not valid: it may be used, expired or meant for another email.',
+  'error.token_invalid': 'This link or code is not valid or has expired.',
+  'error.email_taken': 'An account with this email already exists.',
+  'error.validation_failed': 'Some fields are not valid.',
+  'error.rate_limited': 'Too many attempts. Wait a moment and try again.',
+  'error.csrf_failed':
+    'The request was blocked for security reasons. Reload the page and try again.',
+  'error.setup_required': 'The server needs to be set up first.',
+  'error.setup_already_done': 'The server has already been set up.',
+  'error.setup_token_invalid': 'Wrong setup token.',
+  'error.last_admin': 'At least one active administrator must remain.',
   'error.network': 'Cannot reach the server.',
   'error.unknown': 'Unexpected error.'
 } as const;

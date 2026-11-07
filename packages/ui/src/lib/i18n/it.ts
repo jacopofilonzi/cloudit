@@ -15,6 +15,23 @@ export const it: Dictionary = {
   'error.not_found': 'Non trovato.',
   'error.unavailable': 'Il server non è al momento disponibile. Riprova più tardi.',
   'error.internal': 'Si è verificato un errore sul server.',
+  'error.unauthorized': 'Accedi per continuare.',
+  'error.forbidden': 'Non hai i permessi per questa operazione.',
+  'error.invalid_credentials': 'Email o password errata.',
+  'error.account_disabled': 'Questo account è stato disattivato.',
+  'error.registration_closed': 'Le registrazioni sono chiuse su questo server.',
+  'error.invite_invalid':
+    "Questo invito non è valido: potrebbe essere già usato, scaduto o destinato a un'altra email.",
+  'error.token_invalid': 'Questo link o codice non è valido o è scaduto.',
+  'error.email_taken': 'Esiste già un account con questa email.',
+  'error.validation_failed': 'Alcuni campi non sono validi.',
+  'error.rate_limited': 'Troppi tentativi. Attendi un momento e riprova.',
+  'error.csrf_failed':
+    'La richiesta è stata bloccata per motivi di sicurezza. Ricarica la pagina e riprova.',
+  'error.setup_required': 'Il server deve prima essere configurato.',
+  'error.setup_already_done': 'Il server è già stato configurato.',
+  'error.setup_token_invalid': 'Token di configurazione errato.',
+  'error.last_admin': 'Deve rimanere almeno un amministratore attivo.',
   'error.network': 'Impossibile raggiungere il server.',
   'error.unknown': 'Errore imprevisto.'
 };

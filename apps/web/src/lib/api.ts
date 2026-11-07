@@ -33,7 +33,22 @@ const SERVER_CODES: Record<ErrorCode, true> = {
   bad_request: true,
   not_found: true,
   unavailable: true,
-  internal: true
+  internal: true,
+  unauthorized: true,
+  forbidden: true,
+  invalid_credentials: true,
+  account_disabled: true,
+  registration_closed: true,
+  invite_invalid: true,
+  token_invalid: true,
+  email_taken: true,
+  validation_failed: true,
+  rate_limited: true,
+  csrf_failed: true,
+  setup_required: true,
+  setup_already_done: true,
+  setup_token_invalid: true,
+  last_admin: true
 };
 
 function isErrorBody(value: unknown): value is ApiErrorBody {

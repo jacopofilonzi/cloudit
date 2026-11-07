@@ -8,4 +8,8 @@ export type ApiErrorBody = { code: ErrorCode,
 /**
  * English description for logs and debugging; never shown to users as-is.
  */
-message: string, };
+message: string, 
+/**
+ * With `validation_failed`: the request field at fault (e.g. `email`).
+ */
+field?: string, };

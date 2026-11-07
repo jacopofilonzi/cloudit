@@ -3,6 +3,29 @@
 //! Types derive `ts_rs::TS` only under `cfg(test)`: the export happens in the
 //! generated `export_bindings_*` tests, so `ts-rs` stays a dev-dependency and never
 //! ships in the server binary. Run `make types` after changing anything here.
+//!
+//! Conventions: ids are UUID strings; timestamps are RFC 3339 UTC strings
+//! (`2026-01-31T12:00:00Z`); request bodies reject unknown fields; optional request
+//! fields may be omitted; secret values (passwords, tokens) are [`Sensitive`], which
+//! never prints its content in `Debug` output.
+//!
+//! - this file: health and readiness probes, error codes and the error body;
+//! - [`auth`]: first-run setup, registration, login, password reset;
+//! - [`me`]: the signed-in user's profile, password and sessions;
+//! - [`devices`]: desktop client login (loopback + PKCE) and device management;
+//! - [`admin`]: user management, invites, password resets and server settings.
+
+mod admin;
+mod auth;
+mod devices;
+mod me;
+mod sensitive;
+
+pub use admin::*;
+pub use auth::*;
+pub use devices::*;
+pub use me::*;
+pub use sensitive::Sensitive;
 
 use serde::{Deserialize, Serialize};
 
@@ -88,6 +111,39 @@ pub enum ErrorCode {
     Unavailable,
     /// Unexpected server-side failure.
     Internal,
+    /// Not signed in, or the session / device token is invalid or expired (401).
+    Unauthorized,
+    /// Signed in, but not allowed (admin only, or a device token on a session-only
+    /// route) (403).
+    Forbidden,
+    /// Wrong email or password; deliberately the same for both (401).
+    InvalidCredentials,
+    /// The account is disabled by an admin (403).
+    AccountDisabled,
+    /// Registration mode is `closed` (403).
+    RegistrationClosed,
+    /// The invite is unknown, used, expired, revoked, missing (mode `invite`) or bound
+    /// to another email (400).
+    InviteInvalid,
+    /// A password-reset token, device authorization code or PKCE verifier is invalid,
+    /// used or expired (400).
+    TokenInvalid,
+    /// Another account already uses this email (409).
+    EmailTaken,
+    /// A field fails validation; `field` in the error body names it (422).
+    ValidationFailed,
+    /// Too many attempts; retry after the `Retry-After` header (429).
+    RateLimited,
+    /// Cross-site request refused: `Origin` doesn't match the server (403).
+    CsrfFailed,
+    /// First-run setup is not done yet: only setup, health and `auth/config` work (409).
+    SetupRequired,
+    /// First-run setup was already completed (409).
+    SetupAlreadyDone,
+    /// Wrong setup token (403).
+    SetupTokenInvalid,
+    /// The change would leave no enabled admin (409).
+    LastAdmin,
 }
 
 /// JSON body of every API error response.
@@ -97,6 +153,10 @@ pub struct ApiErrorBody {
     pub code: ErrorCode,
     /// English description for logs and debugging; never shown to users as-is.
     pub message: String,
+    /// With `validation_failed`: the request field at fault (e.g. `email`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub field: Option<String>,
 }
 
 #[cfg(test)]
@@ -108,6 +168,7 @@ mod tests {
         let body = ApiErrorBody {
             code: ErrorCode::NotFound,
             message: "no route".to_owned(),
+            field: None,
         };
         let json = serde_json::to_value(&body).unwrap();
         assert_eq!(
@@ -117,6 +178,19 @@ mod tests {
         assert_eq!(
             serde_json::to_value(ErrorCode::BadRequest).unwrap(),
             serde_json::json!("bad_request")
+        );
+        let body = ApiErrorBody {
+            code: ErrorCode::ValidationFailed,
+            message: "bad email".to_owned(),
+            field: Some("email".to_owned()),
+        };
+        assert_eq!(
+            serde_json::to_value(&body).unwrap(),
+            serde_json::json!({ "code": "validation_failed", "message": "bad email", "field": "email" })
+        );
+        assert_eq!(
+            serde_json::to_value(ErrorCode::SetupAlreadyDone).unwrap(),
+            serde_json::json!("setup_already_done")
         );
     }
 
