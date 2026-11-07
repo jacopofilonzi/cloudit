@@ -9,7 +9,8 @@ with other users.
 
 **Status: early development.** The server has its storage infrastructure (database, blob
 storage, optional Redis), the account API (setup, password accounts, invites, desktop device
-login, admin, sign-in with OIDC / GitHub / Discord) and serves a placeholder web page. Nothing syncs yet; don't use it for real data.
+login, admin, sign-in with OIDC / GitHub / Discord), scopes, folders, sharing and the trash
+(API only), and serves a placeholder web page. Nothing syncs yet; don't use it for real data.
 
 ## Quick start (Docker)
 
@@ -81,6 +82,27 @@ password:
 ```sh
 docker compose exec cloudit cloudit-server admin reset-password you@example.com
 ```
+
+## Scopes, folders and sharing
+
+A **scope** groups folders (e.g. "Games"); each **folder** is one synced unit. A scope belongs
+to the user who created it and can be shared with other users by their exact email (an
+approved, enabled account; there is no user directory) as:
+
+- **viewer**: sees the scope, its folders and their history, downloads;
+- **editor** (the default): also creates and renames folders and uploads new versions;
+- **admin**: also moves folders to the trash, restores them and changes their retention.
+
+Only the owner renames the scope, moves it to the trash, and adds, changes or removes
+members; any member can leave. Server admins have no access to other users' scopes.
+
+Names are unique, ignoring case, among a user's scopes and among a scope's folders.
+Deleting a scope or folder moves it to the **trash** (`GET /api/v1/trash`), where it can be
+restored (under another name if its old one was taken meanwhile) for `trash_retention_days`
+(admin setting, default 30); automatic purging comes later. A folder keeps by default the
+last 20 versions and at most 5 per day (admin settings `retention_max_versions`,
+`retention_max_per_day`; `0` = unlimited), overridable per folder; the retention job comes
+later.
 
 ## Sign-in providers (OIDC, GitHub, Discord)
 
@@ -188,6 +210,9 @@ The server applies database migrations when it starts. With SQLite it backs up t
 first and refuses to start if the backup fails. With PostgreSQL take a backup yourself
 (`pg_dump`) before upgrading.
 
+- **Next release (scopes and folders):** nothing required. New tables (`scopes`,
+  `scope_members`, `folders`) are created at startup; `GET/PATCH /api/v1/admin/settings`
+  gain `retention_max_versions`, `retention_max_per_day` and `trash_retention_days`.
 - **Next release (sign-in providers):** with **PostgreSQL** set `SECRET_KEY` (same value on
   every instance, `cloudit-server gen-secret-key`) before upgrading, or the server refuses to
   start. With SQLite nothing is required: the first start writes `<DATA_DIR>/secret.key`;

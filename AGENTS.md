@@ -122,8 +122,18 @@ and align this project's copies with it:
 - A snapshot commit is the conditional head update
   (`UPDATE folders SET head = new WHERE id = ? AND head = parent` → 201, or 409 on conflict), never a
   read-modify-write.
-- Chunks are content-addressed per owner namespace (`owners/{owner_id}/chunks/{sha256}`): no
-  cross-user dedup.
+- Chunks are content-addressed per scope namespace (`scopes/{scope_id}/chunks/{sha256}`): no
+  cross-scope dedup, so an editor of a shared scope can never write into the namespace of the
+  owner's other scopes. Storage quotas charge a scope's stored size to the scope's owner.
+- Every request on a scope or folder resolves the caller's role through `scopes::access`
+  (`ScopeAccess` / `FolderAccess`, then `require(role)`), never with ad-hoc queries in a
+  handler: anything the caller can't see (not a member, in the trash, unknown id) is 404
+  `not_found`; 403 `forbidden` only when it is visible but the role is too low. Server admins
+  get no implicit access to users' scopes. Membership management is owner-only (any member
+  may leave).
+- Scope and folder names are unique (ignoring case) among non-trashed siblings through the
+  `active_key` UNIQUE indexes (NULL in the trash): create, rename and restore are single
+  statements that map a unique violation to `name_taken`; never check-then-insert.
 - Snapshots are immutable; a restore creates a new snapshot. Deleting data is soft (trash), except
   retention/GC jobs, which run with a grace period.
 - Frontend API types are generated from Rust (ts-rs) into `packages/api-types/src/generated/`: run

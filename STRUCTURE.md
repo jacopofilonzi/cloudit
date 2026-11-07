@@ -5,13 +5,15 @@ users' folders; a desktop client (planned) syncs local folders with it, and a we
 server as a static SPA) manages accounts, scopes and folders. The UIs talk to the server only
 through its JSON API under `/api/v1`, whose TypeScript types are generated from the Rust ones.
 
-Current state (milestone 3c): the server has its infrastructure (database with migrations and
+Current state (milestone 4a): the server has its infrastructure (database with migrations and
 leases, blob storage, optional Redis with a rate limiter, readiness checks), exposes health probes,
 serves the web SPA and has the account API: first-run setup, password accounts with web sessions,
 invites, admin approval of new accounts, password resets, desktop device login (loopback +
 PKCE), admin endpoints, and sign-in through identity providers (OIDC presets, GitHub,
-Discord) configured by admins, with onboarding and identity linking. API only: the web pages
-come with the mockups of milestone 5 (the web page shows the server status).
+Discord) configured by admins, with onboarding and identity linking. It also has scopes,
+folders, sharing with roles, the trash and the retention settings (no snapshots yet). API
+only: the web pages come with the mockups of milestone 5 (the web page shows the server
+status).
 `cloudit-core` implements the sync formats (chunking, chunk encoding, manifest, path rules, diff;
 see "Sync formats"), not used by the server yet. Everything under "Planned design" is not
 implemented yet.
@@ -69,8 +71,13 @@ crates/core/src/
 │   │                 ProviderInfo, CreateProviderRequest, UpdateProviderRequest, ProviderTestResult
 │   ├── oauth.rs      OAuthPurpose, OAuthStartRequest, OAuthStartResponse, IdentityInfo,
 │   │                 IdentityProviderRef
-│   └── onboarding.rs OnboardingInfo, OnboardingProvider, OnboardingCreateRequest,
-│                     OnboardingLinkRequest
+│   ├── onboarding.rs OnboardingInfo, OnboardingProvider, OnboardingCreateRequest,
+│   │                 OnboardingLinkRequest
+│   ├── scopes.rs     ScopeRole (ordered), MemberRole (default editor), ScopeUser, ScopeInfo,
+│   │                 Create/UpdateScopeRequest, RestoreRequest, ScopeMember, AddMemberRequest,
+│   │                 UpdateMemberRequest, TrashItemKind, TrashItem
+│   └── folders.rs    FolderInfo, CreateFolderRequest, UpdateFolderRequest, Patch<T> (retention:
+│                     omitted / null / number)
 ├── error.rs          HashParseError, PathError, ChunkerError, ChunkError, ManifestError (thiserror;
 │                     variants are stable kinds, `code()` gives a stable snake_case string)
 ├── hash.rs           ChunkHash, ManifestHash: SHA-256 newtypes, strict lowercase-hex FromStr/Display/serde
@@ -105,7 +112,7 @@ crates/server/src/
 │                     key, connects + migrates, checks the key canary, setup::init (fatal on
 │                     error); Redis is never fatal; `public_url()` = effective public URL
 ├── validate.rs       email (trim + lowercase + shape), text / display_name (trimmed, bounded),
-│                     public_url (http(s)://host[:port] only)
+│                     public_url (http(s)://host[:port] only), range, retention (0..=100000)
 ├── time.rs           now (µs precision), add, rfc3339 (API timestamps `2026-01-31T12:00:00Z`)
 ├── platform.rs       write_new_private_file (0600 on Unix): with shutdown.rs the only OS-specific code
 ├── crypto/           server key and encryption of stored secrets
@@ -123,7 +130,8 @@ crates/server/src/
 │   ├── setup.rs      setup_state: init at startup (same token on every instance), status,
 │   │                 check_token, complete (conditional UPDATE)
 │   ├── settings.rs   settings table: registration_mode (default invite), password_new_accounts
-│   │                 (default approval), autolink_email (default false), public_url;
+│   │                 (default approval), autolink_email (default false), public_url,
+│   │                 retention_defaults (20 / 5), trash_retention_days (30);
 │   │                 get_strict, insert_if_absent
 │   ├── invites.rs    create, find_usable(_by_hash), consume (conditional UPDATE), list, revoke, status
 │   └── password_resets.rs  create (24 h; marks the user's older unused resets used), consume
@@ -136,7 +144,16 @@ crates/server/src/
 │   ├── csrf.rs       Origin / Sec-Fetch-Site check
 │   ├── middleware.rs /api/v1 layer: setup gate, CSRF, Auth (bearer or cookie), cookie refresh
 │   ├── extractors.rs SessionUser, AnyUser, AdminUser, Client
-│   └── limits.rs     rate limits of the auth endpoints + enforce
+│   └── limits.rs     rate limits of the auth endpoints and of sharing + enforce
+├── scopes/           scopes, members, folders, trash (database side; rules in mod.rs docs)
+│   ├── access.rs     ScopeAccess / FolderAccess: load (404 if invisible), load_trashed,
+│   │                 require(role) (403); the only access check
+│   ├── names.rs      name rules (validate::text, 100 chars) + lowercase key
+│   ├── store.rs      scopes: create, find, list_visible, folder_counts, rename, trash,
+│   │                 restore, trashed_owned, managed
+│   ├── members.rs    scope_members: role_of, find, list, upsert, update_role, remove
+│   └── folders.rs    folders: create, find, list, update (name / retention), trash, restore,
+│                     trashed_in
 ├── idp/              identity providers (protocol side)
 │   ├── mod.rs        Idp: shared HttpClient, Discovery cache, GitHub/Discord endpoints
 │   │                 (replaceable only under cfg(test)); discover → provider_discovery_failed
@@ -176,7 +193,8 @@ crates/server/src/
 │   │                 000003 tokens (invites, password_resets, devices, device_auth_codes),
 │   │                 000004 auth_providers, 000005 identities (identities, pending_signups,
 │   │                 oauth_flows), 000006 account approval (users.approval_*,
-│   │                 signup_source, auth_providers.new_accounts)
+│   │                 signup_source, auth_providers.new_accounts), 000007 scopes
+│   │                 (scopes, scope_members, folders)
 │   ├── entities/     SeaORM 2 models (`#[sea_orm::model]`, no relations), one file per table
 │   │                 (none for setup_state: its plaintext token is read as a Secret);
 │   │                 oauth_flows keeps verifier and nonce in `Hidden` (Debug prints `***`)
@@ -194,7 +212,8 @@ crates/server/src/
 ├── routes/
 │   ├── mod.rs        router: probes, `/api/v1` (behind auth::middleware), JSON 404 under
 │   │                 `/api`, SPA fallback from WEB_DIR
-│   ├── extract.rs    ApiJson (rejections as bad_request), parse_id, model → API conversions
+│   ├── extract.rs    ApiJson (rejections as bad_request), optional_json (empty body = default),
+│   │                 parse_id, model → API conversions
 │   ├── health.rs     /health (liveness), /ready (database + storage checks, Redis reported)
 │   ├── setup.rs      /setup
 │   ├── auth.rs       /auth/* (config, register, login, logout, password-reset)
@@ -205,11 +224,15 @@ crates/server/src/
 │   ├── admin.rs      /admin/* (users, approve / reject, password resets, invites, settings,
 │   │                 summary)
 │   ├── providers.rs  /admin/providers* (presets, CRUD, test)
+│   ├── scopes.rs     /scopes* (CRUD, trash, restore) and /scopes/{id}/members*
+│   ├── folders.rs    /scopes/{id}/folders and /folders/{id}* (CRUD, trash, restore)
+│   ├── trash.rs      /trash
 │   └── tests/        router tests (tower `oneshot`, real AppState; PostgreSQL with
 │                     TEST_DATABASE_URL): mod.rs (probes, SPA), support.rs (TestApp harness),
 │                     fake_idp.rs (fake OIDC / GitHub / Discord server; test-only RSA keys in
 │                     fixtures/), setup, auth, me, devices, admin, providers, oauth,
-│                     onboarding, approval, secret_key
+│                     onboarding, approval, secret_key, scopes (Team fixture, role matrix,
+│                     sharing, names, races), folders (trash, retention)
 ├── logging.rs        tracing subscriber (env filter; pretty or json)
 ├── shutdown.rs       Ctrl+C / SIGTERM future (OS-specific, like platform.rs)
 └── healthcheck.rs    HTTP/1.0 GET /health on 127.0.0.1:$PORT, std only (Docker HEALTHCHECK)
@@ -267,14 +290,35 @@ Bearer cld_…`); **admin** (session of an effective admin); **onboarding** (the
 | `GET /admin/invites` | admin | `InviteInfo[]` (newest first, no tokens) |
 | `POST /admin/invites` | admin | `CreateInviteRequest {email?, expires_in?}` (default 7d) → 201 `InviteLink {id, token, path: "/invite/<token>", expires_at}` |
 | `DELETE /admin/invites/{id}` | admin | → 204 (revoke, soft) |
-| `GET /admin/settings` | admin | `ServerSettings {registration_mode, password_new_accounts, autolink_email, public_url, public_url_from_env, effective_public_url}` |
-| `PATCH /admin/settings` | admin | `UpdateSettingsRequest {registration_mode?, password_new_accounts?, autolink_email?, public_url? ("" clears)}` → `ServerSettings` |
+| `GET /admin/settings` | admin | `ServerSettings {registration_mode, password_new_accounts, autolink_email, public_url, public_url_from_env, effective_public_url, retention_max_versions, retention_max_per_day, trash_retention_days}` |
+| `PATCH /admin/settings` | admin | `UpdateSettingsRequest {registration_mode?, password_new_accounts?, autolink_email?, public_url? ("" clears), retention_max_versions? (0..=100000, 0 = unlimited), retention_max_per_day? (same), trash_retention_days? (1..=3650)}` → `ServerSettings`; all fields validated before any is written |
 | `GET /admin/providers/presets` | admin | `ProviderPreset[]` (one per kind) |
 | `GET /admin/providers` | admin | `ProviderInfo[]` (non-deleted, position order; `has_secret`, never the secret; `callback_url` when a public URL is known; `new_accounts` `auto` / `approval`) |
 | `POST /admin/providers` | admin | `CreateProviderRequest` (`new_accounts` default `approval`) → 201 `ProviderInfo`; OIDC: discovery must succeed (502 `provider_discovery_failed`) |
 | `PATCH /admin/providers/{id}` | admin | `UpdateProviderRequest` (no id/kind; secret optional) → `ProviderInfo`; a changed issuer is discovered again |
 | `DELETE /admin/providers/{id}` | admin | → 204 (soft: `deleted_at`, disabled; identities kept, id never reused) |
 | `POST /admin/providers/{id}/test` | admin | → `ProviderTestResult {ok, code?}` (fresh discovery + secret decryption, read-only) |
+| `GET /scopes` | any | `ScopeInfo[] {id, name, role, owner: ScopeUser {id, email, display_name}, folder_count, created_at, updated_at}`: owned + shared, outside the trash, by name (case-insensitive) |
+| `POST /scopes` | any | `CreateScopeRequest {name}` → 201 `ScopeInfo` (caller = owner); 409 `name_taken` |
+| `GET /scopes/{id}` | any; viewer | `ScopeInfo` |
+| `PATCH /scopes/{id}` | session; owner | `UpdateScopeRequest {name}` → `ScopeInfo`; 409 `name_taken` |
+| `DELETE /scopes/{id}` | session; owner | → 204: to the trash (its folders become unreachable) |
+| `POST /scopes/{id}/restore` | session; owner of the trashed scope | optional `RestoreRequest {name?}` → `ScopeInfo`; 409 `name_taken` if the name was taken meanwhile (retry with `name`) |
+| `GET /scopes/{id}/members` | any; viewer | `ScopeMember[] {user, role, added_by, created_at}`: the owner first (role `owner`), then by date added |
+| `POST /scopes/{id}/members` | session; owner; 30 / 15 min per user | `AddMemberRequest {email, role? (default editor)}` → 201 `ScopeMember`, or 200 when already a member (role changed); 404 `user_not_found` unless an approved, enabled account has that email; the owner's own email → 422 |
+| `PATCH /scopes/{id}/members/{user_id}` | session; owner | `UpdateMemberRequest {role}` → `ScopeMember`; not a member (incl. the owner) → 404 |
+| `DELETE /scopes/{id}/members/{user_id}` | session; owner, or the member itself (leave) | → 204; the owner can't leave (403) |
+| `GET /scopes/{id}/folders` | any; viewer | `FolderInfo[]` outside the trash, by name |
+| `POST /scopes/{id}/folders` | any; editor (retention overrides: admin) | `CreateFolderRequest {name, retention_max_versions?, retention_max_per_day?}` → 201 `FolderInfo`; 409 `name_taken` |
+| `GET /folders/{id}` | any; viewer | `FolderInfo {id, scope_id, name, head_snapshot_id, retention_max_versions, retention_max_per_day, effective_retention_max_versions, effective_retention_max_per_day, created_by, created_at, updated_at}` |
+| `PATCH /folders/{id}` | session; editor (retention fields: admin) | `UpdateFolderRequest {name?, retention_max_versions?, retention_max_per_day?}` (retention: omitted = unchanged, `null` = server default) → `FolderInfo` |
+| `DELETE /folders/{id}` | session; admin | → 204: to the trash |
+| `POST /folders/{id}/restore` | session; admin of its scope (outside the trash) | optional `RestoreRequest {name?}` → `FolderInfo`; 409 `name_taken` |
+| `GET /trash` | session | `TrashItem[] {kind: scope\|folder, id, name, scope_id, scope_name, deleted_at, deleted_by, purge_at}`: own trashed scopes + trashed folders of scopes where the caller is owner or admin; newest first |
+
+Scope routes: "viewer", "editor", "admin", "owner" is the minimum scope role; a scope or
+folder the caller can't see answers 404 `not_found` (also with a device token), a visible one
+with a role too low 403 `forbidden`; session-only routes refuse device tokens with 403 first.
 
 Any other path under `/api` → 404 `{"code": "not_found", "message": …}`. Every other path is served
 from `WEB_DIR` with `index.html` fallback (or a JSON 404 if `WEB_DIR` is missing).
@@ -293,7 +337,9 @@ password: same answer), `account_disabled` 403, `registration_closed` 403, `invi
 expired flow, other browser, session changed during `link`), `oauth_cancelled` 400 (provider
 answered `access_denied`), `group_not_allowed` 403, `identity_in_use` 409, `identity_not_linked`
 409, `onboarding_expired` 410, `last_login_method` 409, `account_pending` 403 (waiting for
-approval), `account_rejected` 403 (rejected by an admin). The callback carries the code in
+approval), `account_rejected` 403 (rejected by an admin), `name_taken` 409 (scope or folder
+name in use, ignoring case), `user_not_found` 404 (sharing with an email that has no
+approved, enabled account). The callback carries the code in
 `/login?error=<code>` instead of a JSON body.
 
 ### Authentication
@@ -368,7 +414,8 @@ approval), `account_rejected` 403 (rejected by an admin). The callback carries t
   through Redis when available): login (and onboarding link) 20 / 5 min per IP and 10 / 15 min
   per email; register (and onboarding create) 10 / h per IP; setup 10 / 15 min per IP; device
   token 30 / 15 min per IP; password reset 10 / 15 min per IP; current-password checks
-  (password or email change) 10 / 15 min per user; provider sign-in starts 30 / 5 min per IP.
+  (password or email change) 10 / 15 min per user; provider sign-in starts 30 / 5 min per IP;
+  adding scope members (email lookups) 30 / 15 min per user.
 - **Secrets**: tokens are stored only as SHA-256 hex (`*_hash` columns) and never logged; API
   bodies carry them as `Sensitive`. The setup token is the one secret stored in plaintext (the
   CLI prints it) and logged on purpose while setup is pending. Provider client secrets are
@@ -459,6 +506,49 @@ approval), `account_rejected` 403 (rejected by an admin). The callback carries t
   known value) is inserted if absent and decrypted: failure → "SECRET_KEY changed or wrong",
   startup refused. `cloudit-server gen-secret-key` prints a new key.
 
+### Scopes, folders, sharing and the trash
+
+- **Model**: user > scope (owned by `owner_id`) > folder (synced unit) > snapshots (4b).
+  Roles, ordered: `viewer` (read scope, folders, members, history; download) < `editor`
+  (+ create and rename folders; in 4b upload, restore, pin, label) < `admin` (+ trash and
+  restore folders, change a folder's retention) < `owner` (+ rename, trash and restore the
+  scope; add members, change their roles, remove them; in 4c delete for good). Membership
+  management is **owner-only**; any member can leave (`DELETE` its own membership); the
+  owner can't leave. Server admins get no implicit access.
+- **Access** (`scopes/access.rs`): every scope or folder handler starts with
+  `ScopeAccess::load` / `FolderAccess::load` (404 when the caller isn't owner or member, or the
+  scope / folder is in the trash, or the folder's scope is) and then `require(role)` (403).
+  Trashed items are reached only through `load_trashed`: a scope by its owner, a folder by
+  the owner or an admin of its (non-trashed) scope; anyone else gets 404.
+- **Device tokens** may list and read scopes, members and folders, create scopes and create
+  folders (the desktop client links local folders); renaming, folder changes, the trash,
+  restores and member management need a web session.
+- **Sharing** by exact email (normalized like logins): the account must exist, be enabled
+  and approved, else `user_not_found` (unknown, pending, rejected and disabled look the
+  same; the small enumeration for signed-in owners is accepted and rate limited). The
+  owner's own email → `validation_failed`. `POST` on an existing member changes its role
+  (200; new member 201); `PATCH` changes a role too. Accounts that become disabled,
+  rejected or pending keep their memberships but authentication refuses them.
+- **Names**: trimmed, 1..=100 characters, no control characters; unique among non-trashed
+  siblings ignoring case (Unicode lowercase, no other normalization). Enforced by the
+  database: `name_key` = lowercase name, `active_key` = `name_key` or NULL in the trash, UNIQUE
+  `(owner_id, active_key)` / `(scope_id, active_key)` (NULLs never collide on either backend).
+  Create, rename and restore are single statements; a unique violation → 409 `name_taken`,
+  so concurrent creations have exactly one winner.
+- **Trash**: `DELETE` sets `deleted_at`, `deleted_by` and clears `active_key` in one
+  conditional UPDATE (`… AND deleted_at IS NULL`); restore is the reverse (`… AND deleted_at
+  IS NOT NULL`), optionally with a new `name` (the old one may have been taken: the request
+  then fails with `name_taken` and the client retries with a name). A folder of a trashed
+  scope keeps its own state, is unreachable and not listed in the trash; restoring the scope
+  brings it back (a folder trashed before stays trashed). `purge_at` = `deleted_at` +
+  `trash_retention_days`; the purge itself is 4c.
+- **Retention settings** (the job is 4c): per folder `retention_max_versions` and
+  `retention_max_per_day` (NULL = server default, 0 = unlimited, at most 100000); server
+  defaults in `settings` (20 and 5). Folder responses show the override and the effective
+  value. Semantics for 4c: keep the last `max_versions` snapshots and, of those, at most
+  `max_per_day` per UTC day (the most recent of each day); the head, pinned and unresolved
+  conflict snapshots are never deleted and don't count.
+
 ### Data and state
 
 - **Database** (SeaORM 2, `DATABASE_URL`): SQLite `<DATA_DIR>/cloudit.db` by default (WAL,
@@ -481,7 +571,8 @@ approval), `account_rejected` 403 (rejected by an admin). The callback carries t
     `registration_mode` = `"open" | "invite" | "closed"` (missing = `invite`),
     `password_new_accounts` = `"auto" | "approval"` (missing = `approval`), `autolink_email`
     (bool, missing = false), `public_url` (string or null), `secret_key_check` (base64 of the
-    encrypted check value);
+    encrypted check value), `retention_max_versions` (number, missing = 20),
+    `retention_max_per_day` (missing = 5), `trash_retention_days` (missing = 30);
   - `invites(id, token_hash UNIQUE, created_by → users, email?, created_at, expires_at, used_at?,
     used_by? → users, revoked_at?)`;
   - `password_resets(id, token_hash UNIQUE, user_id → users, created_by? → users (null = CLI),
@@ -503,7 +594,16 @@ approval), `account_rejected` 403 (rejected by an admin). The callback carries t
   - `oauth_flows(id, state_hash UNIQUE, browser_binding_hash, provider_id → auth_providers,
     purpose (login | link | onboarding_link), user_id? → users, pending_signup_id? →
     pending_signups, pkce_verifier, nonce, return_to, invite_token_hash?, created_at,
-    expires_at (10 min), used_at?)`.
+    expires_at (10 min), used_at?)`;
+  - `scopes(id, owner_id → users, name, name_key, active_key?, created_at, updated_at,
+    deleted_at?, deleted_by? → users)` (UNIQUE (owner_id, active_key));
+  - `scope_members(scope_id → scopes, user_id → users, role (`viewer` | `editor` | `admin`),
+    added_by → users, created_at, updated_at)` (PK (scope_id, user_id), index on user_id;
+    removing a member deletes the row);
+  - `folders(id, scope_id → scopes, name, name_key, active_key?, head_snapshot_id? (no FK
+    until the snapshots table of 4b), retention_max_versions?, retention_max_per_day?
+    (integer), created_by → users, created_at, updated_at, deleted_at?, deleted_by? → users)`
+    (UNIQUE (scope_id, active_key)).
 
   Expired sessions, codes, flows, pending signups and used tokens are not cleaned up yet (a GC
   job is planned).
@@ -703,7 +803,8 @@ into the sections above as it gets built.
 Milestones: 1 scaffolding (done) · 2 core chunking/manifest (done) · 3a server infrastructure
 (DB, storage, Redis, readiness: done) · 3b password accounts, sessions, devices, admin API (done) ·
 3c identity providers (OIDC / OAuth2), onboarding, identity linking (done) ·
-4 (next) scopes/folders/sharing/sync protocol/events/jobs · 5 web UI (from mockups) · 6 desktop manual
+4a scopes, folders, sharing, trash, retention settings (done) · 4b (next) sync protocol,
+quotas · 4c events and background jobs · 5 web UI (from mockups) · 6 desktop manual
 sync + conflicts · 7 desktop auto sync/tray/autostart/installers.
 
 Planned layout additions: `apps/desktop` (Tauri 2 + Svelte 5, milestone 6; OS code in a `platform/`
@@ -717,19 +818,33 @@ jobs on top of `db::lease` (GC, retention); presigned or proxied blob transfer i
 
 ### Data model
 
-- user > scope (user-named group) > folder (synced unit) > snapshots (immutable versions).
-- Scopes are personal but shareable with other users (roles `viewer` / `editor`).
-- Snapshot kinds: `normal`, `conflict`, `restore`. A restore creates a new head. Retention per folder
-  (last N + daily for D days); pinned snapshots are never deleted. Deleted scopes/folders go to
-  trash.
+- Scopes, folders, roles and the trash are implemented (see "Scopes, folders, sharing and the
+  trash"). Snapshots (4b): immutable versions of a folder; kinds `normal`, `conflict`,
+  `restore`. A restore creates a new head. Pinned snapshots are never deleted.
 
-### Sync protocol
+### Sync protocol (4b)
 
-- Chunks (format: "Sync formats") are stored under `owners/{owner_id}/chunks/{sha256}` (dedup
-  per owner only); manifests are content-addressed by their `ManifestHash`. The server validates
-  every uploaded manifest with `cloudit-core` and verifies chunk hashes on upload.
-- Commit = `UPDATE folders SET head = new WHERE id = ? AND head = parent` → 201, or 409 conflict.
+- Chunks (format: "Sync formats") are stored under `scopes/{scope_id}/chunks/{sha256}`: dedup
+  only within a scope, so an editor of a shared scope never writes into the namespace of the
+  owner's other scopes. Manifests are content-addressed by their `ManifestHash`. The server
+  validates every uploaded manifest with `cloudit-core` and verifies chunk hashes on upload.
+- Endpoints: chunk check / upload / download (presigned with `S3_PRESIGN`, else proxied; hash
+  verified), snapshot commit, history, manifest, restore, pin / label (editor), zip download
+  of a snapshot (viewer).
+- Commit = `UPDATE folders SET head_snapshot_id = new WHERE id = ? AND head_snapshot_id =
+  parent` → 201, or 409 conflict (adds the FK to `snapshots`).
 - On conflict the client uploads its local state as a `conflict` snapshot (not head); the user
   chooses keep-server / keep-local / decide-later.
+- Storage usage and per-user quotas: a scope's stored size counts against the scope's
+  **owner** (also when editors upload); over quota → `quota_exceeded`.
 - Desktop triggers: manual, startup, quiet period, associated process exit, SSE events. Local state in
   SQLite.
+
+### Events and jobs (4c)
+
+- SSE events: in memory on a single instance, Valkey pub/sub across instances, `GET
+  /sync/heads` polling as the fallback.
+- Lease-based jobs (`db::lease`): retention (semantics in "Scopes, folders, sharing and the
+  trash"), chunk GC with a 24 h grace period, trash purge after `trash_retention_days` plus a
+  manual permanent delete (scope: owner; folder: admin), cleanup of expired sessions, codes,
+  flows and pending signups.
