@@ -154,15 +154,35 @@ pub async fn get_settings(
 ) -> Result<Json<ServerSettings>, ApiError> {
     Ok(Json(ServerSettings {
         registration_mode: settings::registration_mode(&state.db).await?,
+        autolink_email: settings::autolink_email(&state.db).await?,
+        public_url: settings::public_url(&state.db).await?,
+        public_url_from_env: state.config.public_url.is_some(),
+        effective_public_url: state.public_url().await?,
     }))
 }
 
-/// `PATCH /admin/settings`.
+/// `PATCH /admin/settings`: every field is validated before anything is written.
 pub async fn update_settings(
     State(state): State<AppState>,
     AdminUser(me): AdminUser,
     ApiJson(body): ApiJson<UpdateSettingsRequest>,
 ) -> Result<Json<ServerSettings>, ApiError> {
+    let public_url = body
+        .public_url
+        .as_deref()
+        .map(|raw| match raw.trim() {
+            "" => Ok(None),
+            url => validate::public_url(url, "public_url").map(Some),
+        })
+        .transpose()?;
+    if let Some(url) = public_url {
+        settings::set_public_url(&state.db, url.as_deref(), Some(me.user.id)).await?;
+        tracing::info!(admin_id = %me.user.id, public_url = url.as_deref().unwrap_or("-"), "public URL changed");
+    }
+    if let Some(on) = body.autolink_email {
+        settings::set_autolink_email(&state.db, on, Some(me.user.id)).await?;
+        tracing::info!(admin_id = %me.user.id, on, "email auto-link changed");
+    }
     if let Some(mode) = body.registration_mode {
         settings::set_registration_mode(&state.db, mode, Some(me.user.id)).await?;
         tracing::info!(admin_id = %me.user.id, ?mode, "registration mode changed");

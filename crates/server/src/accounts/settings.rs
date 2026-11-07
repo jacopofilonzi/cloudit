@@ -1,5 +1,7 @@
 //! Server settings in the `settings` table: one JSON value per key, editable by admins.
-//! A missing key means the default. Keys so far: `registration_mode` (default `invite`).
+//! A missing key means the default. Keys: `registration_mode` (default `invite`),
+//! `autolink_email` (default `false`), `public_url` (`null`/missing = none) and
+//! `secret_key_check` (see `crypto::canary`).
 
 use anyhow::Context as _;
 use cloudit_core::protocol::RegistrationMode;
@@ -12,6 +14,8 @@ use uuid::Uuid;
 use crate::db::entities::settings;
 
 pub const REGISTRATION_MODE: &str = "registration_mode";
+pub const AUTOLINK_EMAIL: &str = "autolink_email";
+pub const PUBLIC_URL: &str = "public_url";
 
 async fn get<T: DeserializeOwned>(
     db: &impl ConnectionTrait,
@@ -114,4 +118,31 @@ pub async fn set_registration_mode(
     by: Option<Uuid>,
 ) -> anyhow::Result<()> {
     set(db, REGISTRATION_MODE, &mode, by).await
+}
+
+pub async fn autolink_email(db: &impl ConnectionTrait) -> anyhow::Result<bool> {
+    Ok(get(db, AUTOLINK_EMAIL).await?.unwrap_or(false))
+}
+
+pub async fn set_autolink_email(
+    db: &impl ConnectionTrait,
+    on: bool,
+    by: Option<Uuid>,
+) -> anyhow::Result<()> {
+    set(db, AUTOLINK_EMAIL, &on, by).await
+}
+
+/// The stored public URL (validated `http(s)://host[:port]`), if any. The effective
+/// one is [`crate::state::AppState::public_url`] (`PUBLIC_URL` wins).
+pub async fn public_url(db: &impl ConnectionTrait) -> anyhow::Result<Option<String>> {
+    Ok(get::<Option<String>>(db, PUBLIC_URL).await?.flatten())
+}
+
+/// Stores (or, with `None`, clears) the public URL; validate it first.
+pub async fn set_public_url(
+    db: &impl ConnectionTrait,
+    url: Option<&str>,
+    by: Option<Uuid>,
+) -> anyhow::Result<()> {
+    set(db, PUBLIC_URL, &url, by).await
 }

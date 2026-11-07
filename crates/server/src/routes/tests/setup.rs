@@ -35,6 +35,11 @@ async fn setup_flow_creates_the_first_admin_once() {
     )
     .await
     .assert_error(StatusCode::UNPROCESSABLE_ENTITY, "validation_failed");
+    let mut bad_url = setup_body(&token, ADMIN_EMAIL);
+    bad_url["public_url"] = json!("https://sync.example.com/sub");
+    let resp = app.post("/api/v1/setup", &As::Anon, bad_url).await;
+    resp.assert_error(StatusCode::UNPROCESSABLE_ENTITY, "validation_failed");
+    assert_eq!(resp.body["field"], "public_url");
 
     let resp = app
         .post(
@@ -42,7 +47,8 @@ async fn setup_flow_creates_the_first_admin_once() {
             &As::Anon,
             json!({
                 "token": token, "email": " Admin@Example.com ", "password": PASSWORD,
-                "display_name": "Admin", "registration_mode": "open"
+                "display_name": "Admin", "registration_mode": "open",
+                "public_url": "https://Sync.Example.com/"
             }),
         )
         .await;
@@ -53,10 +59,14 @@ async fn setup_flow_creates_the_first_admin_once() {
     let cookie = As::Cookie(resp.cookie().unwrap());
     app.get("/api/v1/me", &cookie).await.assert(StatusCode::OK);
 
-    // Done: token cleared, no second setup, mode stored.
+    // Done: token cleared, no second setup, mode and public URL stored.
     assert_eq!(
         setup::status(&app.state.db).await.unwrap(),
         SetupStatus::Completed
+    );
+    assert_eq!(
+        app.state.public_url().await.unwrap().as_deref(),
+        Some("https://sync.example.com")
     );
     app.post(
         "/api/v1/setup",

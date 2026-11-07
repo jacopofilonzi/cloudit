@@ -9,4 +9,10 @@ export type SetupRequest = { token: Sensitive, email: string, password: Sensitiv
 /**
  * Default `invite`.
  */
-registration_mode?: RegistrationMode, };
+registration_mode?: RegistrationMode, 
+/**
+ * The server's public URL (`http(s)://host[:port]`), stored as a setting; the UI
+ * prefills it from the browser's origin. Ignored for use while the `PUBLIC_URL`
+ * environment variable is set.
+ */
+public_url?: string, };

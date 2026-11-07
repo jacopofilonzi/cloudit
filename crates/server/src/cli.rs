@@ -97,16 +97,17 @@ pub async fn reset_password_text(config: &Config, email: &str) -> anyhow::Result
         .context(NOT_INITIALIZED)?
         .with_context(|| format!("no account with email {email}"))?;
     let (token, reset) = password_resets::create(&db, user.id, None).await?;
+    let public_url = crate::state::effective_public_url(config, &db).await;
     db.close().await.context("closing the database")?;
     let path = format!("/reset-password/{}", token.expose());
     let mut text = format!(
         "password-reset link for {email} (single use, expires {}):\n  path: {path}\n",
         crate::time::rfc3339(reset.expires_at)
     );
-    match &config.public_url {
+    match public_url? {
         Some(base) => text.push_str(&format!("  url:  {base}{path}\n")),
         None => text.push_str(
-            "  (set PUBLIC_URL to get a full URL; append the path to the server address)\n",
+            "  (set the public URL to get a full URL; append the path to the server address)\n",
         ),
     }
     Ok(text)

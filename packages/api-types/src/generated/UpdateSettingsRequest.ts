@@ -4,4 +4,9 @@ import type { RegistrationMode } from "./RegistrationMode";
 /**
  * `PATCH /api/v1/admin/settings`: omitted fields stay unchanged.
  */
-export type UpdateSettingsRequest = { registration_mode?: RegistrationMode, };
+export type UpdateSettingsRequest = { registration_mode?: RegistrationMode, autolink_email?: boolean, 
+/**
+ * `http(s)://host[:port]` (a trailing `/` is removed; no path, query or fragment);
+ * an empty string clears it.
+ */
+public_url?: string, };

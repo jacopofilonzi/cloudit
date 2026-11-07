@@ -49,6 +49,26 @@ pub fn text(raw: &str, field: &'static str, max_chars: usize) -> Result<String, 
     Ok(value.to_owned())
 }
 
+/// A server base URL: `http(s)://host[:port]`, trailing `/` removed; no user info,
+/// path, query or fragment. Returns the normalized form (lowercase scheme and host).
+pub fn public_url(raw: &str, field: &'static str) -> Result<String, ApiError> {
+    let invalid = |why: &str| ApiError::validation(field, why.to_owned());
+    let url = url::Url::parse(raw.trim()).map_err(|_| invalid("not a valid URL"))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(invalid("must start with http:// or https://"));
+    }
+    if url.host_str().is_none_or(str::is_empty) {
+        return Err(invalid("missing host"));
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(invalid("must not contain credentials"));
+    }
+    if url.path() != "/" || url.query().is_some() || url.fragment().is_some() {
+        return Err(invalid("must not have a path, query or fragment"));
+    }
+    Ok(url.as_str().trim_end_matches('/').to_owned())
+}
+
 /// A display name (see [`text`]).
 pub fn display_name(raw: &str) -> Result<String, ApiError> {
     text(raw, "display_name", MAX_NAME_CHARS)
@@ -80,6 +100,29 @@ mod tests {
         }
         let long = format!("{}@example.com", "a".repeat(65));
         assert!(email(&long, "email").is_err());
+    }
+
+    #[test]
+    fn public_urls() {
+        let ok = |raw: &str| public_url(raw, "public_url").unwrap();
+        assert_eq!(ok("https://Sync.Example.com/"), "https://sync.example.com");
+        assert_eq!(ok(" http://10.0.0.5:8080 "), "http://10.0.0.5:8080");
+        assert_eq!(
+            ok("https://sync.example.com:443"),
+            "https://sync.example.com"
+        );
+        for bad in [
+            "",
+            "sync.example.com",
+            "ftp://sync.example.com",
+            "https://sync.example.com/cloudit",
+            "https://sync.example.com/?a=1",
+            "https://sync.example.com/#x",
+            "https://user:pw@sync.example.com",
+            "https://",
+        ] {
+            assert!(public_url(bad, "public_url").is_err(), "{bad:?}");
+        }
     }
 
     #[test]

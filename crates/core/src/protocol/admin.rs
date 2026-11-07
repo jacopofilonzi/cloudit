@@ -113,6 +113,18 @@ pub struct InviteInfo {
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct ServerSettings {
     pub registration_mode: RegistrationMode,
+    /// Sign in an unknown identity-provider account into the existing account with the
+    /// same email, when the provider says the email is verified and the existing
+    /// account's email is verified too. Default `false`.
+    pub autolink_email: bool,
+    /// Public URL stored in the database (`http(s)://host[:port]`), if any.
+    pub public_url: Option<String>,
+    /// `true` when the `PUBLIC_URL` environment variable is set: it wins over
+    /// `public_url`.
+    pub public_url_from_env: bool,
+    /// The URL in use (environment, else stored): identity-provider callback URLs are
+    /// built from it.
+    pub effective_public_url: Option<String>,
 }
 
 /// `PATCH /api/v1/admin/settings`: omitted fields stay unchanged.
@@ -123,4 +135,12 @@ pub struct UpdateSettingsRequest {
     #[serde(default)]
     #[cfg_attr(test, ts(optional))]
     pub registration_mode: Option<RegistrationMode>,
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
+    pub autolink_email: Option<bool>,
+    /// `http(s)://host[:port]` (a trailing `/` is removed; no path, query or fragment);
+    /// an empty string clears it.
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
+    pub public_url: Option<String>,
 }

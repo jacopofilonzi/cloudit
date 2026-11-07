@@ -21,6 +21,17 @@ use crate::db;
 use crate::db::lease::Leases;
 use crate::storage::BlobStore;
 
+/// `PUBLIC_URL` if set, else the `public_url` setting (also used by the CLI).
+pub async fn effective_public_url(
+    config: &Config,
+    db: &impl sea_orm::ConnectionTrait,
+) -> anyhow::Result<Option<String>> {
+    match &config.public_url {
+        Some(url) => Ok(Some(url.clone())),
+        None => crate::accounts::settings::public_url(db).await,
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<Config>,
@@ -39,6 +50,11 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// The effective public URL: `PUBLIC_URL` if set, else the stored setting.
+    pub async fn public_url(&self) -> anyhow::Result<Option<String>> {
+        effective_public_url(&self.config, &self.db).await
+    }
+
     /// Connects to the database and applies migrations, opens blob storage and prepares
     /// the optional Redis connection. Database and storage errors abort startup; Redis
     /// never does.

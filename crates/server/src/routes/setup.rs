@@ -44,6 +44,10 @@ pub async fn complete(
     let email = validate::email(&body.email, "email")?;
     let display_name = validate::display_name(&body.display_name)?;
     password::validate(body.password.expose(), "password")?;
+    let public_url = match body.public_url.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some(url) => Some(validate::public_url(url, "public_url")?),
+    };
     let password_hash = password::hash(body.password.expose()).await?;
 
     let tx = state.db.begin().await.map_err(anyhow::Error::from)?;
@@ -65,6 +69,9 @@ pub async fn complete(
         Some(user.id),
     )
     .await?;
+    if let Some(url) = &public_url {
+        settings::set_public_url(&tx, Some(url), Some(user.id)).await?;
+    }
     tx.commit().await.map_err(anyhow::Error::from)?;
     state.setup_done.store(true, Ordering::Relaxed);
     tracing::info!(user_id = %user.id, "first-run setup completed");

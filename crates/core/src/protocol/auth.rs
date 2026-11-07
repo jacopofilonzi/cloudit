@@ -60,6 +60,12 @@ pub struct SetupRequest {
     #[serde(default)]
     #[cfg_attr(test, ts(optional))]
     pub registration_mode: Option<RegistrationMode>,
+    /// The server's public URL (`http(s)://host[:port]`), stored as a setting; the UI
+    /// prefills it from the browser's origin. Ignored for use while the `PUBLIC_URL`
+    /// environment variable is set.
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
+    pub public_url: Option<String>,
 }
 
 /// `POST /api/v1/auth/register`.

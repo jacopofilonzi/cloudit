@@ -4,4 +4,24 @@ import type { RegistrationMode } from "./RegistrationMode";
 /**
  * `GET /api/v1/admin/settings`.
  */
-export type ServerSettings = { registration_mode: RegistrationMode, };
+export type ServerSettings = { registration_mode: RegistrationMode, 
+/**
+ * Sign in an unknown identity-provider account into the existing account with the
+ * same email, when the provider says the email is verified and the existing
+ * account's email is verified too. Default `false`.
+ */
+autolink_email: boolean, 
+/**
+ * Public URL stored in the database (`http(s)://host[:port]`), if any.
+ */
+public_url: string | null, 
+/**
+ * `true` when the `PUBLIC_URL` environment variable is set: it wins over
+ * `public_url`.
+ */
+public_url_from_env: boolean, 
+/**
+ * The URL in use (environment, else stored): identity-provider callback URLs are
+ * built from it.
+ */
+effective_public_url: string | null, };

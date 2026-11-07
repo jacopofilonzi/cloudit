@@ -231,17 +231,33 @@ async fn settings_round_trip() {
     let app = TestApp::new().await;
     let admin = app.setup_admin().await;
     let resp = app.get("/api/v1/admin/settings", &admin).await;
-    assert_eq!(resp.body, json!({ "registration_mode": "invite" }));
+    assert_eq!(
+        resp.body,
+        json!({
+            "registration_mode": "invite", "autolink_email": false, "public_url": null,
+            "public_url_from_env": false, "effective_public_url": null
+        })
+    );
     let resp = app
         .call(
             "PATCH",
             "/api/v1/admin/settings",
             &admin,
-            Some(json!({ "registration_mode": "closed" })),
+            Some(json!({
+                "registration_mode": "closed", "autolink_email": true,
+                "public_url": "https://Sync.Example.com/"
+            })),
         )
         .await;
     resp.assert(StatusCode::OK);
-    assert_eq!(resp.body, json!({ "registration_mode": "closed" }));
+    assert_eq!(
+        resp.body,
+        json!({
+            "registration_mode": "closed", "autolink_email": true,
+            "public_url": "https://sync.example.com", "public_url_from_env": false,
+            "effective_public_url": "https://sync.example.com"
+        })
+    );
     let resp = app.get("/api/v1/auth/config", &As::Anon).await;
     assert_eq!(resp.body["registration_mode"], "closed");
     app.call(
@@ -252,4 +268,46 @@ async fn settings_round_trip() {
     )
     .await
     .assert_error(StatusCode::BAD_REQUEST, "bad_request");
+    // An invalid URL changes nothing (not even the other fields).
+    let resp = app
+        .call(
+            "PATCH",
+            "/api/v1/admin/settings",
+            &admin,
+            Some(json!({ "autolink_email": false, "public_url": "https://x.example.com/app" })),
+        )
+        .await;
+    resp.assert_error(StatusCode::UNPROCESSABLE_ENTITY, "validation_failed");
+    assert_eq!(resp.body["field"], "public_url");
+    let resp = app.get("/api/v1/admin/settings", &admin).await;
+    assert_eq!(resp.body["autolink_email"], true);
+    // Empty string clears the URL.
+    let resp = app
+        .call(
+            "PATCH",
+            "/api/v1/admin/settings",
+            &admin,
+            Some(json!({ "public_url": "" })),
+        )
+        .await;
+    assert_eq!(resp.body["public_url"], json!(null));
+    assert_eq!(resp.body["effective_public_url"], json!(null));
+}
+
+#[tokio::test]
+async fn env_public_url_wins_over_the_stored_one() {
+    let app = TestApp::with(&[("PUBLIC_URL", "https://env.example.com")]).await;
+    let admin = app.setup_admin().await;
+    let resp = app
+        .call(
+            "PATCH",
+            "/api/v1/admin/settings",
+            &admin,
+            Some(json!({ "public_url": "https://db.example.com" })),
+        )
+        .await;
+    resp.assert(StatusCode::OK);
+    assert_eq!(resp.body["public_url"], "https://db.example.com");
+    assert_eq!(resp.body["public_url_from_env"], true);
+    assert_eq!(resp.body["effective_public_url"], "https://env.example.com");
 }
