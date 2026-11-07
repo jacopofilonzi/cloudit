@@ -44,4 +44,9 @@ retention_max_per_day: number,
 /**
  * Days an item stays in the trash before it is deleted for good. Default 30.
  */
-trash_retention_days: number, };
+trash_retention_days: number, 
+/**
+ * Storage quota of accounts without their own, in bytes; `null` = unlimited
+ * (the default).
+ */
+default_quota_bytes: number | null, };

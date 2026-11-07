@@ -219,3 +219,25 @@ pub async fn find_many(
         .context("loading users")?;
     Ok(list.into_iter().map(|u| (u.id, u)).collect())
 }
+
+/// Sets the account's own storage quota (`None` = the server default).
+pub async fn set_quota(
+    db: &impl ConnectionTrait,
+    id: Uuid,
+    quota: Option<i64>,
+) -> anyhow::Result<()> {
+    users::Entity::update_many()
+        .col_expr(
+            users::Column::QuotaBytes,
+            sea_orm::sea_query::Expr::value(quota),
+        )
+        .col_expr(
+            users::Column::UpdatedAt,
+            sea_orm::sea_query::Expr::value(crate::time::now()),
+        )
+        .filter(users::Column::Id.eq(id))
+        .exec(db)
+        .await
+        .context("setting a storage quota")?;
+    Ok(())
+}

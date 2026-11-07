@@ -29,6 +29,7 @@ mod scopes;
 mod setup;
 mod snapshots;
 mod trash;
+mod usage;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -62,6 +63,7 @@ pub fn router(state: AppState) -> Router {
         .route("/me/sessions/{id}", delete(me::delete_session))
         .route("/me/identities", get(me::list_identities))
         .route("/me/identities/{id}", delete(me::unlink_identity))
+        .route("/me/usage", get(usage::get))
         .route("/auth/onboarding", get(onboarding::info))
         .route("/auth/onboarding/create", post(onboarding::create))
         .route(

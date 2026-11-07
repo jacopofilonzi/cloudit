@@ -63,8 +63,20 @@ pub fn profile(user: &users::Model) -> UserProfile {
     }
 }
 
+/// Storage figures of an account in [`admin_user`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Storage {
+    pub used_bytes: u64,
+    /// The effective quota (own, else the server default).
+    pub effective_quota: Option<u64>,
+}
+
 /// `identity_providers`: provider ids of the user's identities (sorted).
-pub fn admin_user(user: &users::Model, identity_providers: Vec<String>) -> AdminUser {
+pub fn admin_user(
+    user: &users::Model,
+    identity_providers: Vec<String>,
+    storage: Storage,
+) -> AdminUser {
     AdminUser {
         id: user.id.to_string(),
         email: user.email.clone(),
@@ -81,6 +93,9 @@ pub fn admin_user(user: &users::Model, identity_providers: Vec<String>) -> Admin
         approval_decided_at: rfc3339_opt(user.approval_decided_at),
         approval_decided_by: user.approval_decided_by.map(|id| id.to_string()),
         created_at: rfc3339(user.created_at),
+        used_bytes: storage.used_bytes,
+        quota_bytes: user.quota_bytes.map(crate::sync::usage::bytes),
+        effective_quota_bytes: storage.effective_quota,
     }
 }
 

@@ -3,4 +3,8 @@
 /**
  * `PATCH /api/v1/admin/users/{id}`: omitted fields stay unchanged.
  */
-export type AdminUserUpdate = { admin?: boolean, disabled?: boolean, };
+export type AdminUserUpdate = { admin?: boolean, disabled?: boolean, 
+/**
+ * Storage quota in bytes. Omitted: unchanged; `null`: the server default.
+ */
+quota_bytes?: number | null, };

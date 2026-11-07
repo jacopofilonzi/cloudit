@@ -22,4 +22,8 @@ retention_max_per_day?: number,
 /**
  * 1 to 3650.
  */
-trash_retention_days?: number, };
+trash_retention_days?: number, 
+/**
+ * Omitted: unchanged; `null`: unlimited; a number of bytes.
+ */
+default_quota_bytes?: number | null, };

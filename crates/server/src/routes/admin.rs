@@ -1,6 +1,7 @@
 //! `/api/v1/admin/*` (web session of an effective admin): users (flags, approval),
 //! password resets, invites, settings (registration, sign-up approval, auto-link,
-//! public URL, retention defaults, trash retention), summary.
+//! public URL, retention defaults, trash retention, default quota), summary. User
+//! entries carry their storage usage and quota.
 
 use std::time::Duration;
 
@@ -10,18 +11,19 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use cloudit_core::protocol::{
     AdminSummary, AdminUser as AdminUserInfo, AdminUserList, AdminUserUpdate, ApprovalStatus,
-    CreateInviteRequest, InviteInfo, InviteLink, PasswordResetLink, Sensitive, ServerSettings,
-    TokenTtl, UpdateSettingsRequest,
+    CreateInviteRequest, InviteInfo, InviteLink, PasswordResetLink, Patch, Sensitive,
+    ServerSettings, TokenTtl, UpdateSettingsRequest,
 };
 use serde::Deserialize;
 
-use super::extract::{ApiJson, admin_user, invite_info, parse_id};
+use super::extract::{ApiJson, Storage, admin_user, invite_info, parse_id};
 use crate::accounts::{admin, invites, password_resets, settings, users};
 use crate::auth::extractors::AdminUser;
 use crate::db::entities::users as user_entity;
 use crate::errors::ApiError;
 use crate::oauth::identities;
 use crate::state::AppState;
+use crate::sync::usage;
 use crate::time::rfc3339;
 use crate::validate;
 
@@ -59,17 +61,25 @@ pub async fn list_users(
     .await?;
     let ids: Vec<_> = list.iter().map(|u| u.id).collect();
     let mut providers = identities::provider_ids_by_user(&state.db, &ids).await?;
+    let used = usage::used_by_many(&state.db, &ids).await?;
+    let default_quota = settings::default_quota_bytes(&state.db).await?;
     Ok(Json(AdminUserList {
         users: list
             .iter()
-            .map(|u| admin_user(u, providers.remove(&u.id).unwrap_or_default()))
+            .map(|u| {
+                let storage = Storage {
+                    used_bytes: used.get(&u.id).copied().unwrap_or(0),
+                    effective_quota: u.quota_bytes.map(usage::bytes).or(default_quota),
+                };
+                admin_user(u, providers.remove(&u.id).unwrap_or_default(), storage)
+            })
             .collect(),
         total,
     }))
 }
 
-/// `PATCH /admin/users/{id}` `{admin?, disabled?}`; `last_admin` if it would leave no
-/// enabled admin.
+/// `PATCH /admin/users/{id}` `{admin?, disabled?, quota_bytes?}`; `last_admin` if it
+/// would leave no enabled admin. `quota_bytes: null` = the server default.
 pub async fn update_user(
     State(state): State<AppState>,
     AdminUser(me): AdminUser,
@@ -77,22 +87,48 @@ pub async fn update_user(
     ApiJson(body): ApiJson<AdminUserUpdate>,
 ) -> Result<Json<AdminUserInfo>, ApiError> {
     let id = parse_id(&id)?;
-    let user = admin::update_flags(&state.db, id, body.admin, body.disabled).await?;
-    tracing::info!(
-        admin_id = %me.user.id,
-        user_id = %user.id,
-        admin = user.admin,
-        disabled = user.is_disabled(),
-        "account flags changed"
-    );
+    let quota = match body.quota_bytes {
+        Patch::Missing => None,
+        Patch::Null => Some(None),
+        Patch::Value(v) => {
+            Some(Some(i64::try_from(v).map_err(|_| {
+                ApiError::validation("quota_bytes", "too large")
+            })?))
+        }
+    };
+    let mut user = if body.admin.is_some() || body.disabled.is_some() {
+        let user = admin::update_flags(&state.db, id, body.admin, body.disabled).await?;
+        tracing::info!(
+            admin_id = %me.user.id,
+            user_id = %user.id,
+            admin = user.admin,
+            disabled = user.is_disabled(),
+            "account flags changed"
+        );
+        user
+    } else {
+        users::find(&state.db, id)
+            .await?
+            .ok_or(ApiError::NotFound)?
+    };
+    if let Some(quota) = quota {
+        users::set_quota(&state.db, id, quota).await?;
+        tracing::info!(admin_id = %me.user.id, user_id = %id, quota = ?quota, "storage quota changed");
+        user.quota_bytes = quota;
+    }
     Ok(Json(user_view(&state, &user).await?))
 }
 
 async fn user_view(state: &AppState, user: &user_entity::Model) -> Result<AdminUserInfo, ApiError> {
     let mut providers = identities::provider_ids_by_user(&state.db, &[user.id]).await?;
+    let storage = Storage {
+        used_bytes: usage::used_by(&state.db, user.id).await?,
+        effective_quota: usage::effective_quota(&state.db, user).await?,
+    };
     Ok(admin_user(
         user,
         providers.remove(&user.id).unwrap_or_default(),
+        storage,
     ))
 }
 
@@ -231,6 +267,7 @@ pub async fn get_settings(
         retention_max_versions: retention.max_versions,
         retention_max_per_day: retention.max_per_day,
         trash_retention_days: settings::trash_retention_days(&state.db).await?,
+        default_quota_bytes: settings::default_quota_bytes(&state.db).await?,
     }))
 }
 
@@ -260,6 +297,13 @@ pub async fn update_settings(
         .trash_retention_days
         .map(|v| validate::range(v, "trash_retention_days", 1, MAX_TRASH_RETENTION_DAYS))
         .transpose()?;
+    if let Some(value) = body.default_quota_bytes.into_option() {
+        if value.is_some_and(|v| i64::try_from(v).is_err()) {
+            return Err(ApiError::validation("default_quota_bytes", "too large"));
+        }
+        settings::set_default_quota_bytes(&state.db, value, Some(me.user.id)).await?;
+        tracing::info!(admin_id = %me.user.id, quota = ?value, "default storage quota changed");
+    }
     if let Some(value) = max_versions {
         settings::set_retention_max_versions(&state.db, value, Some(me.user.id)).await?;
         tracing::info!(admin_id = %me.user.id, value, "default retention_max_versions changed");

@@ -247,7 +247,7 @@ async fn settings_round_trip() {
             "autolink_email": false, "public_url": null,
             "public_url_from_env": false, "effective_public_url": null,
             "retention_max_versions": 20, "retention_max_per_day": 5,
-            "trash_retention_days": 30
+            "trash_retention_days": 30, "default_quota_bytes": null
         })
     );
     let resp = app
@@ -270,7 +270,7 @@ async fn settings_round_trip() {
             "public_url": "https://sync.example.com", "public_url_from_env": false,
             "effective_public_url": "https://sync.example.com",
             "retention_max_versions": 20, "retention_max_per_day": 5,
-            "trash_retention_days": 30
+            "trash_retention_days": 30, "default_quota_bytes": null
         })
     );
     let resp = app.get("/api/v1/auth/config", &As::Anon).await;

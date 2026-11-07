@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{ApprovalStatus, NewAccounts, RegistrationMode, Sensitive, TokenTtl};
+use super::{ApprovalStatus, NewAccounts, Patch, RegistrationMode, Sensitive, TokenTtl};
 
 /// One account as seen by admins.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +35,12 @@ pub struct AdminUser {
     /// The admin who made that decision.
     pub approval_decided_by: Option<String>,
     pub created_at: String,
+    /// Stored bytes of the scopes the account owns (trashed ones included).
+    pub used_bytes: u64,
+    /// The account's own quota; `null` = the server default.
+    pub quota_bytes: Option<u64>,
+    /// The quota in force (own, else server default); `null` = unlimited.
+    pub effective_quota_bytes: Option<u64>,
 }
 
 /// `GET /api/v1/admin/users?limit=&offset=&approval_status=` (oldest first; limit
@@ -58,6 +64,10 @@ pub struct AdminUserUpdate {
     #[serde(default)]
     #[cfg_attr(test, ts(optional))]
     pub disabled: Option<bool>,
+    /// Storage quota in bytes. Omitted: unchanged; `null`: the server default.
+    #[serde(default, skip_serializing_if = "Patch::is_missing")]
+    #[cfg_attr(test, ts(as = "Option<Option<u64>>", optional))]
+    pub quota_bytes: Patch<u64>,
 }
 
 /// A single-use password-reset link (valid 24 hours). The UI builds the full URL from
@@ -151,6 +161,9 @@ pub struct ServerSettings {
     pub retention_max_per_day: u32,
     /// Days an item stays in the trash before it is deleted for good. Default 30.
     pub trash_retention_days: u32,
+    /// Storage quota of accounts without their own, in bytes; `null` = unlimited
+    /// (the default).
+    pub default_quota_bytes: Option<u64>,
 }
 
 /// `PATCH /api/v1/admin/settings`: omitted fields stay unchanged.
@@ -184,6 +197,10 @@ pub struct UpdateSettingsRequest {
     #[serde(default)]
     #[cfg_attr(test, ts(optional))]
     pub trash_retention_days: Option<u32>,
+    /// Omitted: unchanged; `null`: unlimited; a number of bytes.
+    #[serde(default, skip_serializing_if = "Patch::is_missing")]
+    #[cfg_attr(test, ts(as = "Option<Option<u64>>", optional))]
+    pub default_quota_bytes: Patch<u64>,
 }
 
 /// `GET /api/v1/admin/summary`: counters for the admin UI (badges).

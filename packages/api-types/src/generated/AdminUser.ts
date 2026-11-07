@@ -37,4 +37,16 @@ approval_decided_at: string | null,
 /**
  * The admin who made that decision.
  */
-approval_decided_by: string | null, created_at: string, };
+approval_decided_by: string | null, created_at: string, 
+/**
+ * Stored bytes of the scopes the account owns (trashed ones included).
+ */
+used_bytes: number, 
+/**
+ * The account's own quota; `null` = the server default.
+ */
+quota_bytes: number | null, 
+/**
+ * The quota in force (own, else server default); `null` = unlimited.
+ */
+effective_quota_bytes: number | null, };

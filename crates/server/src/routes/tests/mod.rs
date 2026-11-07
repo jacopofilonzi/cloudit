@@ -11,6 +11,7 @@ mod me;
 mod oauth;
 mod onboarding;
 mod providers;
+mod quota;
 mod scopes;
 mod secret_key;
 mod setup;
