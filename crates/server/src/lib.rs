@@ -15,6 +15,7 @@
 //! - [`idp`]: identity providers (presets, configuration, OIDC discovery, HTTP client,
 //!   code exchange and ID token verification).
 //! - [`oauth`]: provider sign-in state (flows, identities, pending signups) and outcomes.
+//! - [`scopes`]: scopes, members, folders, the trash and the access checks.
 //! - [`cli`]: `cloudit-server` subcommands (`setup-token`, `admin reset-password`).
 //! - [`validate`], [`time`]: input validation and timestamp helpers.
 //! - [`errors`]: [`errors::ApiError`] and its JSON shape with stable error codes.
@@ -39,6 +40,7 @@ pub mod logging;
 pub mod oauth;
 pub mod platform;
 pub mod routes;
+pub mod scopes;
 pub mod shutdown;
 pub mod state;
 pub mod storage;

@@ -202,3 +202,19 @@ pub async fn count_pending(db: &impl ConnectionTrait) -> anyhow::Result<u64> {
         .await
         .context("counting pending users")
 }
+
+/// The accounts with these ids, by id (missing ids are absent).
+pub async fn find_many(
+    db: &impl ConnectionTrait,
+    ids: &[Uuid],
+) -> anyhow::Result<std::collections::HashMap<Uuid, users::Model>> {
+    if ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let list = users::Entity::find()
+        .filter(users::Column::Id.is_in(ids.iter().copied()))
+        .all(db)
+        .await
+        .context("loading users")?;
+    Ok(list.into_iter().map(|u| (u.id, u)).collect())
+}

@@ -19,6 +19,7 @@ mod m20261107_000003_create_tokens;
 mod m20261107_000004_create_auth_providers;
 mod m20261107_000005_create_identities;
 mod m20261107_000006_account_approval;
+mod m20261107_000007_create_scopes;
 
 use sea_orm_migration::{MigrationTrait, MigratorTrait};
 
@@ -34,6 +35,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261107_000004_create_auth_providers::Migration),
             Box::new(m20261107_000005_create_identities::Migration),
             Box::new(m20261107_000006_account_approval::Migration),
+            Box::new(m20261107_000007_create_scopes::Migration),
         ]
     }
 }
