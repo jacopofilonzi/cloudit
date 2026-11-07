@@ -1,7 +1,8 @@
 //! `folders`: a synced unit inside a scope. Names work like scope names
 //! (`name_key`, `active_key`, UNIQUE `(scope_id, active_key)`). Retention overrides are
 //! NULL for the server default, 0 for unlimited. `head_snapshot_id` has no foreign key
-//! until the snapshots table exists (milestone 4b).
+//! (SQLite can't add one to an existing table, see migration 000008): only the commit
+//! and restore statements set it, to a snapshot of this folder.
 
 use sea_orm::entity::prelude::*;
 

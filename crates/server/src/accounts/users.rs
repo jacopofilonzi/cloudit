@@ -52,6 +52,7 @@ pub async fn insert(db: &impl ConnectionTrait, new: NewUser) -> Result<users::Mo
         signup_source: Set(new.signup_source),
         created_at: Set(now),
         updated_at: Set(now),
+        quota_bytes: Set(None),
     };
     match users::Entity::insert(model).exec_with_returning(db).await {
         Ok(user) => Ok(user),

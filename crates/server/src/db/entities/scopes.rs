@@ -1,6 +1,7 @@
 //! `scopes`: a user-named group of folders, owned by one user. `name_key` is the
 //! lowercased name; `active_key` equals it outside the trash and is NULL inside, under
-//! a UNIQUE `(owner_id, active_key)` index (see migration 000007).
+//! a UNIQUE `(owner_id, active_key)` index (see migration 000007). `stored_bytes` is
+//! the usage counter (migration 000008, `sync::usage`).
 
 use sea_orm::entity::prelude::*;
 
@@ -19,6 +20,9 @@ pub struct Model {
     /// Set while in the trash.
     pub deleted_at: Option<DateTimeUtc>,
     pub deleted_by: Option<Uuid>,
+    /// Stored bytes of the scope's chunks and manifests (rows of `chunks` and
+    /// `manifests`), maintained in the transactions that insert or delete them.
+    pub stored_bytes: i64,
 }
 
 impl ActiveModelBehavior for ActiveModel {}

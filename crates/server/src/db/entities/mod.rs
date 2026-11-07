@@ -6,11 +6,13 @@
 //! prints it) and is handled as a `Secret` in `setup`.
 
 pub mod auth_providers;
+pub mod chunks;
 pub mod device_auth_codes;
 pub mod devices;
 pub mod folders;
 pub mod identities;
 pub mod invites;
+pub mod manifests;
 pub mod oauth_flows;
 pub mod password_resets;
 pub mod pending_signups;
@@ -18,4 +20,6 @@ pub mod scope_members;
 pub mod scopes;
 pub mod sessions;
 pub mod settings;
+pub mod snapshot_chunks;
+pub mod snapshots;
 pub mod users;

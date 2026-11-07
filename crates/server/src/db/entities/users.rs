@@ -30,6 +30,8 @@ pub struct Model {
     pub signup_source: Option<String>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
+    /// Storage quota in bytes; NULL = the server default (`sync::usage`).
+    pub quota_bytes: Option<i64>,
 }
 
 impl ActiveModelBehavior for ActiveModel {}
