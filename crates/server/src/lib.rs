@@ -5,6 +5,7 @@
 //!
 //! - [`config`]: configuration read once from the environment.
 //! - [`db`]: SeaORM connection (SQLite or PostgreSQL), migrations, leases.
+//! - [`storage`]: [`storage::BlobStore`] over `object_store` (filesystem or S3).
 //! - [`errors`]: [`errors::ApiError`] and its JSON shape with stable error codes.
 //! - [`routes`]: the axum router (health probes, `/api/v1`, SPA static files).
 //! - [`logging`]: tracing subscriber setup (`pretty` or `json`).
@@ -18,3 +19,4 @@ pub mod healthcheck;
 pub mod logging;
 pub mod routes;
 pub mod shutdown;
+pub mod storage;
