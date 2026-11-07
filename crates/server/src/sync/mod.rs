@@ -46,5 +46,7 @@
 
 pub mod chunks;
 pub mod keys;
+pub mod manifests;
+pub mod snapshots;
 pub mod transfer;
 pub mod usage;

@@ -16,8 +16,12 @@ pub struct FolderInfo {
     pub id: String,
     pub scope_id: String,
     pub name: String,
-    /// The current snapshot (`null` until the first upload, milestone 4b).
+    /// The current snapshot (`null` until the first commit).
     pub head_snapshot_id: Option<String>,
+    /// Summary of the head snapshot (`null` until the first commit).
+    pub head: Option<FolderHead>,
+    /// Conflict snapshots the user hasn't resolved yet.
+    pub unresolved_conflicts: u64,
     /// The folder's own limit; `null` = the server default.
     pub retention_max_versions: Option<u32>,
     /// The folder's own limit; `null` = the server default.
@@ -29,6 +33,17 @@ pub struct FolderInfo {
     pub created_by: String,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// The head snapshot of a folder, in [`FolderInfo`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct FolderHead {
+    pub snapshot_id: String,
+    pub created_at: String,
+    /// Sum of the file sizes, in bytes.
+    pub logical_size: u64,
+    pub file_count: u64,
 }
 
 /// `POST /api/v1/scopes/{id}/folders` (editor or more; the retention overrides need

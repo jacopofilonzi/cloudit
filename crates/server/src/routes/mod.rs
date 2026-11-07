@@ -27,6 +27,7 @@ mod onboarding;
 mod providers;
 mod scopes;
 mod setup;
+mod snapshots;
 mod trash;
 
 use axum::Router;
@@ -37,6 +38,11 @@ use tower_http::trace::TraceLayer;
 
 use crate::errors::ApiError;
 pub use crate::state::AppState;
+
+/// Body limit of a commit: the stored manifest is a zstd frame of at most
+/// `DEFAULT_MAX_MANIFEST_BYTES` of JSON, which compresses (an incompressible body would
+/// fail to decode anyway).
+const MAX_MANIFEST_BODY: usize = cloudit_core::manifest::DEFAULT_MAX_MANIFEST_BYTES;
 
 /// Builds the complete application router.
 pub fn router(state: AppState) -> Router {
@@ -138,6 +144,12 @@ pub fn router(state: AppState) -> Router {
                     cloudit_core::protocol::MAX_STORED_CHUNK_BYTES,
                 )),
         )
+        .route(
+            "/folders/{id}/snapshots",
+            post(snapshots::commit).layer(DefaultBodyLimit::max(MAX_MANIFEST_BODY)),
+        )
+        .route("/snapshots/{id}", get(snapshots::get))
+        .route("/snapshots/{id}/resolve", post(snapshots::resolve))
         .route("/trash", get(trash::list))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

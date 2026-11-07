@@ -31,6 +31,7 @@ export type { DeviceTokenRequest } from './DeviceTokenRequest';
 export type { DeviceTokenResponse } from './DeviceTokenResponse';
 export type { EntryKind } from './EntryKind';
 export type { ErrorCode } from './ErrorCode';
+export type { FolderHead } from './FolderHead';
 export type { FolderInfo } from './FolderInfo';
 export type { HealthResponse } from './HealthResponse';
 export type { IdentityInfo } from './IdentityInfo';

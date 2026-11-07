@@ -43,6 +43,8 @@ chacha20poly1305.workspace = true
 http-body-util.workspace = true
 tower.workspace = true
 tempfile.workspace = true
+# Tests build invalid stored manifests (zstd frames of arbitrary JSON).
+zstd.workspace = true
 
 [lints]
 workspace = true

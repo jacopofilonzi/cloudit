@@ -10,7 +10,7 @@ use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use cloudit_core::protocol::{
-    CreateFolderRequest, FolderInfo, RestoreRequest, ScopeRole, UpdateFolderRequest,
+    CreateFolderRequest, FolderHead, FolderInfo, RestoreRequest, ScopeRole, UpdateFolderRequest,
 };
 
 use super::extract::{ApiJson, optional_json, parse_id};
@@ -22,6 +22,8 @@ use crate::scopes::access::{FolderAccess, ScopeAccess};
 use crate::scopes::folders::{self, Changes, Retention};
 use crate::scopes::names;
 use crate::state::AppState;
+use crate::sync::snapshots::{self, FolderSync};
+use crate::sync::usage;
 use crate::time::rfc3339;
 use crate::validate;
 
@@ -29,7 +31,17 @@ fn stored(value: Option<i32>) -> Option<u32> {
     value.map(|v| u32::try_from(v).unwrap_or(0))
 }
 
-pub fn folder_info(folder: &folder_entity::Model, defaults: RetentionDefaults) -> FolderInfo {
+pub fn folder_info(
+    folder: &folder_entity::Model,
+    defaults: RetentionDefaults,
+    sync: Option<&FolderSync>,
+) -> FolderInfo {
+    let head = sync.and_then(|s| s.head.as_ref()).map(|h| FolderHead {
+        snapshot_id: h.id.to_string(),
+        created_at: rfc3339(h.created_at),
+        logical_size: usage::bytes(h.logical_size),
+        file_count: usage::bytes(h.file_count),
+    });
     let max_versions = stored(folder.retention_max_versions);
     let max_per_day = stored(folder.retention_max_per_day);
     FolderInfo {
@@ -37,6 +49,8 @@ pub fn folder_info(folder: &folder_entity::Model, defaults: RetentionDefaults) -
         scope_id: folder.scope_id.to_string(),
         name: folder.name.clone(),
         head_snapshot_id: folder.head_snapshot_id.map(|id| id.to_string()),
+        head,
+        unresolved_conflicts: sync.map_or(0, |s| s.unresolved_conflicts),
         retention_max_versions: max_versions,
         retention_max_per_day: max_per_day,
         effective_retention_max_versions: max_versions.unwrap_or(defaults.max_versions),
@@ -49,7 +63,8 @@ pub fn folder_info(folder: &folder_entity::Model, defaults: RetentionDefaults) -
 
 async fn view(state: &AppState, folder: &folder_entity::Model) -> Result<FolderInfo, ApiError> {
     let defaults = settings::retention_defaults(&state.db).await?;
-    Ok(folder_info(folder, defaults))
+    let sync = snapshots::folder_sync(&state.db, &[folder]).await?;
+    Ok(folder_info(folder, defaults, sync.get(&folder.id)))
 }
 
 async fn reload(state: &AppState, id: uuid::Uuid) -> Result<folder_entity::Model, ApiError> {
@@ -71,8 +86,11 @@ pub async fn list(
     let access = ScopeAccess::load(&state.db, me.user.id, parse_id(&id)?).await?;
     let defaults = settings::retention_defaults(&state.db).await?;
     let list = folders::list(&state.db, access.scope.id).await?;
+    let sync = snapshots::folder_sync(&state.db, &list.iter().collect::<Vec<_>>()).await?;
     Ok(Json(
-        list.iter().map(|f| folder_info(f, defaults)).collect(),
+        list.iter()
+            .map(|f| folder_info(f, defaults, sync.get(&f.id)))
+            .collect(),
     ))
 }
 

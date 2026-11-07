@@ -178,6 +178,31 @@ impl<'a> SyncClient<'a> {
         missing.len()
     }
 
+    /// `POST snapshots?parent=…&kind=…` with stored manifest bytes.
+    pub async fn commit_raw(&self, stored: Vec<u8>, parent: Option<&str>, kind: &str) -> Resp {
+        let uri = self.url(&format!(
+            "/snapshots?parent={}&kind={kind}",
+            parent.unwrap_or("none")
+        ));
+        self.app.send_raw("POST", &uri, &self.who, stored).await
+    }
+
+    /// Commits `manifest` on `parent`.
+    pub async fn commit(&self, manifest: &Manifest, parent: Option<&str>, kind: &str) -> Resp {
+        self.commit_raw(manifest.encode().unwrap().compressed, parent, kind)
+            .await
+    }
+
+    /// Uploads what is missing of `tree` and commits it as `normal` on `parent`;
+    /// returns the new snapshot id.
+    pub async fn sync(&self, tree: &Tree, parent: Option<&str>) -> String {
+        let (manifest, chunks) = tree.manifest();
+        self.push_chunks(&chunks).await;
+        let resp = self.commit(&manifest, parent, "normal").await;
+        resp.assert(StatusCode::CREATED);
+        resp.body["snapshot"]["id"].as_str().unwrap().to_owned()
+    }
+
     /// Check + upload; the number of chunks uploaded.
     pub async fn push_chunks(&self, chunks: &BTreeMap<ChunkHash, Vec<u8>>) -> usize {
         let check = self.check(chunks).await;

@@ -12,6 +12,7 @@ mod providers;
 mod scopes;
 mod secret_key;
 mod setup;
+mod snapshots;
 mod support;
 mod sync_client;
 
