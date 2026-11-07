@@ -6,7 +6,7 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse as _, Response};
 use cloudit_core::protocol::{
     ApprovalStatus, AuthConfig, LoginRequest, NewAccounts, PasswordResetRequest, RegisterRequest,
-    RegistrationMode,
+    RegistrationMode, SignupPending,
 };
 use sea_orm::TransactionTrait as _;
 
@@ -33,6 +33,11 @@ pub async fn signed_in(
     Ok((status, [(header::SET_COOKIE, cookie)], Json(profile(user))).into_response())
 }
 
+/// 202 `{status: "pending"}`: the new account waits for an admin; no session.
+pub fn pending_approval() -> Response {
+    (StatusCode::ACCEPTED, Json(SignupPending::default())).into_response()
+}
+
 /// `GET /auth/config` (no authentication; works during setup).
 pub async fn config(State(state): State<AppState>) -> Result<Json<AuthConfig>, ApiError> {
     Ok(Json(AuthConfig {
@@ -48,7 +53,9 @@ pub async fn config(State(state): State<AppState>) -> Result<Json<AuthConfig>, A
     }))
 }
 
-/// `POST /auth/register` → 201 + session cookie.
+/// `POST /auth/register` → 201 + session cookie, or 202 [`SignupPending`] (no
+/// session) when the account needs an admin's approval: without an invite and with
+/// the `password_new_accounts` setting at `approval`.
 pub async fn register(
     State(state): State<AppState>,
     Client(client): Client,
@@ -83,6 +90,13 @@ pub async fn register(
     };
     // Only an invite bound to this very email proves the address.
     let email_verified = invite.as_ref().is_some_and(|i| i.email.is_some());
+    // An invite is an admin's approval; otherwise the setting decides.
+    let (approval, source) = if invite.is_some() {
+        (ApprovalStatus::Approved, "invite")
+    } else {
+        let policy = settings::password_new_accounts(&state.db).await?;
+        (users::approval_for_signup(policy, false), "password")
+    };
 
     let password_hash = password::hash(body.password.expose()).await?;
     let tx = state.db.begin().await.map_err(anyhow::Error::from)?;
@@ -94,15 +108,8 @@ pub async fn register(
             display_name,
             password_hash: Some(password_hash),
             admin: false,
-            approval: ApprovalStatus::Approved,
-            signup_source: Some(
-                if invite.is_some() {
-                    "invite"
-                } else {
-                    "password"
-                }
-                .to_owned(),
-            ),
+            approval,
+            signup_source: Some(source.to_owned()),
         },
     )
     .await?;
@@ -113,6 +120,10 @@ pub async fn register(
         return Err(ApiError::InviteInvalid);
     }
     tx.commit().await.map_err(anyhow::Error::from)?;
+    if approval == ApprovalStatus::Pending {
+        tracing::info!(user_id = %user.id, "account registered, waiting for approval");
+        return Ok(pending_approval());
+    }
     tracing::info!(user_id = %user.id, "account registered");
     signed_in(&state, &client, &user, StatusCode::CREATED).await
 }
@@ -151,9 +162,8 @@ pub async fn login(
     let Some(user) = user.filter(|_| valid) else {
         return Err(ApiError::InvalidCredentials);
     };
-    if user.is_disabled() {
-        return Err(ApiError::AccountDisabled);
-    }
+    // Only after the password check: no oracle beyond what the password proves.
+    users::ensure_active(&user)?;
     signed_in(&state, &client, &user, StatusCode::OK).await
 }
 

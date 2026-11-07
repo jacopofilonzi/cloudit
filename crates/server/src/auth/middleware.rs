@@ -9,8 +9,9 @@
 //! 4. **Authentication**: `Authorization: Bearer cld_…` → device; else the session
 //!    cookie → session (bearer wins: an invalid bearer token is not rescued by a
 //!    cookie). The result is an [`Auth`] extension that the extractors
-//!    ([`super::extractors`]) turn into 401/403 as each route requires. Disabled users
-//!    still resolve, so the extractors can answer `account_disabled`.
+//!    ([`super::extractors`]) turn into 401/403 as each route requires. Disabled,
+//!    pending and rejected users still resolve, so the extractors can answer
+//!    `account_disabled`, `account_pending` or `account_rejected`.
 //! 5. After the handler: if the session was extended, refreshes the cookie (unless
 //!    the handler set or cleared it itself).
 
@@ -100,7 +101,7 @@ async fn prepare(state: &AppState, request: &mut Request) -> Result<Option<Strin
     } else if let Some(token) = sessions::read_cookie(headers) {
         match sessions::authenticate(&state.db, token.expose()).await? {
             Some((session, user)) => {
-                if !user.is_disabled() && sessions::slide_if_due(&state.db, &session, now).await? {
+                if user.is_active() && sessions::slide_if_due(&state.db, &session, now).await? {
                     refresh = Some(token.expose().to_owned());
                 }
                 Auth::Session { user, session }

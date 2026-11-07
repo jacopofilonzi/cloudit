@@ -57,7 +57,7 @@ async fn exchange(
 }
 
 /// A signed-in device: (user cookie, device token, device id).
-async fn device(app: &TestApp) -> (As, String, String) {
+pub(super) async fn device(app: &TestApp) -> (As, String, String) {
     let user = app.user("user@example.com").await;
     let code = authorize(app, &user, authorize_body(None)).await;
     let resp = exchange(app, &code, VERIFIER, REDIRECT).await;

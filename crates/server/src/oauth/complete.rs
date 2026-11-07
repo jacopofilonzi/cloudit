@@ -3,7 +3,8 @@
 //! First, a provider with `allowed_groups` refuses identities in none of them
 //! (`group_not_allowed`). Then:
 //!
-//! - **login, known identity**: the account must be enabled (`account_disabled`); the
+//! - **login, known identity**: the account must be enabled and approved
+//!   (`account_disabled`, `account_rejected`, `account_pending`); the
 //!   identity's email and last sign-in are updated; for OIDC providers
 //!   `admin_from_groups` is recomputed ([`apply_groups`]); a session is created.
 //! - **login, unknown identity**: with the `autolink_email` setting on, an email the
@@ -17,6 +18,11 @@
 //! - **onboarding_link**: the user proved an existing account with an identity that
 //!   is already linked; the pending identity is attached to that account (consuming
 //!   the pending signup first), then the user is signed in.
+//!
+//! Every path that signs in or attaches to an existing account requires it to be
+//! enabled and approved. A rejected account keeps its identities, so signing in with
+//! one answers `account_rejected` and never creates a new account. New accounts
+//! (onboarding) are approved or pending per the provider's `new_accounts`.
 //!
 //! `admin_from_groups` reflects the last sign-in through an OIDC provider: true iff
 //! the provider has `admin_groups` and the identity is in one of them. Sign-ins
@@ -71,13 +77,11 @@ pub async fn apply_groups(
     admin::set_admin_from_groups(&state.db, user_id, value).await
 }
 
-async fn enabled_user(state: &AppState, id: Uuid) -> Result<user_entity::Model, ApiError> {
+async fn active_user(state: &AppState, id: Uuid) -> Result<user_entity::Model, ApiError> {
     let user = users::find(&state.db, id)
         .await?
         .context("identity of a missing user")?;
-    if user.is_disabled() {
-        return Err(ApiError::AccountDisabled);
-    }
+    users::ensure_active(&user)?;
     Ok(user)
 }
 
@@ -87,7 +91,7 @@ async fn sign_in_existing(
     link: &identity_entity::Model,
     identity: &ExternalIdentity,
 ) -> Result<Outcome, ApiError> {
-    let user = enabled_user(state, link.user_id).await?;
+    let user = active_user(state, link.user_id).await?;
     identities::record_sign_in(&state.db, link.id, identity).await?;
     apply_groups(state, provider, user.id, identity).await?;
     Ok(Outcome::SignedIn {
@@ -108,9 +112,7 @@ async fn login_unknown(
         && let Some(user) = users::find_by_email(&state.db, email).await?
         && user.email_verified
     {
-        if user.is_disabled() {
-            return Err(ApiError::AccountDisabled);
-        }
+        users::ensure_active(&user)?;
         identities::insert(&state.db, user.id, &provider.id, identity, true).await?;
         apply_groups(state, provider, user.id, identity).await?;
         tracing::info!(user_id = %user.id, provider = %provider.id, "identity auto-linked by verified email");
@@ -153,7 +155,7 @@ pub async fn finish(
             if session_user != Some(user_id) {
                 return Err(ApiError::OauthStateInvalid);
             }
-            let user = enabled_user(state, user_id).await?;
+            let user = active_user(state, user_id).await?;
             match existing {
                 Some(link) if link.user_id == user.id => {}
                 Some(_) => return Err(ApiError::IdentityInUse),
@@ -172,7 +174,7 @@ pub async fn finish(
                 .await?
                 .ok_or(ApiError::OnboardingExpired)?;
             let link = existing.ok_or(ApiError::IdentityNotLinked)?;
-            let user = enabled_user(state, link.user_id).await?;
+            let user = active_user(state, link.user_id).await?;
             let pending_identity = pending::identity(&pending)?;
             let tx = state.db.begin().await.map_err(anyhow::Error::from)?;
             if !pending::consume(&tx, pending.id).await? {

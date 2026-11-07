@@ -1,4 +1,5 @@
 mod admin;
+mod approval;
 mod auth;
 mod devices;
 mod fake_idp;

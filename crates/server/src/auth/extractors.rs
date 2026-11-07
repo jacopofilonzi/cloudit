@@ -8,7 +8,8 @@
 //! - [`Client`]: the request's [`ClientInfo`].
 //!
 //! No credentials (or invalid / expired ones) give `unauthorized` (401); a disabled
-//! account gives `account_disabled` (403) on every authenticated route.
+//! account gives `account_disabled` (403) on every authenticated route, a pending one
+//! `account_pending` and a rejected one `account_rejected` (both 403).
 
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
@@ -24,12 +25,10 @@ fn auth(parts: &Parts) -> &Auth {
     parts.extensions.get::<Auth>().unwrap_or(&ANONYMOUS)
 }
 
+/// The user, if it may use its credentials (enabled and approved).
 fn enabled(user: &users::Model) -> Result<users::Model, ApiError> {
-    if user.is_disabled() {
-        Err(ApiError::AccountDisabled)
-    } else {
-        Ok(user.clone())
-    }
+    crate::accounts::users::ensure_active(user)?;
+    Ok(user.clone())
 }
 
 /// A user authenticated by a web session.

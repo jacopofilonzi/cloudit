@@ -2,7 +2,7 @@
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use cloudit_core::protocol::RegistrationMode;
+use cloudit_core::protocol::{NewAccounts, RegistrationMode};
 use sea_orm::sea_query::Expr;
 use sea_orm::{ColumnTrait as _, EntityTrait as _, QueryFilter as _};
 use serde_json::json;
@@ -33,6 +33,7 @@ async fn register_in_open_mode() {
     let app = TestApp::new().await;
     app.setup_admin().await;
     app.set_mode(RegistrationMode::Open).await;
+    app.set_password_policy(NewAccounts::Auto).await;
     let resp = app
         .post(
             "/api/v1/auth/register",

@@ -15,7 +15,7 @@ use crate::db::entities::pending_signups;
 
 /// Sends a request carrying the onboarding cookie.
 /// Builds the request now, so the future borrows only `env`.
-fn with_cookie<'a>(
+pub(super) fn with_cookie<'a>(
     env: &'a Env,
     method: &str,
     uri: &str,
@@ -39,13 +39,13 @@ fn with_cookie<'a>(
 }
 
 /// Signs in an unknown OIDC identity; returns the onboarding token.
-async fn pending(env: &Env, claims: IdClaims) -> String {
+pub(super) async fn pending(env: &Env, claims: IdClaims) -> String {
     let resp = env.oidc(claims, "login", &As::Anon).await;
     assert_eq!(resp.location(), "/onboarding", "{}", resp.body);
     resp.cookie_named("cloudit_onboarding").unwrap()
 }
 
-async fn create(env: &Env, token: &str, body: Value) -> Resp {
+pub(super) async fn create(env: &Env, token: &str, body: Value) -> Resp {
     with_cookie(
         env,
         "POST",

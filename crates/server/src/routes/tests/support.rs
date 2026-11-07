@@ -5,7 +5,7 @@
 use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode, header};
-use cloudit_core::protocol::RegistrationMode;
+use cloudit_core::protocol::{NewAccounts, RegistrationMode};
 use http_body_util::BodyExt as _;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -257,16 +257,27 @@ impl TestApp {
         As::Cookie(resp.cookie().unwrap())
     }
 
+    pub async fn set_password_policy(&self, policy: NewAccounts) {
+        settings::set_password_new_accounts(&self.state.db, policy, None)
+            .await
+            .unwrap();
+    }
+
     pub async fn set_mode(&self, mode: RegistrationMode) {
         settings::set_registration_mode(&self.state.db, mode, None)
             .await
             .unwrap();
     }
 
-    /// Registers `email` (registration temporarily open); returns its session cookie.
+    /// Registers `email` (registration temporarily open, without approval); returns
+    /// its session cookie.
     pub async fn user(&self, email: &str) -> As {
         let previous = settings::registration_mode(&self.state.db).await.unwrap();
+        let policy = settings::password_new_accounts(&self.state.db)
+            .await
+            .unwrap();
         self.set_mode(RegistrationMode::Open).await;
+        self.set_password_policy(NewAccounts::Auto).await;
         let resp = self
             .post(
                 "/api/v1/auth/register",
@@ -276,6 +287,7 @@ impl TestApp {
             .await;
         resp.assert(StatusCode::CREATED);
         self.set_mode(previous).await;
+        self.set_password_policy(policy).await;
         As::Cookie(resp.cookie().unwrap())
     }
 

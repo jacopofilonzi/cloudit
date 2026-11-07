@@ -122,8 +122,7 @@ pub async fn token(
         .ok_or(ApiError::TokenInvalid)?;
     let user = users::find(&tx, code.user_id).await?;
     let outcome = check_exchange(&code, &body).and_then(|()| match &user {
-        Some(user) if !user.is_disabled() => Ok(()),
-        Some(_) => Err(ApiError::AccountDisabled),
+        Some(user) => users::ensure_active(user),
         None => Err(ApiError::TokenInvalid),
     });
     if let Err(err) = outcome {

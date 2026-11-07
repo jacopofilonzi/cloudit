@@ -51,8 +51,12 @@ impl Env {
         env
     }
 
-    /// Creates a provider with the fake's client credentials.
+    /// Creates a provider with the fake's client credentials (`new_accounts`: `auto`
+    /// unless given).
     pub async fn add_provider(&self, mut body: Value) {
+        if body.get("new_accounts").is_none() {
+            body["new_accounts"] = json!("auto");
+        }
         body["client_id"] = json!(CLIENT_ID);
         body["client_secret"] = json!(CLIENT_SECRET);
         self.app

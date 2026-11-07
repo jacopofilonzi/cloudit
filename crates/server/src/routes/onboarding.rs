@@ -13,7 +13,9 @@
 //! - `POST /link/{provider}/start`: prove an existing account with another provider
 //!   instead (an `onboarding_link` flow, see `oauth::complete`).
 //!
-//! Success signs in (session cookie) and clears the onboarding cookie.
+//! Success signs in (session cookie) and clears the onboarding cookie. A new account
+//! that needs an admin's approval (no invite, the provider's `new_accounts` is
+//! `approval` and the identity is not in its admin groups) gets no session: 202.
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -25,6 +27,7 @@ use cloudit_core::protocol::{
 };
 use sea_orm::TransactionTrait as _;
 
+use super::auth::pending_approval;
 use super::extract::{ApiJson, profile};
 use super::oauth::{active_provider, begin};
 use crate::accounts::{invites, settings, users};
@@ -116,7 +119,8 @@ pub async fn info(
     }))
 }
 
-/// `POST /auth/onboarding/create` → 201 + session cookie.
+/// `POST /auth/onboarding/create` → 201 + session cookie, or 202 `SignupPending`
+/// (no session; the onboarding cookie is cleared) when the account needs approval.
 pub async fn create(
     State(state): State<AppState>,
     Client(client): Client,
@@ -173,6 +177,17 @@ pub async fn create(
     let email_verified = (pending.email_verified
         && pending.email.as_deref() == Some(email.as_str()))
         || invite.as_ref().is_some_and(|i| i.email.is_some());
+    // An invite is an admin's approval; an OIDC identity in the admin groups is
+    // vouched for by the provider; otherwise the provider's `new_accounts` decides.
+    let admin_from_groups = admin_by_groups(&provider, &identity);
+    let (approval, source) = if invite.is_some() {
+        (ApprovalStatus::Approved, "invite".to_owned())
+    } else {
+        (
+            users::approval_for_signup(provider.fields.new_accounts, admin_from_groups),
+            provider.id.clone(),
+        )
+    };
 
     let tx = state.db.begin().await.map_err(anyhow::Error::from)?;
     if !pending::consume(&tx, pending.id).await? {
@@ -186,12 +201,8 @@ pub async fn create(
             display_name,
             password_hash,
             admin: false,
-            approval: ApprovalStatus::Approved,
-            signup_source: Some(if invite.is_some() {
-                "invite".to_owned()
-            } else {
-                provider.id.clone()
-            }),
+            approval,
+            signup_source: Some(source),
         },
     )
     .await?;
@@ -201,10 +212,19 @@ pub async fn create(
     {
         return Err(ApiError::InviteInvalid);
     }
-    if admin_by_groups(&provider, &identity) {
+    if admin_from_groups {
         users::grant_admin_from_groups(&tx, user.id).await?;
     }
     tx.commit().await.map_err(anyhow::Error::from)?;
+    if approval == ApprovalStatus::Pending {
+        tracing::info!(user_id = %user.id, provider = %provider.id, "account created through a provider, waiting for approval");
+        let mut response = pending_approval();
+        response.headers_mut().append(
+            header::SET_COOKIE,
+            cookies::clear(cookies::ONBOARDING, client.https)?,
+        );
+        return Ok(response);
+    }
     let user = users::find(&state.db, user.id)
         .await?
         .ok_or(ApiError::Unauthorized)?;
@@ -267,9 +287,7 @@ pub async fn link_with_password(
     let Some(user) = user.filter(|_| valid) else {
         return Err(ApiError::InvalidCredentials);
     };
-    if user.is_disabled() {
-        return Err(ApiError::AccountDisabled);
-    }
+    users::ensure_active(&user)?;
     attach(&state, &pending, &provider, &user).await?;
     let user = users::find(&state.db, user.id)
         .await?
