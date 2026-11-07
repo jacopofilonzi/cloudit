@@ -51,12 +51,26 @@ impl Resp {
 
     /// The session cookie value set by this response (`Some("")` when cleared).
     pub fn cookie(&self) -> Option<String> {
+        self.cookie_named("cloudit_session")
+    }
+
+    /// The value of cookie `name` set by this response (`Some("")` when cleared).
+    pub fn cookie_named(&self, name: &str) -> Option<String> {
+        let prefix = format!("{name}=");
         self.headers
             .get_all(header::SET_COOKIE)
             .iter()
             .filter_map(|v| v.to_str().ok())
-            .find_map(|v| v.strip_prefix("cloudit_session="))
+            .find_map(|v| v.strip_prefix(prefix.as_str()))
             .map(|rest| rest.split(';').next().unwrap_or("").to_owned())
+    }
+
+    /// The `Location` header.
+    pub fn location(&self) -> &str {
+        self.headers
+            .get(header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
     }
 
     #[track_caller]
@@ -123,6 +137,14 @@ impl TestApp {
             _db: db,
             origin,
         }
+    }
+
+    /// With GitHub and Discord pointing at `idp`.
+    pub async fn with_fake_idp(extra: &[(&str, &str)], idp: &super::fake_idp::FakeIdp) -> Self {
+        let mut test = Self::with(extra).await;
+        test.state.idp.set_social_endpoints(idp.social_endpoints());
+        test.app = router(test.state.clone());
+        test
     }
 
     pub fn config(vars: &[(String, String)]) -> Config {

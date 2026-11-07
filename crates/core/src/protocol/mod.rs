@@ -14,12 +14,14 @@
 //! - [`me`]: the signed-in user's profile, password and sessions;
 //! - [`devices`]: desktop client login (loopback + PKCE) and device management;
 //! - [`admin`]: user management, invites, password resets and server settings;
-//! - [`providers`]: identity providers (presets, admin configuration).
+//! - [`providers`]: identity providers (presets, admin configuration);
+//! - [`oauth`]: sign-in through providers and linked identities.
 
 mod admin;
 mod auth;
 mod devices;
 mod me;
+mod oauth;
 mod providers;
 mod sensitive;
 
@@ -27,6 +29,7 @@ pub use admin::*;
 pub use auth::*;
 pub use devices::*;
 pub use me::*;
+pub use oauth::*;
 pub use providers::*;
 pub use sensitive::Sensitive;
 
@@ -157,6 +160,25 @@ pub enum ErrorCode {
     /// The identity provider failed or answered something unusable (token exchange,
     /// ID token or user info); details are only in the server logs (502).
     ProviderError,
+    /// Provider sign-in needs the server's public URL (setting or `PUBLIC_URL`) to
+    /// build the callback URL (409).
+    PublicUrlRequired,
+    /// The identity provider is disabled by an admin (403).
+    ProviderDisabled,
+    /// The provider sign-in can't be completed: unknown, expired or already used
+    /// `state`, or started in another browser (400).
+    OauthStateInvalid,
+    /// The sign-in was cancelled or refused at the provider (400).
+    OauthCancelled,
+    /// The provider account is not in any of the provider's allowed groups (403).
+    GroupNotAllowed,
+    /// This provider account is already linked to another cloudit account (409).
+    IdentityInUse,
+    /// This provider account is not linked to any cloudit account (409).
+    IdentityNotLinked,
+    /// The pending provider sign-up is missing, expired or already used: sign in
+    /// again (410).
+    OnboardingExpired,
 }
 
 /// JSON body of every API error response.

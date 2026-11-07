@@ -63,6 +63,22 @@ pub enum ApiError {
     ProviderDiscoveryFailed,
     #[error("identity provider error")]
     ProviderError,
+    #[error("the server's public URL is not configured")]
+    PublicUrlRequired,
+    #[error("identity provider disabled")]
+    ProviderDisabled,
+    #[error("invalid, expired or used sign-in state")]
+    OauthStateInvalid,
+    #[error("sign-in cancelled at the provider")]
+    OauthCancelled,
+    #[error("not in an allowed group")]
+    GroupNotAllowed,
+    #[error("identity linked to another account")]
+    IdentityInUse,
+    #[error("identity not linked to an account")]
+    IdentityNotLinked,
+    #[error("pending sign-up missing or expired")]
+    OnboardingExpired,
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -101,6 +117,14 @@ impl ApiError {
             Self::ProviderIdTaken => ErrorCode::ProviderIdTaken,
             Self::ProviderDiscoveryFailed => ErrorCode::ProviderDiscoveryFailed,
             Self::ProviderError => ErrorCode::ProviderError,
+            Self::PublicUrlRequired => ErrorCode::PublicUrlRequired,
+            Self::ProviderDisabled => ErrorCode::ProviderDisabled,
+            Self::OauthStateInvalid => ErrorCode::OauthStateInvalid,
+            Self::OauthCancelled => ErrorCode::OauthCancelled,
+            Self::GroupNotAllowed => ErrorCode::GroupNotAllowed,
+            Self::IdentityInUse => ErrorCode::IdentityInUse,
+            Self::IdentityNotLinked => ErrorCode::IdentityNotLinked,
+            Self::OnboardingExpired => ErrorCode::OnboardingExpired,
             Self::Internal(_) => ErrorCode::Internal,
         }
     }
@@ -108,9 +132,11 @@ impl ApiError {
     #[must_use]
     pub fn status(&self) -> StatusCode {
         match self {
-            Self::BadRequest(_) | Self::InviteInvalid | Self::TokenInvalid => {
-                StatusCode::BAD_REQUEST
-            }
+            Self::BadRequest(_)
+            | Self::InviteInvalid
+            | Self::TokenInvalid
+            | Self::OauthStateInvalid
+            | Self::OauthCancelled => StatusCode::BAD_REQUEST,
             Self::NotFound | Self::ProviderNotFound => StatusCode::NOT_FOUND,
             Self::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::Unauthorized | Self::InvalidCredentials => StatusCode::UNAUTHORIZED,
@@ -118,12 +144,18 @@ impl ApiError {
             | Self::AccountDisabled
             | Self::RegistrationClosed
             | Self::CsrfFailed
-            | Self::SetupTokenInvalid => StatusCode::FORBIDDEN,
+            | Self::SetupTokenInvalid
+            | Self::ProviderDisabled
+            | Self::GroupNotAllowed => StatusCode::FORBIDDEN,
             Self::EmailTaken
             | Self::SetupRequired
             | Self::SetupAlreadyDone
             | Self::LastAdmin
-            | Self::ProviderIdTaken => StatusCode::CONFLICT,
+            | Self::ProviderIdTaken
+            | Self::PublicUrlRequired
+            | Self::IdentityInUse
+            | Self::IdentityNotLinked => StatusCode::CONFLICT,
+            Self::OnboardingExpired => StatusCode::GONE,
             Self::ProviderDiscoveryFailed | Self::ProviderError => StatusCode::BAD_GATEWAY,
             Self::Validation { .. } => StatusCode::UNPROCESSABLE_ENTITY,
             Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,

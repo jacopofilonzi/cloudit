@@ -37,6 +37,16 @@ export const en = {
   'error.provider_discovery_failed':
     'Cannot read the configuration of the sign-in provider. Check the issuer URL.',
   'error.provider_error': 'The sign-in provider did not answer as expected. Try again later.',
+  'error.public_url_required':
+    "The server's public address is not configured yet: an administrator must set it before signing in with a provider.",
+  'error.provider_disabled': 'This sign-in method is disabled.',
+  'error.oauth_state_invalid':
+    'This sign-in attempt is no longer valid. Start again from the same browser.',
+  'error.oauth_cancelled': 'Sign-in was cancelled.',
+  'error.group_not_allowed': 'Your account at this provider is not allowed to sign in here.',
+  'error.identity_in_use': 'This account is already linked to another cloudit user.',
+  'error.identity_not_linked': 'This account is not linked to any cloudit user.',
+  'error.onboarding_expired': 'This sign-up has expired. Sign in again.',
   'error.network': 'Cannot reach the server.',
   'error.unknown': 'Unexpected error.'
 } as const;

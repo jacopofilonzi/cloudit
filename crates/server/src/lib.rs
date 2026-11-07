@@ -12,7 +12,9 @@
 //! - [`accounts`]: users, first-run setup, settings, invites, password resets.
 //! - [`auth`]: passwords, sessions, device tokens, CSRF, extractors, rate limits.
 //! - [`devices`]: desktop devices and their loopback + PKCE login.
-//! - [`idp`]: identity providers (presets, configuration, OIDC discovery, HTTP client).
+//! - [`idp`]: identity providers (presets, configuration, OIDC discovery, HTTP client,
+//!   code exchange and ID token verification).
+//! - [`oauth`]: provider sign-in state (flows, identities, pending signups) and outcomes.
 //! - [`cli`]: `cloudit-server` subcommands (`setup-token`, `admin reset-password`).
 //! - [`validate`], [`time`]: input validation and timestamp helpers.
 //! - [`errors`]: [`errors::ApiError`] and its JSON shape with stable error codes.
@@ -34,6 +36,7 @@ pub mod errors;
 pub mod healthcheck;
 pub mod idp;
 pub mod logging;
+pub mod oauth;
 pub mod platform;
 pub mod routes;
 pub mod shutdown;

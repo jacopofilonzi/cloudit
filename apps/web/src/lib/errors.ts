@@ -27,6 +27,14 @@ const MESSAGE_KEYS: Record<ClientErrorCode, MessageKey> = {
   provider_id_taken: 'error.provider_id_taken',
   provider_discovery_failed: 'error.provider_discovery_failed',
   provider_error: 'error.provider_error',
+  public_url_required: 'error.public_url_required',
+  provider_disabled: 'error.provider_disabled',
+  oauth_state_invalid: 'error.oauth_state_invalid',
+  oauth_cancelled: 'error.oauth_cancelled',
+  group_not_allowed: 'error.group_not_allowed',
+  identity_in_use: 'error.identity_in_use',
+  identity_not_linked: 'error.identity_not_linked',
+  onboarding_expired: 'error.onboarding_expired',
   network: 'error.network',
   unknown: 'error.unknown'
 };

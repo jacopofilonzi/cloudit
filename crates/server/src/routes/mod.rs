@@ -20,6 +20,7 @@ mod devices;
 mod extract;
 mod health;
 mod me;
+mod oauth;
 mod providers;
 mod setup;
 
@@ -41,6 +42,8 @@ pub fn router(state: AppState) -> Router {
         .route("/auth/login", post(auth::login))
         .route("/auth/logout", post(auth::logout))
         .route("/auth/password-reset", post(auth::password_reset))
+        .route("/auth/oauth/{provider}/start", post(oauth::start))
+        .route("/auth/oauth/{provider}/callback", get(oauth::callback))
         .route("/me", get(me::get).patch(me::update))
         .route("/me/password", post(me::change_password))
         .route("/me/sessions", get(me::list_sessions))

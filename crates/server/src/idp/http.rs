@@ -156,13 +156,14 @@ impl HttpClient {
         json_body(&redact(url), &response)
     }
 
-    /// `POST url` with a form body (and `Accept: application/json`); returns the raw
+    /// `POST url` with a form body, `Accept: application/json` and optionally
+    /// `Authorization: Basic <basic_auth>` (already encoded); returns the raw
     /// response whatever its status (token endpoints answer errors as JSON).
-    pub async fn post_form(
+    pub async fn post_form_auth(
         &self,
         url: &reqwest::Url,
         form: &[(&str, &str)],
-        basic_auth: Option<(&str, &str)>,
+        basic_auth: Option<&str>,
     ) -> Result<HttpResponse, HttpError> {
         let body = url::form_urlencoded::Serializer::new(String::new())
             .extend_pairs(form)
@@ -173,8 +174,8 @@ impl HttpClient {
             .header(ACCEPT, "application/json")
             .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
             .body(body);
-        if let Some((user, password)) = basic_auth {
-            builder = builder.basic_auth(user, Some(password));
+        if let Some(credentials) = basic_auth {
+            builder = builder.header(AUTHORIZATION, format!("Basic {credentials}"));
         }
         let request = builder.build().map_err(|e| HttpError::Request {
             url: redact(url),

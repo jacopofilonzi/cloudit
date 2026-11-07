@@ -57,6 +57,52 @@ async fn other_admins(db: &impl ConnectionTrait, except: Uuid) -> anyhow::Result
         .context("counting admins")
 }
 
+/// Sets `admin_from_groups` after a sign-in through an OIDC provider (see
+/// `oauth::complete`). Clearing it is skipped (and logged) when it would leave no
+/// enabled effective admin, the same guard as [`update_flags`]: an identity provider
+/// dropping a group must not lock everyone out of administration.
+pub async fn set_admin_from_groups(
+    db: &DatabaseConnection,
+    target: Uuid,
+    value: bool,
+) -> anyhow::Result<()> {
+    // Most sign-ins change nothing: skip the lock then.
+    if users::find(db, target)
+        .await?
+        .is_none_or(|u| u.admin_from_groups == value)
+    {
+        return Ok(());
+    }
+    let tx = db.begin().await.context("starting a transaction")?;
+    lock_admin_changes(&tx).await?;
+    let Some(user) = users::find(&tx, target).await? else {
+        return Ok(());
+    };
+    if user.admin_from_groups == value {
+        return Ok(());
+    }
+    if !value && !user.admin && !user.is_disabled() && other_admins(&tx, target).await? == 0 {
+        tracing::warn!(
+            user_id = %target,
+            "keeping group-derived admin: removing it would leave no enabled admin"
+        );
+        return Ok(());
+    }
+    user_entity::Entity::update_many()
+        .col_expr(user_entity::Column::AdminFromGroups, Expr::value(value))
+        .col_expr(
+            user_entity::Column::UpdatedAt,
+            Expr::value(crate::time::now()),
+        )
+        .filter(user_entity::Column::Id.eq(target))
+        .exec(&tx)
+        .await
+        .context("updating admin_from_groups")?;
+    tx.commit().await.context("committing admin_from_groups")?;
+    tracing::info!(user_id = %target, admin_from_groups = value, "group-derived admin changed");
+    Ok(())
+}
+
 /// Sets the manual admin flag and/or disables (re-enables) `target`. Refuses with
 /// `last_admin` if the change would leave no enabled effective admin.
 pub async fn update_flags(

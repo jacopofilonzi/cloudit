@@ -23,6 +23,8 @@ pub const DEVICE_TOKEN_PER_IP: RateLimit = RateLimit::new(30, Duration::from_sec
 pub const PASSWORD_RESET_PER_IP: RateLimit = RateLimit::new(10, Duration::from_secs(15 * MINUTE));
 /// Current-password checks of a signed-in user (password change, email change).
 pub const PASSWORD_CHECK_PER_USER: RateLimit = RateLimit::new(10, Duration::from_secs(15 * MINUTE));
+/// Provider sign-in starts (each stores a flow), per client IP.
+pub const OAUTH_START_PER_IP: RateLimit = RateLimit::new(30, Duration::from_secs(5 * MINUTE));
 
 /// Counts one hit on `key`; `rate_limited` (429 with `Retry-After`) when over `limit`.
 pub async fn enforce(state: &AppState, key: &str, limit: RateLimit) -> Result<(), ApiError> {

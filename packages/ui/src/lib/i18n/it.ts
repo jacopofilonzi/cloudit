@@ -38,6 +38,17 @@ export const it: Dictionary = {
     "Impossibile leggere la configurazione del provider di accesso. Controlla l'URL dell'issuer.",
   'error.provider_error':
     'Il provider di accesso non ha risposto come previsto. Riprova più tardi.',
+  'error.public_url_required':
+    "L'indirizzo pubblico del server non è ancora configurato: un amministratore deve impostarlo prima di poter accedere con un provider.",
+  'error.provider_disabled': 'Questo metodo di accesso è disattivato.',
+  'error.oauth_state_invalid':
+    'Questo tentativo di accesso non è più valido. Ricomincia dallo stesso browser.',
+  'error.oauth_cancelled': 'Accesso annullato.',
+  'error.group_not_allowed':
+    'Il tuo account presso questo provider non è autorizzato ad accedere qui.',
+  'error.identity_in_use': 'Questo account è già collegato a un altro utente di cloudit.',
+  'error.identity_not_linked': 'Questo account non è collegato a nessun utente di cloudit.',
+  'error.onboarding_expired': 'Questa registrazione è scaduta. Accedi di nuovo.',
   'error.network': 'Impossibile raggiungere il server.',
   'error.unknown': 'Errore imprevisto.'
 };

@@ -52,7 +52,15 @@ const SERVER_CODES: Record<ErrorCode, true> = {
   provider_not_found: true,
   provider_id_taken: true,
   provider_discovery_failed: true,
-  provider_error: true
+  provider_error: true,
+  public_url_required: true,
+  provider_disabled: true,
+  oauth_state_invalid: true,
+  oauth_cancelled: true,
+  group_not_allowed: true,
+  identity_in_use: true,
+  identity_not_linked: true,
+  onboarding_expired: true
 };
 
 function isErrorBody(value: unknown): value is ApiErrorBody {
