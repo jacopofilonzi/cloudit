@@ -1,8 +1,8 @@
-// `make test-ha`: runs the server tests against PostgreSQL, MinIO (S3) and Valkey.
+// `make test-ha`: runs the server tests against PostgreSQL, Garage (S3) and Valkey.
 //
-// 1. starts postgres, minio and valkey from docker-compose.ha.yml as a separate
+// 1. starts postgres, garage and valkey from docker-compose.ha.yml as a separate
 //    compose project (`cloudit-test`, so it never touches the `make up-ha` stack) and
-//    creates the bucket with the one-shot minio-init service;
+//    waits until they are healthy (Garage creates its bucket and key by itself);
 // 2. reads the random host ports Docker assigned (`docker compose port`);
 // 3. runs `cargo test -p cloudit-server` with TEST_DATABASE_URL, TEST_S3_* and
 //    TEST_REDIS_URL pointing at them (Makefile recipes can't set env inline);
@@ -46,17 +46,17 @@ function hostPort(service, port) {
 
 let status;
 try {
-  must('docker', [...compose, 'up', '-d', '--wait', 'postgres', 'minio', 'valkey']);
-  must('docker', [...compose, 'run', '--rm', 'minio-init']);
+  must('docker', [...compose, 'up', '-d', '--wait', 'postgres', 'garage', 'valkey']);
 
   const env = {
     ...process.env,
     TEST_DATABASE_URL: `postgres://cloudit:cloudit-dev-password@127.0.0.1:${hostPort('postgres', 5432)}/cloudit`,
-    TEST_S3_ENDPOINT: `http://127.0.0.1:${hostPort('minio', 9000)}`,
-    TEST_S3_REGION: 'us-east-1',
+    // Example credentials from the garage service in docker-compose.ha.yml.
+    TEST_S3_ENDPOINT: `http://127.0.0.1:${hostPort('garage', 3900)}`,
+    TEST_S3_REGION: 'garage',
     TEST_S3_BUCKET: 'cloudit',
-    TEST_S3_ACCESS_KEY_ID: 'cloudit',
-    TEST_S3_SECRET_ACCESS_KEY: 'cloudit-dev-secret',
+    TEST_S3_ACCESS_KEY_ID: 'GK636c6f756469742d74657374',
+    TEST_S3_SECRET_ACCESS_KEY: '636c6f756469742d6465762d7365637265742d6e6f742d666f722d70726f6421',
     TEST_REDIS_URL: `redis://127.0.0.1:${hostPort('valkey', 6379)}`
   };
   console.info(

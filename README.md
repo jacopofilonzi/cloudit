@@ -45,7 +45,8 @@ Instances are stateless: run as many as you like behind a load balancer, as long
   starting together coordinate migrations with an advisory lock.
 - **S3-compatible storage**: `STORAGE=s3`, `S3_ENDPOINT` (unset for AWS), `S3_REGION`,
   `S3_BUCKET` (must exist), `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`,
-  `S3_FORCE_PATH_STYLE` (default `true`, needed by MinIO and Garage).
+  `S3_FORCE_PATH_STYLE` (default `true`, needed by MinIO and Garage). Garage signs with
+  the region from its `s3_region` setting (usually `garage`): set `S3_REGION` to match.
 - optionally **Redis or Valkey**: `REDIS_URL=redis://host:6379`, so rate limits are shared
   across instances. If it is missing or down, every instance falls back to its own limits;
   requests never fail because of Redis.
@@ -54,7 +55,7 @@ Health-check the instances on `/ready`. Keep their clocks in sync (NTP): job lea
 timestamps from the instance clocks.
 
 [`docker-compose.ha.yml`](docker-compose.ha.yml) is a complete example: two replicas behind
-Caddy on port 8080, PostgreSQL, MinIO and Valkey (`make up-ha`, `make down-ha`). Its
+Caddy on port 8080, PostgreSQL, Garage and Valkey (`make up-ha`, `make down-ha`). Its
 credentials are placeholders for local testing.
 
 **Presigned URLs** (`S3_PRESIGN=true`, off by default) let clients upload and download blobs
@@ -72,7 +73,7 @@ Docker for the image.
 make install   # JS dependencies
 make dev       # server on :8080 + web dev server on :5173 (proxies /api)
 make check     # formatting, lints, tests, type freshness, web build
-make test-ha   # server tests against PostgreSQL, MinIO and Valkey in Docker
+make test-ha   # server tests against PostgreSQL, Garage and Valkey in Docker
 make help      # every target
 ```
 

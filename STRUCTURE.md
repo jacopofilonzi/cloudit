@@ -23,7 +23,7 @@ repo/
 │   └── ui/               `@cloudit/ui` — shared Svelte components, theme tokens, i18n EN/IT
 ├── scripts/              node scripts used by the Makefile (dev, types, set-version, help, clean, test-ha)
 ├── .cargo/config.toml    ts-rs env (`TS_RS_EXPORT_DIR`, `TS_RS_LARGE_INT`)
-├── .github/workflows/    ci.yml (make check on ubuntu + windows; server tests with PostgreSQL/MinIO/Valkey),
+├── .github/workflows/    ci.yml (make check on ubuntu + windows; server tests with PostgreSQL/Garage/Valkey),
 │                         release.yml (ghcr image on v*.*.* tags)
 ├── Cargo.toml            Cargo workspace (edition 2024, shared version, clippy lints)
 ├── package.json          pnpm workspace root (lint/format tooling, `packageManager`)
@@ -31,8 +31,10 @@ repo/
 ├── docker/entrypoint.sh  runs as root: chowns DATA_DIR to PUID:PGID, then setpriv → cloudit-server
 ├── docker/Caddyfile      HA load balancer: round robin over the replicas, health check on /ready
 ├── docker-compose.yml    single instance, `./data:/data`, port 8080 (SQLite + fs blobs)
-├── docker-compose.ha.yml HA example: 2 replicas + Caddy (:8080), postgres:18, MinIO (pgsty/minio)
-│                         + one-shot bucket job, valkey:9; also the services of `make test-ha`
+├── docker/garage.toml    Garage config for the HA example, test-ha and CI (example secrets, dev only)
+├── docker-compose.ha.yml HA example: 2 replicas + Caddy (:8080), postgres:18, Garage
+│                         (dxflrs/garage, single node, creates its bucket), valkey:9; also the
+│                         services of `make test-ha`
 ├── .env.example          every supported env var, documented; `.env` is git-ignored
 └── Makefile              dev commands (run `make help`)
 ```
@@ -310,7 +312,7 @@ set), `missing_chunks(is_available)` (sorted, deduplicated), `logical_size` (sum
 together), `dev-server`, `dev-web`, `types`, `fmt`, `lint`, `test`, `check` (fmt-check, clippy -D
 warnings, eslint, svelte-check, cargo test, vitest, type freshness, web build), `build`, `docker`,
 `up`/`down`, `up-ha`/`down-ha` (HA example stack; `down-ha` keeps volumes), `test-ha`
-(`scripts/test-ha.mjs`: postgres + minio + valkey from `docker-compose.ha.yml` as project
+(`scripts/test-ha.mjs`: postgres + garage + valkey from `docker-compose.ha.yml` as project
 `cloudit-test` on random 127.0.0.1 ports, `cargo test -p cloudit-server` with the `TEST_*` env, then
 `down -v`; `--keep` leaves them running), `clean`, `version V=x.y.z`.
 

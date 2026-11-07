@@ -255,9 +255,12 @@ and align this project's copies with it:
   (`db::testing::TestDb`). SQLite allows one writer: keep write transactions short.
 - `TEST_DATABASE_URL` must point at a throwaway PostgreSQL server: each test creates its own
   `cloudit_test_*` database there (`make test-ha` removes the whole container afterwards).
-- Official MinIO Docker images are no longer published: the compose files and CI use the
-  community build `pgsty/minio` (+ `pgsty/mc`). GitHub service containers can't take a command,
-  so CI starts MinIO with `docker run`.
+- Test S3 is Garage (`dxflrs/garage`, config `docker/garage.toml` with example secrets):
+  `--single-node --default-bucket` creates the layout, bucket and key from `GARAGE_DEFAULT_*`
+  at startup (no init job). Its region is `garage` (`S3_REGION=garage`, else signatures
+  fail); key ids must be `GK` + 24 hex digits and secrets 64 hex digits. The image has no shell
+  or curl: health-check it with `/garage bucket info <bucket>`. GitHub service containers can't
+  take a command or mount files, so CI starts Garage with `docker run`.
 - The web app is an SPA (`ssr = false`, adapter-static `fallback: 'index.html'`); in production the
   Rust server serves `WEB_DIR` and falls back to `index.html`, while unknown `/api/*` paths answer a
   JSON `not_found`.

@@ -49,10 +49,10 @@ jobs:
         shell: ${{ runner.os == 'Windows' && 'pwsh' || 'bash' }}
         run: make check
 
-  # Server tests against real PostgreSQL, S3 (MinIO) and Valkey: the same tests as
+  # Server tests against real PostgreSQL, S3 (Garage) and Valkey: the same tests as
   # `make test-ha`. Without these TEST_* variables the tests use SQLite and skip S3/Redis.
   server-services:
-    name: server tests (PostgreSQL, MinIO, Valkey)
+    name: server tests (PostgreSQL, Garage, Valkey)
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -75,29 +75,33 @@ jobs:
           --health-interval 2s --health-timeout 5s --health-retries 30
     env:
       TEST_DATABASE_URL: postgres://cloudit:cloudit-ci@127.0.0.1:5432/cloudit
-      TEST_S3_ENDPOINT: http://127.0.0.1:9000
-      TEST_S3_REGION: us-east-1
+      # Example Garage credentials, as in docker-compose.ha.yml (key ids are GK + 24 hex).
+      TEST_S3_ENDPOINT: http://127.0.0.1:3900
+      TEST_S3_REGION: garage
       TEST_S3_BUCKET: cloudit
-      TEST_S3_ACCESS_KEY_ID: cloudit
-      TEST_S3_SECRET_ACCESS_KEY: cloudit-ci-secret
+      TEST_S3_ACCESS_KEY_ID: GK636c6f756469742d74657374
+      TEST_S3_SECRET_ACCESS_KEY: 636c6f756469742d6465762d7365637265742d6e6f742d666f722d70726f6421
       TEST_REDIS_URL: redis://127.0.0.1:6379
     steps:
       - uses: actions/checkout@v7
 
-      # Service containers can't take a command, and MinIO needs `server /data`.
-      # Official MinIO images are discontinued: pgsty/minio is a community build.
-      - name: Start MinIO and create the bucket
+      # Service containers can't take a command or mount repository files, so Garage is
+      # started with `docker run`; --single-node/--default-bucket create the cluster
+      # layout, the bucket and the key from the GARAGE_DEFAULT_* variables.
+      - name: Start Garage
         run: |
-          docker run -d --name minio -p 9000:9000 \
-            -e MINIO_ROOT_USER=cloudit -e MINIO_ROOT_PASSWORD=cloudit-ci-secret \
-            pgsty/minio:RELEASE.2026-08-04T00-00-00Z server /data
+          docker run -d --name garage -p 3900:3900 \
+            -v "$PWD/docker/garage.toml:/etc/garage.toml:ro" \
+            -e GARAGE_DEFAULT_ACCESS_KEY="$TEST_S3_ACCESS_KEY_ID" \
+            -e GARAGE_DEFAULT_SECRET_KEY="$TEST_S3_SECRET_ACCESS_KEY" \
+            -e GARAGE_DEFAULT_BUCKET="$TEST_S3_BUCKET" \
+            dxflrs/garage:v2.5.0 /garage server --single-node --default-bucket
           for i in $(seq 1 60); do
-            curl -fsS http://127.0.0.1:9000/minio/health/live && break
+            docker exec garage /garage bucket info "$TEST_S3_BUCKET" >/dev/null 2>&1 && exit 0
             sleep 1
           done
-          docker run --rm --network host --entrypoint /bin/sh \
-            pgsty/mc:RELEASE.2026-10-26T00-00-00Z -c \
-            'mc alias set local http://127.0.0.1:9000 cloudit cloudit-ci-secret && mc mb --ignore-existing local/cloudit'
+          docker logs garage
+          exit 1
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable

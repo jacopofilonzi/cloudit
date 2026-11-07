@@ -61,13 +61,13 @@ up: ## Start the single-instance stack (docker compose)
 down: ## Stop the docker compose stack
 	docker compose down
 
-up-ha: ## Start the HA example stack (2 replicas, Caddy on :8080, PostgreSQL, MinIO, Valkey)
+up-ha: ## Start the HA example stack (2 replicas, Caddy on :8080, PostgreSQL, Garage, Valkey)
 	docker compose -f docker-compose.ha.yml up -d --build
 
 down-ha: ## Stop the HA example stack (volumes kept; add -v by hand to wipe them)
 	docker compose -f docker-compose.ha.yml down
 
-test-ha: ## Server tests against PostgreSQL, MinIO and Valkey in Docker (cleaned up after)
+test-ha: ## Server tests against PostgreSQL, Garage and Valkey in Docker (cleaned up after)
 	node scripts/test-ha.mjs
 
 clean: ## Remove build outputs (target, web build, .svelte-kit)

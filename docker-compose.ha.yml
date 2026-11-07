@@ -1,11 +1,11 @@
 # High-availability deployment example: two stateless cloudit replicas behind a Caddy
-# load balancer, sharing PostgreSQL, S3-compatible storage (MinIO) and Valkey.
+# load balancer, sharing PostgreSQL, S3-compatible storage (Garage) and Valkey.
 #
 #   make up-ha     # build and start everything; http://localhost:8080
 #   make down-ha   # stop (data volumes are kept)
 #   docker compose -f docker-compose.ha.yml down -v   # stop and delete all data
 #
-# `make test-ha` starts only postgres, minio, minio-init and valkey from this file
+# `make test-ha` starts only postgres, garage and valkey from this file
 # (as project `cloudit-test`) and runs the server tests against them.
 #
 # The credentials below are for local testing only: change them for a real deployment
@@ -13,9 +13,8 @@
 # 127.0.0.1 only, on random host ports (`docker compose -f docker-compose.ha.yml port
 # postgres 5432` shows which), for debugging and `make test-ha`.
 #
-# Official MinIO images are no longer published: `pgsty/minio` is a community-maintained
-# build of the same server. Any S3-compatible service works (AWS S3, Garage, RustFS…),
-# and Redis works in place of Valkey.
+# Any S3-compatible service works in place of Garage (AWS S3, RustFS, SeaweedFS…), and
+# Redis works in place of Valkey.
 
 name: cloudit-ha
 
@@ -27,21 +26,22 @@ x-cloudit: &cloudit
     DATABASE_URL: postgres://cloudit:cloudit-dev-password@postgres:5432/cloudit
     DB_MAX_CONNECTIONS: '10'
     STORAGE: s3
-    S3_ENDPOINT: http://minio:9000
-    S3_REGION: us-east-1
+    S3_ENDPOINT: http://garage:3900
+    # Garage's region is whatever s3_region says in docker/garage.toml.
+    S3_REGION: garage
     S3_BUCKET: cloudit
-    S3_ACCESS_KEY_ID: cloudit
-    S3_SECRET_ACCESS_KEY: cloudit-dev-secret
+    S3_ACCESS_KEY_ID: GK636c6f756469742d74657374
+    S3_SECRET_ACCESS_KEY: 636c6f756469742d6465762d7365637265742d6e6f742d666f722d70726f6421
     S3_FORCE_PATH_STYLE: 'true'
     # Presigned URLs need an S3 endpoint the clients can reach (S3_PUBLIC_ENDPOINT);
-    # here MinIO is private, so the server proxies blobs.
+    # here Garage is private, so the server proxies blobs.
     S3_PRESIGN: 'false'
     REDIS_URL: redis://valkey:6379
   depends_on:
     postgres:
       condition: service_healthy
-    minio-init:
-      condition: service_completed_successfully
+    garage:
+      condition: service_healthy
     valkey:
       condition: service_healthy
 
@@ -64,36 +64,29 @@ services:
       timeout: 5s
       retries: 30
 
-  minio:
-    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+  # Garage, single node: `--single-node` lays out the cluster and `--default-bucket`
+  # creates the bucket and an access key from the GARAGE_DEFAULT_* variables at startup,
+  # so no init job is needed. Config: docker/garage.toml (example secrets, dev only).
+  garage:
+    image: dxflrs/garage:v2.5.0
     restart: unless-stopped
-    command: ['server', '/data']
+    command: ['/garage', 'server', '--single-node', '--default-bucket']
     environment:
-      MINIO_ROOT_USER: cloudit
-      MINIO_ROOT_PASSWORD: cloudit-dev-secret
+      # Garage key ids are `GK` + 24 hex digits, secrets 64 hex digits.
+      GARAGE_DEFAULT_ACCESS_KEY: GK636c6f756469742d74657374
+      GARAGE_DEFAULT_SECRET_KEY: 636c6f756469742d6465762d7365637265742d6e6f742d666f722d70726f6421
+      GARAGE_DEFAULT_BUCKET: cloudit
     volumes:
-      - minio:/data
+      - ./docker/garage.toml:/etc/garage.toml:ro
+      - garage:/var/lib/garage
     ports:
-      - '127.0.0.1::9000'
+      - '127.0.0.1::3900'
     healthcheck:
-      test: ['CMD', 'curl', '-fsS', 'http://localhost:9000/minio/health/live']
+      # The image has no shell or curl: the garage CLI itself checks that the bucket exists.
+      test: ['CMD', '/garage', 'bucket', 'info', 'cloudit']
       interval: 2s
       timeout: 5s
       retries: 30
-
-  # One-shot: creates the bucket, then exits.
-  minio-init:
-    image: pgsty/mc:RELEASE.2026-10-26T00-00-00Z
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint:
-      - /bin/sh
-      - -c
-      - >-
-        mc alias set local http://minio:9000 cloudit cloudit-dev-secret &&
-        mc mb --ignore-existing local/cloudit
-    restart: 'no'
 
   valkey:
     image: valkey/valkey:9
@@ -126,5 +119,5 @@ services:
 
 volumes:
   postgres:
-  minio:
+  garage:
   caddy:

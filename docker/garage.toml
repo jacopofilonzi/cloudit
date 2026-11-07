@@ -1,0 +1,27 @@
+# Garage (S3-compatible storage) for local testing only: docker-compose.ha.yml,
+# `make test-ha` and CI. Single node, no replication.
+#
+# EXAMPLE VALUES: `rpc_secret` and `admin_token` below are public, committed to git.
+# Generate your own for any real deployment (`openssl rand -hex 32`,
+# `openssl rand -base64 32`) and keep them out of the repository.
+
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "sqlite"
+replication_factor = 1
+
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "127.0.0.1:3901"
+# EXAMPLE VALUE, dev only.
+rpc_secret = "406bffc5ff3cc6e4e81f8ae688a6f5b5c3a788b324abafa207b3eedfff81f44f"
+
+[s3_api]
+# Clients must sign with this region (S3_REGION=garage).
+s3_region = "garage"
+api_bind_addr = "[::]:3900"
+root_domain = ".s3.garage.localhost"
+
+[admin]
+api_bind_addr = "[::]:3903"
+# EXAMPLE VALUE, dev only.
+admin_token = "fBPCDQZf5YAD47nSdbsWKMt1KTWovCVj"
