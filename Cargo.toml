@@ -19,7 +19,7 @@ axum = "0.8.9"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 thiserror = "2.0.21"
-tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "net", "signal", "time", "sync", "fs"] }
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "net", "signal", "time", "sync", "fs", "io-util"] }
 tower = { version = "0.5.3", features = ["util"] }
 tower-http = { version = "0.7.1", features = ["fs", "trace"] }
 tracing = "0.1.44"
@@ -48,6 +48,8 @@ reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] 
 # our reqwest), and encryption of provider client secrets at rest.
 openidconnect = { version = "4.1.0", default-features = false, features = ["accept-string-booleans"] }
 chacha20poly1305 = { version = "0.11.0", default-features = false, features = ["alloc"] }
+# ZIP download of a snapshot: streaming writer (data descriptors, ZIP64) over tokio.
+async_zip = { version = "0.0.19", default-features = false, features = ["tokio", "deflate"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

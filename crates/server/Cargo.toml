@@ -38,6 +38,7 @@ subtle.workspace = true
 reqwest.workspace = true
 openidconnect.workspace = true
 chacha20poly1305.workspace = true
+async_zip.workspace = true
 
 [dev-dependencies]
 http-body-util.workspace = true

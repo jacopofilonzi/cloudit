@@ -1,5 +1,5 @@
 //! `/api/v1/folders/{id}/snapshots` and `/api/v1/snapshots/{id}*`: commits, conflicts
-//! and their resolution, history, manifests, pin and label, restores. Session or device token; reading needs viewer, everything
+//! and their resolution, history, manifests, pin and label, restores, ZIP downloads. Session or device token; reading needs viewer, everything
 //! that writes editor (`scopes::access`).
 
 use std::collections::BTreeMap;
@@ -29,7 +29,7 @@ use crate::scopes::access::{FolderAccess, SnapshotAccess};
 use crate::state::AppState;
 use crate::sync::chunks::{self, Adopted};
 use crate::sync::snapshots::{self, ListFilter, NewSnapshot};
-use crate::sync::{manifests, usage};
+use crate::sync::{archive, manifests, usage};
 use crate::time::{rfc3339, rfc3339_opt};
 use crate::validate;
 
@@ -462,4 +462,30 @@ pub async fn restore(
         StatusCode::CREATED,
         Json(snapshot_info(&snapshot, Some(snapshot.id))?),
     ))
+}
+
+/// `GET /snapshots/{id}/archive` (viewer, session or device token): the snapshot's
+/// files as a ZIP, streamed (`sync::archive`), named `<folder>-<time>.zip`.
+pub async fn archive(
+    State(state): State<AppState>,
+    me: AnyUser,
+    Path(id): Path<String>,
+) -> Result<Response, ApiError> {
+    let access = SnapshotAccess::load(&state.db, me.user.id, parse_id(&id)?).await?;
+    let snapshot = &access.snapshot;
+    let hash = snapshots::manifest_hash(snapshot)?;
+    let manifest = manifests::load(&state, snapshot.scope_id, &hash).await?;
+    let name = archive::filename(&access.folder.folder.name, snapshot.created_at);
+    tracing::info!(user_id = %me.user.id, snapshot_id = %snapshot.id, "zip download");
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/zip".to_owned()),
+            (
+                header::CONTENT_DISPOSITION,
+                archive::content_disposition(&name),
+            ),
+        ],
+        archive::body(state.clone(), snapshot.scope_id, manifest),
+    )
+        .into_response())
 }

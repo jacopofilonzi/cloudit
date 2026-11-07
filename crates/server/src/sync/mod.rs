@@ -44,6 +44,7 @@
 //! - Retention never deletes the head, pinned snapshots or unresolved conflicts;
 //!   deleting a snapshot deletes its `snapshot_chunks` first.
 
+pub mod archive;
 pub mod chunks;
 pub mod keys;
 pub mod manifests;

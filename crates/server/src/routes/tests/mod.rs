@@ -1,5 +1,6 @@
 mod admin;
 mod approval;
+mod archive;
 mod auth;
 mod chunks;
 mod devices;

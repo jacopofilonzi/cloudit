@@ -155,6 +155,7 @@ pub fn router(state: AppState) -> Router {
             get(snapshots::get).patch(snapshots::update),
         )
         .route("/snapshots/{id}/manifest", get(snapshots::manifest))
+        .route("/snapshots/{id}/archive", get(snapshots::archive))
         .route("/snapshots/{id}/restore", post(snapshots::restore))
         .route("/snapshots/{id}/resolve", post(snapshots::resolve))
         .route("/trash", get(trash::list))
