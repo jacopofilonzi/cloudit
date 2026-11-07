@@ -37,6 +37,10 @@ x-cloudit: &cloudit
     # here Garage is private, so the server proxies blobs.
     S3_PRESIGN: 'false'
     REDIS_URL: redis://valkey:6379
+    # Caddy is the only way in: trust its X-Forwarded-* headers (client IP for rate
+    # limits, https detection). Never enable this when clients can reach the replicas
+    # directly. Set PUBLIC_URL to the address users open (e.g. https://sync.example.com).
+    TRUST_PROXY_HEADERS: 'true'
   depends_on:
     postgres:
       condition: service_healthy
