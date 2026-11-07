@@ -55,9 +55,11 @@ server (Docker); desktop Windows + Linux (macOS later).
   database, blob storage (`DATA_DIR` or the S3 bucket) and Redis. Tests touch only temp dirs and
   the throwaway services of `make test-ha` (`TEST_*` variables): never point them at real
   ones (the tests create databases and objects there). There is no email (SMTP) sending: invites
-  and password resets are links handed out by admins or the CLI. Coming later: OAuth providers
-  (OIDC, GitHub, Discord…, milestone 3c); use dedicated test OAuth apps and test buckets only,
-  never the production ones.
+  and password resets are links handed out by admins or the CLI. Identity providers (OIDC,
+  GitHub, Discord) are contacted only by the running server, for admin create/test and user
+  sign-ins; tests use the fake provider in `routes/tests/fake_idp.rs` on 127.0.0.1 and never a
+  real one. For manual checks use dedicated test OAuth apps (and test buckets), never the
+  production ones.
 - **Development never uses production credentials or services**: use test accounts, test bots, sandbox
   keys and a separate database.
 
@@ -147,6 +149,19 @@ and align this project's copies with it:
   manual steps) goes in the README upgrade notes.
 - Every multi-instance coordination goes through the database (atomic conditional statements,
   leases, advisory locks), never through in-process state: any instance can die at any moment.
+- Identity-provider client secrets are stored only encrypted (`crypto::SecretBox` with the
+  server key, associated data naming the row) and never returned by the API (`has_secret`
+  only). The key comes from `SECRET_KEY` or, SQLite only, `<DATA_DIR>/secret.key`; with
+  PostgreSQL the server refuses to start without `SECRET_KEY`, and any instance refuses to
+  start when the stored check value doesn't decrypt. Never change the stored format without a
+  new version byte that still reads version 1.
+- Provider sign-in starts with a POST (CSRF-checked; a GET would let another site start a
+  `link` flow in the victim's session); the callback must come from the browser holding the
+  `cloudit_oauth` binding cookie; flows and pending signups are single-use rows consumed with
+  one conditional UPDATE. PKCE S256, `state` and (OIDC) `nonce` always.
+- Never trust an unverified email for account linking: auto-link needs the setting on, the
+  provider's `email_verified` and the account's own `email_verified`. The outgoing provider
+  HTTP client never follows redirects.
 
 ## Code
 
@@ -178,7 +193,19 @@ and align this project's copies with it:
     `ObjectStoreExt` trait; presigning is `signer::Signer::signed_url`.
   - **redis 1.8** (not the 2.0 release candidates; features `tokio-comp`, `connection-manager`,
     no TLS): `ConnectionManager::new_lazy_with_config`. uuid 1 (`v4`, `v7`), chrono 0.4 (the
-    only date/time crate: SeaORM and object_store use it), url 2, reqwest 0.13 (tests only).
+    only date/time crate: SeaORM and object_store use it), url 2.
+  - **reqwest 0.13** (`rustls` only: no `json`/`form` features, so bodies are built with
+    `serde_json` / `url::form_urlencoded`; `Response::chunk` for bounded reads).
+  - **openidconnect 4.1** (oauth2 5) with `default-features = false` (no bundled reqwest 0.12)
+    + `accept-string-booleans`: HTTP goes through `idp::http::HttpClient::adapter` (any
+    `Fn(HttpRequest) -> Future` is an `AsyncHttpClient`). `CoreProviderMetadata::discover_async`
+    (checks the issuer, fetches the JWKS), `CoreIdTokenVerifier::new_confidential_client` +
+    `set_allowed_algs`, `IdToken::claims(&verifier, &nonce)`; `CoreRsaPrivateSigningKey::from_pem`
+    wants PKCS#1 PEM (tests). Typestate clients are not used: the code exchange is our own form
+    POST.
+  - **chacha20poly1305 0.11** (aead 0.6, `hybrid-array`: `XNonce::from([u8; 24])`,
+    `Key::from([u8; 32])`, `Aead::encrypt(&nonce, Payload { msg, aad })`), features `alloc` only
+    (nonces come from `getrandom::fill`).
   - Auth: argon2 0.6 (password-hash 0.6: `hash_password(bytes)` makes its own salt with the
     `getrandom` feature, `verify_password(bytes, &str)`), getrandom 0.4 (`getrandom::fill`),
     base64 0.23 (`Engine` + `URL_SAFE_NO_PAD`), subtle 2.6. SeaORM entities use the 2.0 format
@@ -290,6 +317,17 @@ and align this project's copies with it:
   returned future must not borrow the other arguments.
 - `TEST_DATABASE_URL` must point at a throwaway PostgreSQL server: each test creates its own
   `cloudit_test_*` database there (`make test-ha` removes the whole container afterwards).
+  With PostgreSQL the server needs `SECRET_KEY`: `TestApp` sets a fixed test key then.
+- Deleting or replacing `<DATA_DIR>/secret.key` (or changing `SECRET_KEY`) makes the server
+  refuse to start ("SECRET_KEY changed or wrong"): restore the old key. Dev data dirs keep
+  theirs; start from an empty data dir to get a new one.
+- SeaORM 2 `ModelTrait` requires `Debug` on every model: a column holding a secret gets a
+  `DeriveValueType` newtype with a redacting `Debug` (`entities::oauth_flows::Hidden`).
+- Provider tests: `routes::tests::oauth::Env` sets up the fake provider, an admin, a public URL
+  and the providers `sso` (OIDC), `gh`, `dc`; GitHub/Discord URLs can only be redirected under
+  `cfg(test)` (`Idp::set_social_endpoints`). The RSA keys in `routes/tests/fixtures/` are test
+  keys: never use them for anything else. The fake answers user info with `{"sub": …}` by
+  default (`default_userinfo`): an ID token without email triggers a user-info call.
 - Test S3 is Garage (`dxflrs/garage`, config `docker/garage.toml` with example secrets):
   `--single-node --default-bucket` creates the layout, bucket and key from `GARAGE_DEFAULT_*`
   at startup (no init job). Its region is `garage` (`S3_REGION=garage`, else signatures
