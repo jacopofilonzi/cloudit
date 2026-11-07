@@ -52,6 +52,28 @@ environment variable, if set, wins over it.
 New accounts register with an invite from an admin by default (registration mode `invite`;
 `open` and `closed` are the alternatives, changed by admins at runtime).
 
+### Admin approval of new accounts
+
+An account created without an invite can be made to wait for an admin's approval. The
+setting `password_new_accounts` (admin settings, default `approval`) controls email/password
+registrations; each sign-in provider has its own `new_accounts` (default `approval` for new
+providers; `auto` = active at once).
+
+- A **pending** account exists but can't sign in (`account_pending`, shown only after a
+  correct password or provider sign-in); registering answers HTTP 202 `{"status":
+  "pending"}` without signing in.
+- Never waiting: accounts created with a valid **invite** (the invite is an admin's
+  approval), the first admin, accounts that existed before this feature, and an OIDC account
+  that is in one of the provider's **admin groups** (the provider vouches for it). Linking
+  a provider to an existing account never needs approval.
+- Admins see the pending accounts in `GET /api/v1/admin/users?approval_status=pending` (and
+  their number in `GET /api/v1/admin/summary`), then `POST
+  /api/v1/admin/users/<id>/approve` or `/reject`.
+- **Rejecting** is a ban: the account can't sign in by any method, its web sessions are
+  deleted, its desktop devices stop working and its provider accounts can't sign up again.
+  It is kept, not deleted; approving it lifts the ban (devices work again). Admins can't
+  reject themselves or the last admin.
+
 **Locked out?** `cloudit-server admin reset-password <email>` prints a single-use password-reset
 link (valid 24 hours; the full URL when `PUBLIC_URL` is set), also for accounts without a
 password:
@@ -89,7 +111,7 @@ Notes:
   `allowed_groups` (only members may sign in). Configure the provider to put the groups in
   the ID token or the user-info response.
 - A first sign-in with an unknown provider account leads to onboarding: create a new account
-  (registration mode and invites apply) or attach it to an existing one. With the
+  (registration mode, invites and the provider's `new_accounts` approval setting apply) or attach it to an existing one. With the
   `autolink_email` setting (off by default) an account is linked automatically only when the
   provider marks the email verified and the account's own email is verified too.
 - Client secrets are stored encrypted with the server's **secret key**: `SECRET_KEY`, or
@@ -172,7 +194,14 @@ first and refuses to start if the backup fails. With PostgreSQL take a backup yo
   back it up with the database. New tables are created at startup. Disabling an account now
   also signs out its web sessions for good, and a new password-reset link invalidates the
   user's older unused ones. `POST /api/v1/setup` accepts `public_url`; `GET /auth/config`
-  lists the enabled providers (with `kind`).
+  lists the enabled providers (with `kind`). **Admin approval:** password registrations
+  without an invite now create pending accounts until an admin approves them (setting
+  `password_new_accounts`, default `approval`): with registration mode `open`, set it to
+  `auto` (`PATCH /api/v1/admin/settings`) to keep the old behaviour. Providers get
+  `new_accounts`; existing providers are migrated to `approval` too (set `auto` per
+  provider to keep sign-ups immediate). Existing accounts stay approved. `POST
+  /auth/register` and `/auth/onboarding/create` answer 202 `{"status": "pending"}` for a
+  pending account.
 - **Accounts:** nothing required. New tables are created at startup; the
   first start logs a setup token (see "First-run setup"). Every `/api/v1` endpoint except
   `/health`, `/setup` and `/auth/config` answers `setup_required` until the first admin exists.

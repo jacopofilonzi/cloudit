@@ -8,10 +8,10 @@ through its JSON API under `/api/v1`, whose TypeScript types are generated from 
 Current state (milestone 3c): the server has its infrastructure (database with migrations and
 leases, blob storage, optional Redis with a rate limiter, readiness checks), exposes health probes,
 serves the web SPA and has the account API: first-run setup, password accounts with web sessions,
-invites, password resets, desktop device login (loopback + PKCE), admin endpoints, and sign-in
-through identity providers (OIDC presets, GitHub, Discord) configured by admins, with onboarding
-and identity linking. API only: the web pages come with the mockups of milestone 5 (the web page
-shows the server status).
+invites, admin approval of new accounts, password resets, desktop device login (loopback +
+PKCE), admin endpoints, and sign-in through identity providers (OIDC presets, GitHub,
+Discord) configured by admins, with onboarding and identity linking. API only: the web pages
+come with the mockups of milestone 5 (the web page shows the server status).
 `cloudit-core` implements the sync formats (chunking, chunk encoding, manifest, path rules, diff;
 see "Sync formats"), not used by the server yet. Everything under "Planned design" is not
 implemented yet.
@@ -56,14 +56,15 @@ crates/core/src/
 │   ├── mod.rs        HealthResponse, ReadyResponse (+ ReadyStatus, ReadyComponents,
 │   │                 ComponentStatus), ErrorCode, ApiErrorBody {code, message, field?}
 │   ├── sensitive.rs  Sensitive: password/token string in API bodies, Debug prints `***`
-│   ├── auth.rs       RegistrationMode, AuthConfig, AuthProvider, SetupStatus, SetupRequest,
-│   │                 RegisterRequest, LoginRequest, PasswordResetRequest
+│   ├── auth.rs       RegistrationMode, NewAccounts, ApprovalStatus, SignupPending, AuthConfig,
+│   │                 AuthProvider, SetupStatus, SetupRequest, RegisterRequest, LoginRequest,
+│   │                 PasswordResetRequest
 │   ├── me.rs         UserProfile, UpdateMeRequest, ChangePasswordRequest, SessionInfo
 │   ├── devices.rs    TokenTtl (1h/1d/7d/30d/1y), CodeChallengeMethod, DeviceAuthorize*,
 │   │                 DeviceToken*, DeviceInfo, UpdateDeviceRequest
 │   ├── admin.rs      AdminUser, AdminUserList, AdminUserUpdate, PasswordResetLink,
 │   │                 CreateInviteRequest, InviteLink, InviteStatus, InviteInfo, ServerSettings,
-│   │                 UpdateSettingsRequest
+│   │                 UpdateSettingsRequest, AdminSummary
 │   ├── providers.rs  ProviderKind (+ as_str/parse), ProviderProtocol, ProviderPreset,
 │   │                 ProviderInfo, CreateProviderRequest, UpdateProviderRequest, ProviderTestResult
 │   ├── oauth.rs      OAuthPurpose, OAuthStartRequest, OAuthStartResponse, IdentityInfo,
@@ -114,13 +115,16 @@ crates/server/src/
 │   └── canary.rs     settings `secret_key_check`: insert-if-absent, decrypt at startup
 ├── accounts/         account data (queries the routes call); single-use token rules in mod.rs
 │   ├── users.rs      insert (email_taken on unique violation), find, find_by_email,
-│   │                 set_password, update_profile, grant_admin_from_groups, list + count
-│   ├── admin.rs      update_flags (admin / disabled; disabling deletes the web sessions) and
-│   │                 set_admin_from_groups, both with the race-free last-admin guard
+│   │                 set_password, update_profile, grant_admin_from_groups, list (approval
+│   │                 filter) + count, count_pending, approval_for_signup, ensure_active
+│   ├── admin.rs      update_flags (admin / disabled; disabling deletes the web sessions),
+│   │                 set_admin_from_groups, approve / reject (one conditional UPDATE each;
+│   │                 reject deletes the web sessions), with the race-free last-admin guard
 │   ├── setup.rs      setup_state: init at startup (same token on every instance), status,
 │   │                 check_token, complete (conditional UPDATE)
-│   ├── settings.rs   settings table: registration_mode (default invite), autolink_email
-│   │                 (default false), public_url; get_strict, insert_if_absent
+│   ├── settings.rs   settings table: registration_mode (default invite), password_new_accounts
+│   │                 (default approval), autolink_email (default false), public_url;
+│   │                 get_strict, insert_if_absent
 │   ├── invites.rs    create, find_usable(_by_hash), consume (conditional UPDATE), list, revoke, status
 │   └── password_resets.rs  create (24 h; marks the user's older unused resets used), consume
 ├── auth/             authentication (the module docs list the pieces)
@@ -171,7 +175,8 @@ crates/server/src/
 │   │                 000001 leases, 000002 accounts (users, sessions, setup_state, settings),
 │   │                 000003 tokens (invites, password_resets, devices, device_auth_codes),
 │   │                 000004 auth_providers, 000005 identities (identities, pending_signups,
-│   │                 oauth_flows)
+│   │                 oauth_flows), 000006 account approval (users.approval_*,
+│   │                 signup_source, auth_providers.new_accounts)
 │   ├── entities/     SeaORM 2 models (`#[sea_orm::model]`, no relations), one file per table
 │   │                 (none for setup_state: its plaintext token is read as a Secret);
 │   │                 oauth_flows keeps verifier and nonce in `Hidden` (Debug prints `***`)
@@ -197,13 +202,14 @@ crates/server/src/
 │   ├── onboarding.rs /auth/onboarding* (info, create, link with password or provider)
 │   ├── me.rs         /me, /me/password, /me/sessions, /me/identities
 │   ├── devices.rs    /devices (authorize, token, list, rename, revoke)
-│   ├── admin.rs      /admin/* (users, password resets, invites, settings)
+│   ├── admin.rs      /admin/* (users, approve / reject, password resets, invites, settings,
+│   │                 summary)
 │   ├── providers.rs  /admin/providers* (presets, CRUD, test)
 │   └── tests/        router tests (tower `oneshot`, real AppState; PostgreSQL with
 │                     TEST_DATABASE_URL): mod.rs (probes, SPA), support.rs (TestApp harness),
 │                     fake_idp.rs (fake OIDC / GitHub / Discord server; test-only RSA keys in
 │                     fixtures/), setup, auth, me, devices, admin, providers, oauth,
-│                     onboarding, secret_key
+│                     onboarding, approval, secret_key
 ├── logging.rs        tracing subscriber (env filter; pretty or json)
 ├── shutdown.rs       Ctrl+C / SIGTERM future (OS-specific, like platform.rs)
 └── healthcheck.rs    HTTP/1.0 GET /health on 127.0.0.1:$PORT, std only (Docker HEALTHCHECK)
@@ -229,15 +235,15 @@ Bearer cld_…`); **admin** (session of an effective admin); **onboarding** (the
 | `GET /health` | none | `HealthResponse` |
 | `GET /setup` | none | `SetupStatus {required}` |
 | `POST /setup` | none, rate limited | `SetupRequest {…, public_url?}` → 201 `UserProfile` + cookie (first admin, email verified) |
-| `GET /auth/config` | none | `AuthConfig {setup_required, registration_mode, providers: AuthProvider[] {id, kind, display_name, icon}}` (enabled, non-deleted, position order) |
-| `POST /auth/register` | none, rate limited | `RegisterRequest` → 201 `UserProfile` + cookie |
+| `GET /auth/config` | none | `AuthConfig {setup_required, registration_mode, password_requires_approval, providers: AuthProvider[] {id, kind, display_name, icon}}` (enabled, non-deleted, position order) |
+| `POST /auth/register` | none, rate limited | `RegisterRequest` → 201 `UserProfile` + cookie, or 202 `SignupPending {status: "pending"}` (no session) when the account needs approval |
 | `POST /auth/login` | none, rate limited | `LoginRequest` → 200 `UserProfile` + cookie |
 | `POST /auth/logout` | none | → 204; deletes the current session, clears the cookie |
 | `POST /auth/password-reset` | none, rate limited | `PasswordResetRequest` → 204 (no sign-in) |
 | `POST /auth/oauth/{provider}/start` | none (`link`: session), rate limited, CSRF | `OAuthStartRequest {purpose: login\|link, return_to?, invite_token?}` → `{redirect_url}` + `cloudit_oauth` cookie |
 | `GET /auth/oauth/{provider}/callback?code&state` | `cloudit_oauth` cookie | 302 to `return_to` (+ session cookie), `/onboarding` (+ `cloudit_onboarding`), or `/login?error=<code>` |
-| `GET /auth/onboarding` | onboarding | `OnboardingInfo` |
-| `POST /auth/onboarding/create` | onboarding, rate limited (as register) | `OnboardingCreateRequest {display_name, email?, password?, invite_token?}` → 201 `UserProfile` + cookie |
+| `GET /auth/onboarding` | onboarding | `OnboardingInfo` (`invite_required`, `requires_approval`) |
+| `POST /auth/onboarding/create` | onboarding, rate limited (as register) | `OnboardingCreateRequest {display_name, email?, password?, invite_token?}` → 201 `UserProfile` + cookie, or 202 `SignupPending` (no session, onboarding cookie cleared) when the account needs approval |
 | `POST /auth/onboarding/link` | onboarding, rate limited (as login) | `OnboardingLinkRequest {email, password}` → 200 `UserProfile` + cookie |
 | `POST /auth/onboarding/link/{provider}/start` | onboarding, rate limited | no body → `{redirect_url}` + `cloudit_oauth` cookie (`onboarding_link` flow) |
 | `GET /me` | any | `UserProfile` |
@@ -252,17 +258,20 @@ Bearer cld_…`); **admin** (session of an effective admin); **onboarding** (the
 | `GET /devices` | session | `DeviceInfo[]` (revoked and expired included) |
 | `PATCH /devices/{id}` | session | `UpdateDeviceRequest` → `DeviceInfo` |
 | `DELETE /devices/{id}` | session | → 204 (revoke, soft) |
-| `GET /admin/users?limit=&offset=` | admin | `AdminUserList` (oldest first; limit 1..=200, default 50; each with `identity_providers`, `has_password`) |
+| `GET /admin/users?limit=&offset=&approval_status=` | admin | `AdminUserList` (oldest first; limit 1..=200, default 50; optional filter `approved` / `pending` / `rejected`, `total` counts the matches; each with `identity_providers`, `has_password`, `approval_status`, `signup_source`, `approval_decided_at`, `approval_decided_by`) |
 | `PATCH /admin/users/{id}` | admin | `AdminUserUpdate {admin?, disabled?}` → `AdminUser`; disabling deletes the web sessions |
+| `POST /admin/users/{id}/approve` | admin | → `AdminUser`; pending or rejected (lifts the ban) → approved; already approved: unchanged |
+| `POST /admin/users/{id}/reject` | admin | → `AdminUser`; pending or approved → rejected, web sessions deleted; own account → 403 `forbidden`; 409 `last_admin`; already rejected: unchanged |
+| `GET /admin/summary` | admin | `AdminSummary {pending_users}` |
 | `POST /admin/users/{id}/password-reset` | admin | → 201 `PasswordResetLink {token, path: "/reset-password/<token>", expires_at}`; older unused resets of the user stop working |
 | `GET /admin/invites` | admin | `InviteInfo[]` (newest first, no tokens) |
 | `POST /admin/invites` | admin | `CreateInviteRequest {email?, expires_in?}` (default 7d) → 201 `InviteLink {id, token, path: "/invite/<token>", expires_at}` |
 | `DELETE /admin/invites/{id}` | admin | → 204 (revoke, soft) |
-| `GET /admin/settings` | admin | `ServerSettings {registration_mode, autolink_email, public_url, public_url_from_env, effective_public_url}` |
-| `PATCH /admin/settings` | admin | `UpdateSettingsRequest {registration_mode?, autolink_email?, public_url? ("" clears)}` → `ServerSettings` |
+| `GET /admin/settings` | admin | `ServerSettings {registration_mode, password_new_accounts, autolink_email, public_url, public_url_from_env, effective_public_url}` |
+| `PATCH /admin/settings` | admin | `UpdateSettingsRequest {registration_mode?, password_new_accounts?, autolink_email?, public_url? ("" clears)}` → `ServerSettings` |
 | `GET /admin/providers/presets` | admin | `ProviderPreset[]` (one per kind) |
-| `GET /admin/providers` | admin | `ProviderInfo[]` (non-deleted, position order; `has_secret`, never the secret; `callback_url` when a public URL is known) |
-| `POST /admin/providers` | admin | `CreateProviderRequest` → 201 `ProviderInfo`; OIDC: discovery must succeed (502 `provider_discovery_failed`) |
+| `GET /admin/providers` | admin | `ProviderInfo[]` (non-deleted, position order; `has_secret`, never the secret; `callback_url` when a public URL is known; `new_accounts` `auto` / `approval`) |
+| `POST /admin/providers` | admin | `CreateProviderRequest` (`new_accounts` default `approval`) → 201 `ProviderInfo`; OIDC: discovery must succeed (502 `provider_discovery_failed`) |
 | `PATCH /admin/providers/{id}` | admin | `UpdateProviderRequest` (no id/kind; secret optional) → `ProviderInfo`; a changed issuer is discovered again |
 | `DELETE /admin/providers/{id}` | admin | → 204 (soft: `deleted_at`, disabled; identities kept, id never reused) |
 | `POST /admin/providers/{id}/test` | admin | → `ProviderTestResult {ok, code?}` (fresh discovery + secret decryption, read-only) |
@@ -283,7 +292,8 @@ password: same answer), `account_disabled` 403, `registration_closed` 403, `invi
 `public_url_required` 409, `provider_disabled` 403, `oauth_state_invalid` 400 (unknown, used or
 expired flow, other browser, session changed during `link`), `oauth_cancelled` 400 (provider
 answered `access_denied`), `group_not_allowed` 403, `identity_in_use` 409, `identity_not_linked`
-409, `onboarding_expired` 410, `last_login_method` 409. The callback carries the code in
+409, `onboarding_expired` 410, `last_login_method` 409, `account_pending` 403 (waiting for
+approval), `account_rejected` 403 (rejected by an admin). The callback carries the code in
 `/login?error=<code>` instead of a JSON body.
 
 ### Authentication
@@ -322,7 +332,28 @@ answered `access_denied`), `group_not_allowed` 403, `identity_in_use` 409, `iden
   disabled and work again after re-enabling. Effective admin = `admin || admin_from_groups`.
   `PATCH /admin/users` refuses to leave no enabled effective admin (`last_admin`); concurrent
   changes are serialized by a write on the `setup_state` row as the first statement of the
-  transaction (`accounts/admin.rs`).
+  transaction (`accounts/admin.rs`). Only enabled **and approved** admins count.
+- **Account approval** (`users.approval_status`): a new account is `approved` or `pending`
+  when created. Approved: the first admin (setup), any sign-up that consumed a valid invite
+  (password or onboarding; `signup_source = invite`), an onboarding OIDC identity in the
+  provider's `admin_groups` (the provider vouches for it), and sign-ups whose policy is
+  `auto`. Otherwise pending: password registrations follow the `password_new_accounts`
+  setting (`signup_source = password`), onboarding follows the provider's `new_accounts`
+  (`signup_source` = provider id); both default to `approval`. A pending sign-up answers 202
+  `SignupPending` and creates no session. Linking an identity to an existing account
+  (from `/me`, onboarding `link`, `onboarding_link`, email auto-link) never needs approval but
+  requires that account to be active. Every authentication point refuses an account that is
+  not enabled and approved (`users::ensure_active`, in this order: `account_disabled`,
+  `account_rejected`, `account_pending`; 403): password login and onboarding `link` (only
+  after the password verified), provider sign-in (`/login?error=<code>`), session and
+  device-token authentication (extractors) and the device-token exchange. Admins move it with
+  one conditional UPDATE (`… WHERE id = ? AND approval_status IN (…)`, recording
+  `approval_decided_at/by`): `approve` from pending or rejected (lifting a ban), `reject` from
+  pending or approved. Rejecting is a ban: kept forever, web sessions deleted in the same
+  transaction, device tokens refused (they work again after approval), and its identities stay
+  attached, so signing in with one answers `account_rejected` instead of reaching onboarding.
+  `reject` takes the last-admin lock, refuses the caller's own account (`forbidden`) and the
+  last enabled approved admin (`last_admin`); deciding again for the current state is a no-op.
 - **Password resets**: 24 hours, single use; creating one (admin API or CLI) marks the user's
   earlier unused resets used in the same transaction.
 - **CSRF**: every unsafe request (not GET/HEAD/OPTIONS) without a bearer token, except
@@ -349,7 +380,8 @@ answered `access_denied`), `group_not_allowed` 403, `identity_in_use` 409, `iden
 - **Configuration** (admin API, `auth_providers`): durable id `[a-z0-9-]{2,32}` (in the callback
   URL, referenced by identities, never reused: deleting is soft), `kind` (immutable), display
   name, icon (preset key or `generic`), issuer / tenant, client id, encrypted client secret,
-  scopes, groups claim (default `groups`), admin groups, allowed groups, enabled, position.
+  scopes, groups claim (default `groups`), admin groups, allowed groups, new accounts (`auto` |
+  `approval`, default `approval`: see "Account approval"), enabled, position.
   Presets (`idp/presets.rs`): OIDC `google` (fixed issuer), `microsoft` (single tenant:
   `https://login.microsoftonline.com/{tenant}/v2.0`; `common`, `organizations`, `consumers`
   refused because the issuer can't be validated), `gitlab` (gitlab.com, issuer overridable),
@@ -403,6 +435,7 @@ answered `access_denied`), `group_not_allowed` 403, `identity_in_use` 409, `iden
   reflects the last OIDC sign-in (GitHub/Discord sign-ins and linking leave it unchanged).
   Clearing it is skipped (logged) when it would leave no enabled effective admin (same lock as
   `last_admin`). Accounts created at onboarding get it from the pending signup's groups.
+  Such an account is also approved at creation, whatever the provider's `new_accounts`.
 - **Onboarding** (cookie `cloudit_onboarding`): `create` honours the registration mode
   (`closed` → `registration_closed`; `invite` → an invite from the body or carried from the
   start, consumed atomically, a bound email must match); email = typed or the provider's
@@ -411,7 +444,8 @@ answered `access_denied`), `group_not_allowed` 403, `identity_in_use` 409, `iden
   link instead. One transaction: consume pending signup (first statement), user, identity,
   invite. `link` verifies email + password exactly like login, then attaches the identity.
   `link/{provider}/start` starts an `onboarding_link` flow. Success sets the session cookie and
-  clears the onboarding cookie.
+  clears the onboarding cookie; a pending new account (see "Account approval") gets 202 and
+  only the cleared onboarding cookie.
 - **Unlinking** (`DELETE /me/identities/{id}`): one transaction whose first statement writes the
   user's row (serializes concurrent unlinks of one account), deletes the identity, then refuses
   with `last_login_method` (rolled back) if the account has no password and no remaining
@@ -436,12 +470,16 @@ answered `access_denied`), `group_not_allowed` 403, `identity_in_use` 409, `iden
 - **Tables** (plus SeaORM's `seaql_migrations`):
   - `leases(name PK, holder, expires_at)`;
   - `users(id, email UNIQUE (trimmed, lowercased), email_verified, display_name, password_hash?,
-    admin, admin_from_groups, disabled_at?, created_at, updated_at)`;
+    admin, admin_from_groups, disabled_at?, approval_status (`approved` | `pending` | `rejected`,
+    default `approved`), approval_decided_at?, approval_decided_by? (an admin; no FK, users are
+    never deleted), signup_source? (`password` | `invite` | provider id), created_at,
+    updated_at)`;
   - `sessions(id, token_hash UNIQUE, user_id → users, created_at, last_seen_at, expires_at,
     user_agent?)` (index on user_id; user agent truncated to 256 characters);
   - `setup_state(id = 1 PK, token?, created_at, completed_at?)`: one row, never deleted;
   - `settings(key PK, value (JSON text), updated_at, updated_by? → users)`; keys
-    `registration_mode` = `"open" | "invite" | "closed"` (missing = `invite`), `autolink_email`
+    `registration_mode` = `"open" | "invite" | "closed"` (missing = `invite`),
+    `password_new_accounts` = `"auto" | "approval"` (missing = `approval`), `autolink_email`
     (bool, missing = false), `public_url` (string or null), `secret_key_check` (base64 of the
     encrypted check value);
   - `invites(id, token_hash UNIQUE, created_by → users, email?, created_at, expires_at, used_at?,
@@ -454,7 +492,8 @@ answered `access_denied`), `group_not_allowed` 403, `identity_in_use` 409, `iden
     device_name, os, token_ttl_secs, created_at, expires_at (2 min), used_at?)`;
   - `auth_providers(id TEXT PK (slug), kind, display_name, icon, issuer_url?, tenant?,
     client_id, client_secret_enc BLOB, scopes, groups_claim?, admin_groups (JSON array),
-    allowed_groups (JSON array), enabled, position, created_at, updated_at, deleted_at?)`;
+    allowed_groups (JSON array), new_accounts (`auto` | `approval`, default `approval`), enabled,
+    position, created_at, updated_at, deleted_at?)`;
   - `identities(id, user_id → users, provider_id → auth_providers, subject, email?,
     email_verified, created_at, last_login_at?)` (UNIQUE (provider_id, subject), index on
     user_id);

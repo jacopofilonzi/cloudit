@@ -147,6 +147,11 @@ and align this project's copies with it:
   before migrating and refuses to start if the backup fails; on PostgreSQL the operator backs up
   (`pg_dump`, README upgrade notes). Anything the operator must do before deploying (env vars,
   manual steps) goes in the README upgrade notes.
+- Only enabled **and approved** accounts sign in or use credentials: every authentication point
+  (login, provider sign-in, linking into an account, sessions, device tokens) goes through
+  `accounts::users::ensure_active`, and every new way to create an account decides its
+  `approval_status` (a valid invite approves; otherwise the sign-up path's `auto`/`approval`
+  policy). Rejected accounts are kept (a ban), never deleted.
 - Every multi-instance coordination goes through the database (atomic conditional statements,
   leases, advisory locks), never through in-process state: any instance can die at any moment.
 - Identity-provider client secrets are stored only encrypted (`crypto::SecretBox` with the
