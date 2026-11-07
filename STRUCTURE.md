@@ -5,11 +5,14 @@ users' folders; a desktop client (planned) syncs local folders with it, and a we
 server as a static SPA) manages accounts, scopes and folders. The UIs talk to the server only
 through its JSON API under `/api/v1`, whose TypeScript types are generated from the Rust ones.
 
-Current state (milestone 3a): the server has its infrastructure (database with migrations and
-leases, blob storage, optional Redis with a rate limiter, readiness checks), exposes health probes
-and serves the web SPA; the web page shows the server status. `cloudit-core` implements the sync
-formats (chunking, chunk encoding, manifest, path rules, diff; see "Sync formats"), not used by
-the server yet. Everything under "Planned design" is not implemented yet.
+Current state (milestone 3b): the server has its infrastructure (database with migrations and
+leases, blob storage, optional Redis with a rate limiter, readiness checks), exposes health probes,
+serves the web SPA and has the account API: first-run setup, password accounts with web sessions,
+invites, password resets, desktop device login (loopback + PKCE) and admin endpoints. API only:
+the web pages come with the mockups of milestone 5 (the web page shows the server status).
+`cloudit-core` implements the sync formats (chunking, chunk encoding, manifest, path rules, diff;
+see "Sync formats"), not used by the server yet. Everything under "Planned design" is not
+implemented yet.
 
 ```text
 repo/
@@ -47,8 +50,18 @@ eslint-plugin-svelte), `clippy.toml` (unwrap/expect allowed in tests only), `rus
 ```text
 crates/core/src/
 ├── lib.rs            crate docs: shared sync engine, no I/O
-├── protocol.rs       API types: HealthResponse, ReadyResponse (+ ReadyStatus, ReadyComponents,
-│                     ComponentStatus), ErrorCode, ApiErrorBody (ts-rs export under cfg(test))
+├── protocol/         API types (ts-rs export under cfg(test)); conventions in mod.rs docs
+│   ├── mod.rs        HealthResponse, ReadyResponse (+ ReadyStatus, ReadyComponents,
+│   │                 ComponentStatus), ErrorCode, ApiErrorBody {code, message, field?}
+│   ├── sensitive.rs  Sensitive: password/token string in API bodies, Debug prints `***`
+│   ├── auth.rs       RegistrationMode, AuthConfig, AuthProvider, SetupStatus, SetupRequest,
+│   │                 RegisterRequest, LoginRequest, PasswordResetRequest
+│   ├── me.rs         UserProfile, UpdateMeRequest, ChangePasswordRequest, SessionInfo
+│   ├── devices.rs    TokenTtl (1h/1d/7d/30d/1y), CodeChallengeMethod, DeviceAuthorize*,
+│   │                 DeviceToken*, DeviceInfo, UpdateDeviceRequest
+│   └── admin.rs      AdminUser, AdminUserList, AdminUserUpdate, PasswordResetLink,
+│                     CreateInviteRequest, InviteLink, InviteStatus, InviteInfo, ServerSettings,
+│                     UpdateSettingsRequest
 ├── error.rs          HashParseError, PathError, ChunkerError, ChunkError, ManifestError (thiserror;
 │                     variants are stable kinds, `code()` gives a stable snake_case string)
 ├── hash.rs           ChunkHash, ManifestHash: SHA-256 newtypes, strict lowercase-hex FromStr/Display/serde
@@ -73,11 +86,39 @@ summarizes them.
 
 ```text
 crates/server/src/
-├── main.rs           wiring: config → logging → AppState::init → router → serve with graceful
-│                     shutdown; `cloudit-server healthcheck` runs the probe instead
+├── main.rs           subcommand (cli::parse) or wiring: config → logging → AppState::init →
+│                     router → serve (with peer addresses) with graceful shutdown
+├── cli.rs            subcommands: setup-token, admin reset-password <email>, healthcheck, help
 ├── lib.rs            module list (library so tests can build the router)
-├── state.rs          AppState: config, db, BlobStore, Option<Redis>, RateLimiter, instance_id, Leases;
-│                     `init` connects + migrates (fatal on error); Redis is never fatal
+├── state.rs          AppState: config, db, BlobStore, Option<Redis>, RateLimiter, instance_id,
+│                     Leases, setup_done; `init` connects + migrates + setup::init (fatal on
+│                     error); Redis is never fatal
+├── validate.rs       email (trim + lowercase + shape), text / display_name (trimmed, bounded)
+├── time.rs           now (µs precision), add, rfc3339 (API timestamps `2026-01-31T12:00:00Z`)
+├── accounts/         account data (queries the routes call); single-use token rules in mod.rs
+│   ├── users.rs      insert (email_taken on unique violation), find, find_by_email,
+│   │                 set_password, update_profile, list + count
+│   ├── admin.rs      update_flags (admin / disabled) with the race-free last-admin guard
+│   ├── setup.rs      setup_state: init at startup (same token on every instance), status,
+│   │                 check_token, complete (conditional UPDATE)
+│   ├── settings.rs   settings table: registration_mode (default invite)
+│   ├── invites.rs    create, find_usable, consume (conditional UPDATE), list, revoke, status
+│   └── password_resets.rs  create (24 h), consume (conditional UPDATE)
+├── auth/             authentication (the module docs list the pieces)
+│   ├── tokens.rs     new_token (32 random bytes, base64url), cld_ device tokens, hash_token
+│   │                 (SHA-256 hex), pkce_challenge, constant_time_eq
+│   ├── password.rs   argon2id (m=19 MiB, t=2, p=1) on the blocking pool; verify_or_dummy
+│   ├── sessions.rs   cloudit_session cookie; create, authenticate, slide_if_due, list, delete
+│   ├── client.rs     ClientInfo: client IP, https, own origin, user agent
+│   ├── csrf.rs       Origin / Sec-Fetch-Site check
+│   ├── middleware.rs /api/v1 layer: setup gate, CSRF, Auth (bearer or cookie), cookie refresh
+│   ├── extractors.rs SessionUser, AnyUser, AdminUser, Client
+│   └── limits.rs     rate limits of the auth endpoints + enforce
+├── devices/
+│   ├── mod.rs        devices table: create, authenticate (bearer), touch, list, find, rename,
+│   │                 revoke
+│   ├── codes.rs      device_auth_codes: create (2 min), consume (conditional UPDATE)
+│   └── redirect.rs   loopback redirect_uri validation, redirect URL with code + state
 ├── config/
 │   ├── mod.rs        Config read once from env (`from_env` / testable `from_lookup`)
 │   ├── env.rs        typed getters (empty = unset), bool and duration (`900`, `15m`, `1h`, `1d`)
@@ -86,7 +127,11 @@ crates/server/src/
 ├── db/
 │   ├── mod.rs        connect (SQLite pragmas, pool sizes), ping; table conventions in the module docs
 │   ├── migrate.rs    startup migrations: SQLite VACUUM INTO backup, PostgreSQL advisory lock
-│   ├── migrations/   Migrator + one file per migration (append-only, portable schema builder)
+│   ├── migrations/   Migrator + one file per migration (append-only, portable schema builder):
+│   │                 000001 leases, 000002 accounts (users, sessions, setup_state, settings),
+│   │                 000003 tokens (invites, password_resets, devices, device_auth_codes)
+│   ├── entities/     SeaORM 2 models (`#[sea_orm::model]`, no relations), one file per table
+│   │                 (none for setup_state: its plaintext token is read as a Secret)
 │   ├── lease.rs      Leases: try_acquire / renew / release, one atomic statement each
 │   └── testing.rs    tests only: TestDb (SQLite temp file, or a fresh database on TEST_DATABASE_URL)
 ├── storage/
@@ -96,11 +141,21 @@ crates/server/src/
 ├── cache/
 │   ├── mod.rs        Redis: lazy ConnectionManager, `run` with 2 s timeout + 5 s backoff, rate-limited warnings
 │   └── rate_limit.rs RateLimiter: fixed window in Redis (shared) or in memory (fallback)
-├── errors/mod.rs     ApiError → JSON `{code, message}` with HTTP status; internal causes logged, not returned
+├── errors/mod.rs     ApiError → JSON `{code, message, field?}` with HTTP status (+ Retry-After);
+│                     internal causes logged, not returned
 ├── routes/
-│   ├── mod.rs        router: probes, `/api/v1`, JSON 404 under `/api`, SPA fallback from WEB_DIR
+│   ├── mod.rs        router: probes, `/api/v1` (behind auth::middleware), JSON 404 under
+│   │                 `/api`, SPA fallback from WEB_DIR
+│   ├── extract.rs    ApiJson (rejections as bad_request), parse_id, model → API conversions
 │   ├── health.rs     /health (liveness), /ready (database + storage checks, Redis reported)
-│   └── tests.rs      router tests (tower `oneshot`, real AppState on temp dirs)
+│   ├── setup.rs      /setup
+│   ├── auth.rs       /auth/* (config, register, login, logout, password-reset)
+│   ├── me.rs         /me, /me/password, /me/sessions
+│   ├── devices.rs    /devices (authorize, token, list, rename, revoke)
+│   ├── admin.rs      /admin/* (users, password resets, invites, settings)
+│   └── tests/        router tests (tower `oneshot`, real AppState; PostgreSQL with
+│                     TEST_DATABASE_URL): mod.rs (probes, SPA), support.rs (TestApp harness),
+│                     setup, auth, me, devices, admin
 ├── logging.rs        tracing subscriber (env filter; pretty or json)
 ├── shutdown.rs       Ctrl+C / SIGTERM future (the only OS-specific code)
 └── healthcheck.rs    HTTP/1.0 GET /health on 127.0.0.1:$PORT, std only (Docker HEALTHCHECK)
@@ -116,16 +171,98 @@ Probes at the root (not under the base path):
   (`SELECT 1`) and storage (fs: root writable; s3: bucket listable) are `ok`, else 503 with the
   same body. Redis is reported but never makes it fail. Each check has a 3 s timeout.
 
-All under `/api/v1`:
+All under `/api/v1` (types in `cloudit-core::protocol`). Auth column: **none**; **session** (web
+session cookie only: a device token gets 403 `forbidden`); **any** (session or `Authorization:
+Bearer cld_…`); **admin** (session of an effective admin).
 
-- `GET /api/v1/health` → `HealthResponse`.
+| Method and path | Auth | Body → answer |
+| --- | --- | --- |
+| `GET /health` | none | `HealthResponse` |
+| `GET /setup` | none | `SetupStatus {required}` |
+| `POST /setup` | none, rate limited | `SetupRequest` → 201 `UserProfile` + cookie (first admin, email verified) |
+| `GET /auth/config` | none | `AuthConfig {setup_required, registration_mode, providers: []}` |
+| `POST /auth/register` | none, rate limited | `RegisterRequest` → 201 `UserProfile` + cookie |
+| `POST /auth/login` | none, rate limited | `LoginRequest` → 200 `UserProfile` + cookie |
+| `POST /auth/logout` | none | → 204; deletes the current session, clears the cookie |
+| `POST /auth/password-reset` | none, rate limited | `PasswordResetRequest` → 204 (no sign-in) |
+| `GET /me` | any | `UserProfile` |
+| `PATCH /me` | session | `UpdateMeRequest` → `UserProfile` |
+| `POST /me/password` | session | `ChangePasswordRequest` → 204; other sessions signed out |
+| `GET /me/sessions` | session | `SessionInfo[]` (current one marked) |
+| `DELETE /me/sessions/{id}` | session | → 204 |
+| `POST /devices/authorize` | session | `DeviceAuthorizeRequest` → `{redirect_url}` |
+| `POST /devices/token` | none, rate limited, no CSRF check | `DeviceTokenRequest` → `DeviceTokenResponse` |
+| `GET /devices` | session | `DeviceInfo[]` (revoked and expired included) |
+| `PATCH /devices/{id}` | session | `UpdateDeviceRequest` → `DeviceInfo` |
+| `DELETE /devices/{id}` | session | → 204 (revoke, soft) |
+| `GET /admin/users?limit=&offset=` | admin | `AdminUserList` (oldest first; limit 1..=200, default 50) |
+| `PATCH /admin/users/{id}` | admin | `AdminUserUpdate {admin?, disabled?}` → `AdminUser` |
+| `POST /admin/users/{id}/password-reset` | admin | → 201 `PasswordResetLink {token, path: "/reset-password/<token>", expires_at}` |
+| `GET /admin/invites` | admin | `InviteInfo[]` (newest first, no tokens) |
+| `POST /admin/invites` | admin | `CreateInviteRequest {email?, expires_in?}` (default 7d) → 201 `InviteLink {id, token, path: "/invite/<token>", expires_at}` |
+| `DELETE /admin/invites/{id}` | admin | → 204 (revoke, soft) |
+| `GET /admin/settings` | admin | `ServerSettings {registration_mode}` |
+| `PATCH /admin/settings` | admin | `UpdateSettingsRequest` → `ServerSettings` |
 
 Any other path under `/api` → 404 `{"code": "not_found", "message": …}`. Every other path is served
 from `WEB_DIR` with `index.html` fallback (or a JSON 404 if `WEB_DIR` is missing).
 
-Errors: JSON `ApiErrorBody {code, message}`. `code` is an `ErrorCode`: `bad_request` (400),
-`not_found` (404), `unavailable` (503), `internal` (500, generic message). `message` is English, for
-logs only.
+Errors: JSON `ApiErrorBody {code, message, field?}`; `message` is English, for logs only; `field`
+names the request field with `validation_failed`. Codes (`ErrorCode`) and statuses: `bad_request`
+400 (malformed JSON, unknown fields, bad query), `not_found` 404, `unavailable` 503, `internal` 500
+(generic message), `unauthorized` 401, `forbidden` 403, `invalid_credentials` 401 (wrong email or
+password: same answer), `account_disabled` 403, `registration_closed` 403, `invite_invalid` 400,
+`token_invalid` 400 (reset token, device code, PKCE verifier, redirect mismatch), `email_taken`
+409, `validation_failed` 422, `rate_limited` 429 (`Retry-After` in seconds), `csrf_failed` 403,
+`setup_required` 409, `setup_already_done` 409, `setup_token_invalid` 403, `last_admin` 409.
+
+### Authentication
+
+- **First-run setup**: at startup, if there is no user, every instance runs `INSERT INTO
+  setup_state (1, <random token>, now) ON CONFLICT (id) DO NOTHING`, reads the row back and logs
+  the token at WARN while setup is pending, so all instances print the same one (`SETUP_TOKEN`
+  replaces it while pending). `POST /setup` consumes it in one transaction: `UPDATE setup_state
+  SET token = NULL, completed_at = now WHERE id = 1 AND completed_at IS NULL AND token = ?`
+  (exactly one winner), then creates the admin and stores `registration_mode`. The row is never
+  deleted. While pending, every `/api/v1` route except `/health`, `/auth/config` and `/setup`
+  answers `setup_required` (409: a server state, not an instance failure); once an instance has
+  seen setup completed it caches that. `cloudit-server setup-token` prints the pending token.
+- **Passwords**: argon2id m=19 MiB t=2 p=1 (PHC strings), 8..=1024 bytes. Login always runs one
+  verification (against a dummy hash for unknown emails or password-less accounts).
+  `password_hash` is nullable (identity-provider accounts, 3c).
+- **Sessions**: cookie `cloudit_session` = 32 random bytes base64url; `HttpOnly; SameSite=Lax;
+  Path=/; Max-Age` 30 days; `Secure` when `PUBLIC_URL` is https or a trusted proxy sends
+  `X-Forwarded-Proto: https`. Sliding: a session expires 30 days after its last recorded use;
+  `last_seen_at` / `expires_at` are written at most once per hour (the cookie is refreshed then).
+  Logout deletes the row. A password change signs out the other sessions, a password reset all of
+  them (devices stay).
+- **Devices** (RFC 8252 loopback + PKCE S256): `authorize` (session) checks the challenge (43
+  base64url characters), the redirect URI (`http://127.0.0.1:<port>/…` or `http://[::1]:<port>/…`,
+  explicit port, no query, fragment or `localhost`), `state` (1..=512 characters), name, os and
+  `token_ttl` (1h, 1d, 7d, 30d default, 1y), and stores a 2-minute code. `token` consumes the code
+  first (conditional UPDATE), then checks the redirect URI (exact match) and SHA-256(verifier) in
+  constant time: any failure burns the code. The token `cld_<base64url>` has a fixed expiry;
+  revoking sets `revoked_at`; `last_seen_at` is written at most every 5 minutes.
+- **Disabled accounts**: login refused (after the password check); sessions and device tokens
+  answer `account_disabled` at once (checked on every request). Effective admin = `admin ||
+  admin_from_groups`. `PATCH /admin/users` refuses to leave no enabled effective admin
+  (`last_admin`); concurrent changes are serialized by a write on the `setup_state` row as the
+  first statement of the transaction (`accounts/admin.rs`).
+- **CSRF**: every unsafe request (not GET/HEAD/OPTIONS) without a bearer token, except
+  `POST /devices/token`, needs an `Origin` equal to the server's origin (`PUBLIC_URL`'s if set,
+  else `http(s)://` + `Host`, or `X-Forwarded-Host` when trusted) or, without `Origin`,
+  `Sec-Fetch-Site: same-origin`; else `csrf_failed`. Login, register and setup included (login
+  CSRF). No CORS.
+- **Client IP** (rate limits): the TCP peer; with `TRUST_PROXY_HEADERS=true` the rightmost
+  `X-Forwarded-For` entry that is not loopback, private or link-local (the rightmost entry if all
+  are internal).
+- **Rate limits** (fixed windows, so up to twice the limit may pass across a boundary; shared
+  through Redis when available): login 20 / 5 min per IP and 10 / 15 min per email; register
+  10 / h per IP; setup 10 / 15 min per IP; device token 30 / 15 min per IP; password reset
+  10 / 15 min per IP; current-password checks (password or email change) 10 / 15 min per user.
+- **Secrets**: tokens are stored only as SHA-256 hex (`*_hash` columns) and never logged; API
+  bodies carry them as `Sensitive`. The setup token is the one secret stored in plaintext (the
+  CLI prints it) and logged on purpose while setup is pending.
 
 ### Data and state
 
@@ -135,8 +272,25 @@ logs only.
   16-byte BLOB on SQLite: always bind `Uuid`, never strings); UTC `chrono::DateTime<Utc>` in
   `timestamp_with_time_zone` columns (`timestamptz` / RFC 3339 text that sorts correctly);
   snake_case plural table names; each migration runs in a transaction.
-- **Tables**: `leases(name TEXT PK, holder TEXT, expires_at TIMESTAMPTZ)`, plus SeaORM's
-  `seaql_migrations`.
+- **Tables** (plus SeaORM's `seaql_migrations`):
+  - `leases(name PK, holder, expires_at)`;
+  - `users(id, email UNIQUE (trimmed, lowercased), email_verified, display_name, password_hash?,
+    admin, admin_from_groups, disabled_at?, created_at, updated_at)`;
+  - `sessions(id, token_hash UNIQUE, user_id → users, created_at, last_seen_at, expires_at,
+    user_agent?)` (index on user_id; user agent truncated to 256 characters);
+  - `setup_state(id = 1 PK, token?, created_at, completed_at?)`: one row, never deleted;
+  - `settings(key PK, value (JSON text), updated_at, updated_by? → users)`; key
+    `registration_mode` = `"open" | "invite" | "closed"` (missing = `invite`);
+  - `invites(id, token_hash UNIQUE, created_by → users, email?, created_at, expires_at, used_at?,
+    used_by? → users, revoked_at?)`;
+  - `password_resets(id, token_hash UNIQUE, user_id → users, created_by? → users (null = CLI),
+    created_at, expires_at (24 h), used_at?)`;
+  - `devices(id, user_id → users, name, os, token_hash UNIQUE, created_at, last_seen_at?,
+    expires_at, revoked_at?)` (index on user_id);
+  - `device_auth_codes(id, code_hash UNIQUE, user_id → users, code_challenge, redirect_uri,
+    device_name, os, token_ttl_secs, created_at, expires_at (2 min), used_at?)`.
+
+  Expired sessions, codes and used tokens are not cleaned up yet (a GC job is planned).
 - **Migrations** run at startup (`db/migrate.rs`). SQLite: if any are pending and the database
   isn't new, `VACUUM INTO <DATA_DIR>/backups/cloudit-<UTC YYYYMMDDTHHMMSSZ>-pre-migrate.db`
   first; a failed backup aborts startup; backups are never pruned automatically. PostgreSQL:
@@ -163,7 +317,9 @@ Read once at startup (`config/mod.rs`); empty values count as unset. Documented 
 | --- | --- | --- |
 | `BIND_ADDR` | `0.0.0.0` | IP address to listen on |
 | `PORT` | `8080` | HTTP port |
-| `PUBLIC_URL` | unset | External base URL (`http(s)://…`, trailing `/` trimmed); for OAuth redirects and links later |
+| `PUBLIC_URL` | unset | External base URL (`http(s)://…`, trailing `/` trimmed): the origin for CSRF checks, `Secure` cookie when https, full URL printed by `admin reset-password`; OAuth redirects later |
+| `TRUST_PROXY_HEADERS` | `false` | Trust `X-Forwarded-For/-Proto/-Host` (client IP, https, origin); only behind a reverse proxy that sets them |
+| `SETUP_TOKEN` | unset (random) | Fixed first-run setup token (secret, at least 16 characters) |
 | `DATA_DIR` | `./data` | Durable data directory (Docker: `/data`) |
 | `WEB_DIR` | `./apps/web/build` | Built web UI served as SPA (Docker: `/app/web`) |
 | `LOG_LEVEL` | `info` | Log level, used when `RUST_LOG` is unset |
@@ -316,13 +472,19 @@ warnings, eslint, svelte-check, cargo test, vitest, type freshness, web build), 
 `cloudit-test` on random 127.0.0.1 ports, `cargo test -p cloudit-server` with the `TEST_*` env, then
 `down -v`; `--keep` leaves them running), `clean`, `version V=x.y.z`.
 
+Server CLI (`cloudit-server <command>`; `help` lists them): `setup-token` (prints the pending
+first-run token), `admin reset-password <email>` (prints a 24-hour reset path, plus the URL with
+`PUBLIC_URL`), `healthcheck`. They use the server's configuration and database but never migrate
+or serve.
+
 ## Planned design (NOT implemented yet)
 
 Decided design for the next milestones, kept here so they don't have to re-derive it. Move each part
 into the sections above as it gets built.
 
 Milestones: 1 scaffolding (done) · 2 core chunking/manifest (done) · 3a server infrastructure
-(DB, storage, Redis, readiness: done) · 3b auth/users/devices ·
+(DB, storage, Redis, readiness: done) · 3b password accounts, sessions, devices, admin API (done) ·
+3c identity providers (OIDC / OAuth2) ·
 4 scopes/folders/sharing/sync protocol/events/jobs · 5 web UI (from mockups) · 6 desktop manual
 sync + conflicts · 7 desktop auto sync/tray/autostart/installers.
 
@@ -339,7 +501,6 @@ jobs on top of `db::lease` (GC, retention); presigned or proxied blob transfer i
 
 - user > scope (user-named group) > folder (synced unit) > snapshots (immutable versions).
 - Scopes are personal but shareable with other users (roles `viewer` / `editor`).
-- Devices are registered per user with revocable tokens (loopback PKCE flow, RFC 8252).
 - Snapshot kinds: `normal`, `conflict`, `restore`. A restore creates a new head. Retention per folder
   (last N + daily for D days); pinned snapshots are never deleted. Deleted scopes/folders go to
   trash.
@@ -355,12 +516,24 @@ jobs on top of `db::lease` (GC, retention); presigned or proxied blob transfer i
 - Desktop triggers: manual, startup, quiet period, associated process exit, SSE events. Local state in
   SQLite.
 
-### Auth
+### Auth (milestone 3c: identity providers)
 
-- Local email + password (argon2id), can be disabled with `AUTH_PASSWORD=false`.
-- OAuth: generic OIDC, GitHub, Discord; links to an existing account or creates one.
-- Registration mode `open | invite | closed` (default `invite`). Email auto-link off by default
-  (`AUTH_AUTOLINK_EMAIL`).
-- Admins = `ADMIN_EMAILS` ∪ manually promoted ∪ OIDC groups (`OIDC_GROUPS_CLAIM`, default `groups`;
-  `OIDC_ADMIN_GROUPS`; optional `OIDC_ALLOWED_GROUPS`). Group-derived admin is recomputed at each
-  OIDC login.
+Built on the 3b tables (`users.password_hash` nullable, `admin_from_groups`, `settings`,
+`AuthConfig.providers`).
+
+- **Providers** are configured from the web UI by admins and stored in the database (not in env):
+  OIDC presets google, microsoft, gitlab, apple, authentik, keycloak, authelia, zitadel, pocketid
+  and generic OIDC; OAuth2 github and discord. Each has a durable provider id (referenced by the
+  identities, never reused), a display name, an icon (preset or generic), the groups claim
+  (default `groups`), admin groups and allowed groups. Group-derived admin
+  (`admin_from_groups`) is recomputed at each login through that provider.
+- **Client secrets are encrypted at rest** with `SECRET_KEY` (env; required with more than one
+  instance) or, single instance only, an auto-generated `<DATA_DIR>/secret.key`.
+- **Settings in the database**, editable by admins: registration mode, email auto-link (off by
+  default; only for emails the provider marks verified, from trusted providers), public URL (env
+  `PUBLIC_URL` overrides it).
+- **Onboarding** on the first login of an unknown identity: "create a new account" (name
+  prefilled; email from the provider, else asked and required; password optional) or "I already
+  have an account" (sign in with an existing method, then the identity is linked).
+- Email + password login is always available and cannot be disabled. Admins can create
+  password-reset links for identity-provider-only accounts too (the reset sets a password).

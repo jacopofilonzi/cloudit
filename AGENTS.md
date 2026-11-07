@@ -54,8 +54,10 @@ server (Docker); desktop Windows + Linux (macOS later).
   In this project, for now: nothing acts for real besides the server writing to its configured
   database, blob storage (`DATA_DIR` or the S3 bucket) and Redis. Tests touch only temp dirs and
   the throwaway services of `make test-ha` (`TEST_*` variables): never point them at real
-  ones (the tests create databases and objects there). Coming later: OAuth providers (OIDC,
-  GitHub, Discord); use dedicated test OAuth apps and test buckets only, never the production ones.
+  ones (the tests create databases and objects there). There is no email (SMTP) sending: invites
+  and password resets are links handed out by admins or the CLI. Coming later: OAuth providers
+  (OIDC, GitHub, Discord…, milestone 3c); use dedicated test OAuth apps and test buckets only,
+  never the production ones.
 - **Development never uses production credentials or services**: use test accounts, test bots, sandbox
   keys and a separate database.
 
@@ -94,7 +96,21 @@ and align this project's copies with it:
 ## Invariants — don't break these
 
 - Secrets (tokens, passwords, client secrets) live only in the redacted `Secret` type
-  (`crates/server/src/config/secret.rs`): never logged, never returned, never serialized.
+  (`crates/server/src/config/secret.rs`), or `Sensitive` in API bodies (`cloudit-core`
+  protocol, `Debug` prints `***`): never logged, never returned except the one response that
+  hands a new token to its owner. The only deliberate exception is the first-run setup token,
+  logged at WARN while setup is pending (and stored in plaintext so the CLI can print it).
+- Tokens (sessions, devices, invites, resets, device codes) are stored only as SHA-256 hashes
+  (`auth::tokens::hash_token`), passwords only as argon2id hashes. Compare secrets in constant
+  time (`constant_time_eq`) when they aren't looked up by hash.
+- Setup and every single-use token (invite, password reset, device code) are consumed with one
+  conditional UPDATE (`… WHERE used_at IS NULL AND expires_at > now`, or `completed_at IS NULL
+  AND token = ?` for setup) whose affected-row count decides the winner; never read-check-write.
+  The `setup_state` row is never deleted.
+- Every `/api/v1` handler states what credentials it accepts through its extractor
+  (`SessionUser`, `AnyUser`, `AdminUser` or none); device tokens never reach admin, device
+  management, session or credential routes. Disabled accounts are checked on every request.
+- State-changing browser requests pass the CSRF check (`auth::csrf`); no CORS is enabled.
 - Redis is optional and never fails a request: every call goes through `cache::Redis::run`
   (timeout, backoff) and degrades (in-memory rate limit, polling instead of pub/sub); the server
   starts without it and `/ready` never fails because of it. Job leases always use the database
@@ -163,6 +179,10 @@ and align this project's copies with it:
   - **redis 1.8** (not the 2.0 release candidates; features `tokio-comp`, `connection-manager`,
     no TLS): `ConnectionManager::new_lazy_with_config`. uuid 1 (`v4`, `v7`), chrono 0.4 (the
     only date/time crate: SeaORM and object_store use it), url 2, reqwest 0.13 (tests only).
+  - Auth: argon2 0.6 (password-hash 0.6: `hash_password(bytes)` makes its own salt with the
+    `getrandom` feature, `verify_password(bytes, &str)`), getrandom 0.4 (`getrandom::fill`),
+    base64 0.23 (`Engine` + `URL_SAFE_NO_PAD`), subtle 2.6. SeaORM entities use the 2.0 format
+    (`#[sea_orm::model]` + `DeriveEntityModel`, no relations).
   - TLS is rustls everywhere (no OpenSSL): sqlx uses the `ring` provider, object_store/reqwest
     `aws-lc-rs` (its C build needs a C compiler; it builds on Windows and in the Docker image).
   - **SvelteKit 3** (not 2): no `svelte.config.js` (options go to `sveltekit({...})` in
@@ -216,17 +236,19 @@ and align this project's copies with it:
 
 ## Adding a field to an API model
 
-1. Change the Rust type (`crates/core/src/protocol.rs` for shared API types, or the server API
-   module) and run `make types`: the TS type check then points at every place to update.
-2. Backend: migration (append, never edit a released one), repository, validation schema and routes
-   (create **and** update).
+1. Change the Rust type (`crates/core/src/protocol/<area>.rs` for shared API types) and run
+   `make types`: the TS type check then points at every place to update.
+2. Backend: migration (append, never edit a released one), entity (`db/entities/`), the queries
+   in the owning module (`accounts/`, `devices/`…), validation (`validate.rs`), the model → API
+   conversion (`routes/extract.rs`) and routes (create **and** update).
 3. Frontend: every view that shows or edits the model.
 4. Tests for the routes (valid value, invalid value, field missing on old rows); update `STRUCTURE.md`.
 
 ## Adding an API error code
 
-1. Add the variant to `ErrorCode` in `crates/core/src/protocol.rs` (never rename or reuse a code) and
-   map it in `crates/server/src/errors/mod.rs` (`code()` and `status()`).
+1. Add the variant to `ErrorCode` in `crates/core/src/protocol/mod.rs` (never rename or reuse a
+   code) and map it in `crates/server/src/errors/mod.rs` (an `ApiError` variant, `code()` and
+   `status()`).
 2. `make types`: the type check then fails in `apps/web/src/lib/api.ts` (`SERVER_CODES`) and
    `apps/web/src/lib/errors.ts` until the new code is mapped.
 3. Add the `error.<code>` key to both `en.ts` and `it.ts` in `packages/ui/src/lib/i18n/`.
@@ -252,7 +274,20 @@ and align this project's copies with it:
   `PUID:PGID` (default 10001) and drops privileges with `setpriv`. Don't add `USER` to the
   Dockerfile; the server itself never runs as root.
 - SQLite `sqlite::memory:` is one database per pooled connection: tests and tools use a file
-  (`db::testing::TestDb`). SQLite allows one writer: keep write transactions short.
+  (`db::testing::TestDb`). SQLite allows one writer: keep write transactions short, hash
+  passwords before `begin()`, and make the first statement of a writing transaction a write (a
+  transaction that read first fails with `SQLITE_BUSY` instead of waiting).
+- Unsafe API requests without a bearer token need `Origin` = the server's origin (or
+  `Sec-Fetch-Site: same-origin`): curl and scripts must send `-H 'Origin: http://host:port'`
+  (with `PUBLIC_URL` set, its origin). API route tests go through `routes::tests::support::TestApp`,
+  which sends it, runs on PostgreSQL under `make test-ha`, and keeps a fresh rate limiter per test.
+- While first-run setup is pending every `/api/v1` route except `/health`, `/setup` and
+  `/auth/config` answers 409 `setup_required`: tests call `TestApp::setup_admin()` first.
+- ts-rs ignores (and warns about) `#[serde(transparent)]`: newtypes serialize as their inner
+  value anyway, so leave it out. Optional request fields are `Option<T>` with `#[serde(default)]`
+  and `#[cfg_attr(test, ts(optional))]`; request structs use `#[serde(deny_unknown_fields)]`.
+- Edition 2024 `impl Trait` return types capture every input lifetime: use `+ use<'a>` when a
+  returned future must not borrow the other arguments.
 - `TEST_DATABASE_URL` must point at a throwaway PostgreSQL server: each test creates its own
   `cloudit_test_*` database there (`make test-ha` removes the whole container afterwards).
 - Test S3 is Garage (`dxflrs/garage`, config `docker/garage.toml` with example secrets):
