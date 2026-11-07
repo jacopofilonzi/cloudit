@@ -11,22 +11,13 @@
 
 mod health;
 
-use std::sync::Arc;
-
 use axum::Router;
 use axum::routing::get;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
-use crate::config::Config;
 use crate::errors::ApiError;
-
-/// Shared, read-only state handed to every handler. Nothing correctness-relevant
-/// may live here in memory: instances must stay interchangeable (HA).
-#[derive(Clone)]
-pub struct AppState {
-    pub config: Arc<Config>,
-}
+pub use crate::state::AppState;
 
 /// Builds the complete application router.
 pub fn router(state: AppState) -> Router {

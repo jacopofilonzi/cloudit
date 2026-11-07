@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Liveness/readiness payload returned by `GET /health`, `GET /ready` and `GET /api/v1/health`.
+/// Liveness payload returned by `GET /health` and `GET /api/v1/health`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct HealthResponse {
@@ -25,6 +25,52 @@ impl HealthResponse {
             version: version.into(),
         }
     }
+}
+
+/// Overall readiness in [`ReadyResponse`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub enum ReadyStatus {
+    /// Every required component works: the instance can take traffic (HTTP 200).
+    Ok,
+    /// A required component (database or storage) is failing (HTTP 503).
+    Unavailable,
+}
+
+/// State of one dependency in [`ReadyComponents`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub enum ComponentStatus {
+    /// Reachable and working.
+    Ok,
+    /// Configured but failing its check.
+    Unavailable,
+    /// Not configured (only optional components, i.e. Redis).
+    Disabled,
+}
+
+/// Per-dependency readiness.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct ReadyComponents {
+    /// Database (`SELECT 1`). Required.
+    pub database: ComponentStatus,
+    /// Blob storage (filesystem writable / bucket listable). Required.
+    pub storage: ComponentStatus,
+    /// Redis: optional, never makes the instance unready.
+    pub redis: ComponentStatus,
+}
+
+/// Payload of `GET /ready`: HTTP 200 when `status` is `ok`, else 503.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct ReadyResponse {
+    pub status: ReadyStatus,
+    /// Server version (`x.y.z`).
+    pub version: String,
+    pub components: ReadyComponents,
 }
 
 /// Stable, machine-readable error codes. The UI maps each code to its own
@@ -80,6 +126,27 @@ mod tests {
         assert_eq!(
             json,
             serde_json::json!({ "status": "ok", "version": "1.2.3" })
+        );
+    }
+
+    #[test]
+    fn ready_response_json_shape() {
+        let ready = ReadyResponse {
+            status: ReadyStatus::Unavailable,
+            version: "1.2.3".to_owned(),
+            components: ReadyComponents {
+                database: ComponentStatus::Ok,
+                storage: ComponentStatus::Unavailable,
+                redis: ComponentStatus::Disabled,
+            },
+        };
+        assert_eq!(
+            serde_json::to_value(&ready).unwrap(),
+            serde_json::json!({
+                "status": "unavailable",
+                "version": "1.2.3",
+                "components": { "database": "ok", "storage": "unavailable", "redis": "disabled" }
+            })
         );
     }
 

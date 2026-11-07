@@ -1,10 +1,10 @@
-//! `cloudit-server` entry point: config, logging, router, serve.
-
-use std::sync::Arc;
+//! `cloudit-server` entry point: config, logging, state (database, storage, Redis),
+//! router, serve.
 
 use anyhow::Context as _;
 use cloudit_server::config::Config;
-use cloudit_server::routes::{AppState, router};
+use cloudit_server::routes::router;
+use cloudit_server::state::AppState;
 use cloudit_server::{healthcheck, logging, shutdown};
 
 #[tokio::main]
@@ -26,9 +26,9 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let addr = config.socket_addr();
-    let app = router(AppState {
-        config: Arc::new(config),
-    });
+    let state = AppState::init(config).await?;
+    tracing::info!(instance_id = %state.instance_id, "ready to serve");
+    let app = router(state);
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await

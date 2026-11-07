@@ -4,6 +4,7 @@
 //! library so integration tests can build the router without a socket.
 //!
 //! - [`config`]: configuration read once from the environment.
+//! - [`state`]: [`state::AppState`], the shared handles built at startup.
 //! - [`db`]: SeaORM connection (SQLite or PostgreSQL), migrations, leases.
 //! - [`storage`]: [`storage::BlobStore`] over `object_store` (filesystem or S3).
 //! - [`cache`]: optional Redis and the rate limiter.
@@ -21,4 +22,5 @@ pub mod healthcheck;
 pub mod logging;
 pub mod routes;
 pub mod shutdown;
+pub mod state;
 pub mod storage;

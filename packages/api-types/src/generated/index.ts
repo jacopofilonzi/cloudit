@@ -2,10 +2,14 @@
 export type { ApiErrorBody } from './ApiErrorBody';
 export type { ChunkHash } from './ChunkHash';
 export type { ChunkRef } from './ChunkRef';
+export type { ComponentStatus } from './ComponentStatus';
 export type { EntryKind } from './EntryKind';
 export type { ErrorCode } from './ErrorCode';
 export type { HealthResponse } from './HealthResponse';
 export type { Manifest } from './Manifest';
 export type { ManifestEntry } from './ManifestEntry';
 export type { ManifestHash } from './ManifestHash';
+export type { ReadyComponents } from './ReadyComponents';
+export type { ReadyResponse } from './ReadyResponse';
+export type { ReadyStatus } from './ReadyStatus';
 export type { Timestamp } from './Timestamp';

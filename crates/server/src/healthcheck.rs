@@ -43,16 +43,18 @@ pub fn run(config: &Config) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::path::Path;
 
     use super::run;
     use crate::config::Config;
     use crate::routes::{AppState, router};
 
-    fn config_for_port(port: u16) -> Config {
+    fn config_for_port(port: u16, data_dir: &Path) -> Config {
+        let data_dir = data_dir.to_string_lossy().into_owned();
         Config::from_lookup(|key| match key {
             "PORT" => Some(port.to_string()),
             "WEB_DIR" => Some("does-not-exist".to_owned()),
+            "DATA_DIR" => Some(data_dir.clone()),
             _ => None,
         })
         .unwrap()
@@ -62,10 +64,9 @@ mod tests {
     async fn succeeds_against_a_running_server() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let config = config_for_port(port);
-        let app = router(AppState {
-            config: Arc::new(config.clone()),
-        });
+        let data = tempfile::tempdir().unwrap();
+        let config = config_for_port(port, data.path());
+        let app = router(AppState::init(config.clone()).await.unwrap());
         tokio::spawn(async move { axum::serve(listener, app).await });
 
         let result = tokio::task::spawn_blocking(move || run(&config))
@@ -81,7 +82,8 @@ mod tests {
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             listener.local_addr().unwrap().port()
         };
-        let config = config_for_port(port);
+        let data = tempfile::tempdir().unwrap();
+        let config = config_for_port(port, data.path());
         let result = tokio::task::spawn_blocking(move || run(&config))
             .await
             .unwrap();
