@@ -19,7 +19,6 @@
 name: cloudit-ha
 
 x-cloudit: &cloudit
-  build: .
   image: cloudit:ha
   restart: unless-stopped
   environment:
@@ -103,11 +102,15 @@ services:
       timeout: 5s
       retries: 30
 
+  # Only one replica builds the shared image (two `build:` keys for the same tag make
+  # `up --build` fail); the other reuses it and never tries to pull it.
   cloudit-1:
     <<: *cloudit
+    build: .
 
   cloudit-2:
     <<: *cloudit
+    pull_policy: never
 
   caddy:
     image: caddy:2
