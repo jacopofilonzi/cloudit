@@ -108,6 +108,12 @@ and align this project's copies with it:
   `make types` and commit the result; never hand-write API models in TS. `make check` fails if they
   are stale.
 - `DEFAULT_LANG` is `en`.
+- **The sync formats are durable** (stored on servers): the chunking parameters (FastCDC 2020,
+  64/256/1024 KiB, level 1, seed 0), the stored chunk encoding, the manifest JSON and its
+  canonical form, the hashing and the path rules (STRUCTURE.md "Sync formats", module docs in
+  `crates/core`). Changing any of them requires a new format version (manifest `version`, chunk
+  header byte) that still reads the old one. Golden-vector tests pin them: never edit a golden
+  test to make a change pass.
 - **Upgrading production never loses data or stops the service.** Durable data is not cache: IDs
   and formats stay backward compatible. Schema changes are migrations appended to
   `crates/server/src/db/migrations/` (planned location, created in milestone 3), never edits to one
@@ -135,6 +141,8 @@ and align this project's copies with it:
   Notable versions in use:
   - Rust edition 2024, resolver 3. axum 0.8 (`{param}` path syntax), tower-http 0.7, ts-rs 12
     (dev-dependency: types derive `TS` under `cfg(test)`; `TS_RS_LARGE_INT = "number"`).
+  - cloudit-core: fastcdc 5 (`v2020` module), sha2 0.11 (digest 0.11, `hybrid-array` outputs),
+    zstd 0.14 (bundles C zstd: needs a C compiler, present in the `rust:*-slim` image), hex 0.4.
   - **SvelteKit 3** (not 2): no `svelte.config.js` (options go to `sveltekit({...})` in
     `vite.config.ts`); `$lib` is replaced by `#lib` (package.json `imports`, explicit extensions:
     `#lib/api.ts`); `$app/environment` → `$app/env`; `$app/stores` is gone (use `$app/state`);

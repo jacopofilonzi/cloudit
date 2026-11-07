@@ -5,13 +5,15 @@ users' folders; a desktop client (planned) syncs local folders with it, and a we
 server as a static SPA) manages accounts, scopes and folders. The UIs talk to the server only
 through its JSON API under `/api/v1`, whose TypeScript types are generated from the Rust ones.
 
-Current state (milestone 1, scaffolding): the server exposes health probes and serves the web SPA;
-the web page shows the server status. Everything under "Planned design" is not implemented yet.
+Current state (milestone 2): the server exposes health probes and serves the web SPA; the web page
+shows the server status. `cloudit-core` implements the sync formats (chunking, chunk encoding,
+manifest, path rules, diff; see "Sync formats"), not used by the server yet. Everything under
+"Planned design" is not implemented yet.
 
 ```text
 repo/
 ├── crates/
-│   ├── core/             Rust lib `cloudit-core` — shared types (API protocol); later chunking/manifest
+│   ├── core/             Rust lib `cloudit-core` — API types, chunking, chunk codec, manifest, diff (no I/O)
 │   └── server/           Rust bin `cloudit-server` — axum HTTP server
 ├── apps/
 │   └── web/              SvelteKit 3 + Svelte 5 + Tailwind 4 SPA (adapter-static)
@@ -38,8 +40,26 @@ eslint-plugin-svelte), `clippy.toml` (unwrap/expect allowed in tests only), `rus
 ```text
 crates/core/src/
 ├── lib.rs            crate docs: shared sync engine, no I/O
-└── protocol.rs       API types: HealthResponse, ErrorCode, ApiErrorBody (ts-rs export under cfg(test))
+├── protocol.rs       API types: HealthResponse, ErrorCode, ApiErrorBody (ts-rs export under cfg(test))
+├── error.rs          HashParseError, PathError, ChunkerError, ChunkError, ManifestError (thiserror;
+│                     variants are stable kinds, `code()` gives a stable snake_case string)
+├── hash.rs           ChunkHash, ManifestHash: SHA-256 newtypes, strict lowercase-hex FromStr/Display/serde
+├── path.rs           validate_path: portable relative path rules (security-critical)
+├── chunk/
+│   ├── mod.rs        MIN/AVG/MAX_CHUNK_SIZE
+│   ├── chunker.rs    FastCDC: chunk_reader (streaming, any Read), chunk_slice; golden vector
+│   └── codec.rs      encode_chunk / decode_chunk (header byte + raw|zstd, bounded, hash-verified)
+├── manifest/
+│   ├── mod.rs        re-exports
+│   ├── model.rs      Manifest, ManifestEntry, EntryKind, Timestamp, ChunkRef (JSON schema; ts-rs)
+│   ├── codec.rs      canonical JSON, hash, encode (zstd), decode_manifest (bounded); golden vector
+│   ├── validate.rs   Manifest::validate (rules in "Sync formats")
+│   └── diff.rs       diff → ManifestDiff; chunk_hashes, missing_chunks, logical_size, unique_chunk_size
+└── testutil.rs       tests only: SplitMix64 pseudo-random bytes for golden vectors
 ```
+
+Each module's top-level doc comment is the normative spec of its format; "Sync formats" below
+summarizes them.
 
 ## Server (`crates/server/src`)
 
@@ -143,6 +163,85 @@ Exports: `@cloudit/ui` (components), `@cloudit/ui/i18n`, `@cloudit/ui/styles.css
 `export_bindings` tests, writes `generated/index.ts`). Committed; `make check` fails if stale.
 `index.ts` re-exports them. Never edit by hand.
 
+## Sync formats (`cloudit-core`)
+
+**Durable formats**: chunks and manifests are stored on servers, so everything in this section is
+pinned by golden-vector tests (`chunk::chunker`, `manifest::codec`, `hash`). Changing any of it
+needs a new manifest/encoding version; never edit a golden test to make a change pass.
+
+### Chunking
+
+- FastCDC 2020 (crate `fastcdc` 5, module `v2020`), normalization level 1, gear seed 0.
+- min 64 KiB, avg 256 KiB, max 1 MiB. A file of at most 64 KiB is one chunk; an empty file has
+  no chunks; every chunk except the last is at least min, every chunk at most max.
+- Streaming over any `std::io::Read` with one 1 MiB buffer (`chunk_reader`); `chunk_slice` gives
+  the same boundaries for in-memory data. `Interrupted` reads are retried.
+
+### Hashes
+
+- `ChunkHash` = SHA-256 of the uncompressed chunk bytes; `ManifestHash` = SHA-256 of the
+  canonical uncompressed manifest JSON.
+- Text form: exactly 64 lowercase hex characters; anything else (uppercase, prefix, whitespace,
+  other length) is rejected. TS type: `string`.
+
+### Stored chunk encoding
+
+`[header u8][payload]`: `0x00` raw bytes, `0x01` one zstd frame (level 3). Encode uses zstd only
+if strictly smaller than raw and refuses input over 1 MiB. Decode rejects a missing or unknown
+header, bounds the decompressed size to 1 MiB while streaming (zip bombs), and verifies the
+SHA-256 against the expected hash (`ChunkError::HashMismatch`). The compressed bytes are not part
+of the chunk identity.
+
+### Manifest
+
+JSON, `version: 1` (shown wrapped; the canonical form has no whitespace):
+
+```json
+{"version":1,"entries":[
+  {"path":"saves/slot1.sav","kind":"file","size":70000,
+   "mtime":{"secs":1700000000,"nanos":123456789},"executable":false,
+   "chunks":[{"hash":"<64 hex>","size":65536},{"hash":"<64 hex>","size":4464}]},
+  {"path":"screenshots","kind":"dir","size":0,"mtime":{"secs":1700000000,"nanos":0},
+   "executable":false,"chunks":[]}]}
+```
+
+- `kind`: `file` | `dir`; `dir` only for **empty** directories (the others are implied by
+  paths). Symlinks and special files are not represented.
+- `size`: u64 bytes (0 for dirs). `mtime`: `secs` (i64 since the Unix epoch) + `nanos` (u32,
+  below 10^9), so both stay exact as JS numbers. `executable`: the Unix x bit (false for dirs).
+  `chunks`: ordered `{hash, size}` (size u32).
+- **Canonical JSON** = `serde_json::to_vec` of the structs: compact, keys in declaration order
+  (as in the example), no maps, serde_json string escaping (non-ASCII written raw). The hash is
+  over these bytes; decode rejects any JSON whose re-encoding differs (whitespace, key order,
+  `\u` escapes), so a manifest has exactly one hash. Unknown fields are rejected.
+- **Stored** as one zstd frame (level 3) of the canonical JSON. Decode bounds the decompressed
+  size (`DEFAULT_MAX_MANIFEST_BYTES` = 64 MiB, caller-configurable), reads `version` first (other
+  versions give `UnsupportedVersion`), then parses and validates.
+- **Validation** (on encode and decode): version 1; every path valid (below); strictly sorted by
+  path in UTF-8 byte order (so no duplicates); no case-insensitive collision among the paths and
+  their implied parent directories (Unicode `to_lowercase`, e.g. `A/x` vs `a/y`); no entry under
+  a file or under a `dir` entry; dirs have size 0, no chunks, not executable; each chunk size in
+  1..=1 MiB (the minimum is not enforced) and the sizes sum to the file size; a hash has the same
+  size everywhere; `nanos` below 10^9. Errors: `ManifestError`, stable `code()` (`manifest_*`).
+
+### Paths
+
+Relative, `/`-separated UTF-8, stored as-is: **no Unicode normalization** (NFC and NFD spellings
+are different paths; case-only differences are rejected at manifest level). Rejected: empty; over
+4096 bytes; a segment over 255 bytes; leading `/` or `\`, drive prefix (`C:`, `C:x`), UNC; any
+backslash; empty segment (`a//b`, trailing `/`); `.` or `..`; control characters (Unicode Cc);
+any of `<>:"|?*`; a segment ending in space or dot; Windows device names case-insensitively, with
+or without extension (`CON`, `PRN`, `AUX`, `NUL`, `CONIN$`, `CONOUT$`, `COM0`-`COM9`,
+`LPT0`-`LPT9`, `COM¹²³`, `LPT¹²³`). Errors: `PathError` (`path_*` codes).
+
+### Diff
+
+`diff(old, new)` by exact path (a rename is removed + added): `added`, `removed`, `modified`
+(kind, size, chunks or executable differ), `metadata_only` (only the mtime differs: nothing to
+transfer), `unchanged`; each list in path order. Helpers on `Manifest`: `chunk_hashes` (sorted
+set), `missing_chunks(is_available)` (sorted, deduplicated), `logical_size` (sum of file sizes),
+`unique_chunk_size` (sum of the distinct chunks' uncompressed sizes).
+
 ## Commands
 
 `make help` lists everything. Key ones: `install`, `dev` (server + Vite, `scripts/dev.mjs` stops both
@@ -155,7 +254,7 @@ warnings, eslint, svelte-check, cargo test, vitest, type freshness, web build), 
 Decided design for the next milestones, kept here so they don't have to re-derive it. Move each part
 into the sections above as it gets built.
 
-Milestones: 1 scaffolding (done) · 2 core chunking/manifest · 3 server DB/storage/auth/devices ·
+Milestones: 1 scaffolding (done) · 2 core chunking/manifest (done) · 3 server DB/storage/auth/devices ·
 4 scopes/folders/sharing/sync protocol/events/jobs · 5 web UI (from mockups) · 6 desktop manual
 sync + conflicts · 7 desktop auto sync/tray/autostart/installers.
 
@@ -184,9 +283,9 @@ module), `crates/server/src/db/migrations/` (migrations, append-only).
 
 ### Sync protocol
 
-- Files are split with FastCDC; a chunk is identified by the SHA-256 of its plaintext and stored
-  zstd-compressed under `owners/{owner_id}/chunks/{sha256}` (dedup per owner only).
-- The manifest (files: path, size, mtime, chunk list) is content-addressed.
+- Chunks (format: "Sync formats") are stored under `owners/{owner_id}/chunks/{sha256}` (dedup
+  per owner only); manifests are content-addressed by their `ManifestHash`. The server validates
+  every uploaded manifest with `cloudit-core` and verifies chunk hashes on upload.
 - Commit = `UPDATE folders SET head = new WHERE id = ? AND head = parent` → 201, or 409 conflict.
 - On conflict the client uploads its local state as a `conflict` snapshot (not head); the user
   chooses keep-server / keep-local / decide-later.
