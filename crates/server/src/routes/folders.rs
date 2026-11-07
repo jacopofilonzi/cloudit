@@ -119,7 +119,7 @@ pub async fn update(
 ) -> Result<Json<FolderInfo>, ApiError> {
     let access = FolderAccess::load(&state.db, me.user.id, parse_id(&id)?).await?;
     access.require(ScopeRole::Editor)?;
-    if body.retention_max_versions.is_some() || body.retention_max_per_day.is_some() {
+    if !body.retention_max_versions.is_missing() || !body.retention_max_per_day.is_missing() {
         access.require(ScopeRole::Admin)?;
     }
     let changes = Changes {
@@ -130,10 +130,12 @@ pub async fn update(
             .transpose()?,
         max_versions: body
             .retention_max_versions
+            .into_option()
             .map(|v| retention(v, "retention_max_versions"))
             .transpose()?,
         max_per_day: body
             .retention_max_per_day
+            .into_option()
             .map(|v| retention(v, "retention_max_per_day"))
             .transpose()?,
     };

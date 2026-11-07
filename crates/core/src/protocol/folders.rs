@@ -7,7 +7,7 @@
 //! deleted and don't count. A folder's override `null` means the server default
 //! (`/api/v1/admin/settings`); `0` means unlimited.
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// One folder.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,31 +61,54 @@ pub struct UpdateFolderRequest {
     #[cfg_attr(test, ts(optional))]
     pub name: Option<String>,
     /// Omitted: unchanged; `null`: server default; a number: the folder's own limit.
-    #[serde(
-        default,
-        deserialize_with = "present",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[cfg_attr(test, ts(optional, type = "number | null"))]
-    pub retention_max_versions: Option<Option<u32>>,
+    #[serde(default, skip_serializing_if = "Patch::is_missing")]
+    #[cfg_attr(test, ts(as = "Option<Option<u32>>", optional))]
+    pub retention_max_versions: Patch<u32>,
     /// Omitted: unchanged; `null`: server default; a number: the folder's own limit.
-    #[serde(
-        default,
-        deserialize_with = "present",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[cfg_attr(test, ts(optional, type = "number | null"))]
-    pub retention_max_per_day: Option<Option<u32>>,
+    #[serde(default, skip_serializing_if = "Patch::is_missing")]
+    #[cfg_attr(test, ts(as = "Option<Option<u32>>", optional))]
+    pub retention_max_per_day: Patch<u32>,
 }
 
-/// A field that is present (possibly `null`) becomes `Some`; with `#[serde(default)]`
-/// an omitted one stays `None`.
-fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    T::deserialize(deserializer).map(Some)
+/// A request field that distinguishes "omitted" from `null`: with `#[serde(default)]`
+/// an omitted field is [`Patch::Missing`], `null` is [`Patch::Null`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Patch<T> {
+    #[default]
+    Missing,
+    Null,
+    Value(T),
+}
+
+impl<T> Patch<T> {
+    #[must_use]
+    pub fn is_missing(&self) -> bool {
+        matches!(self, Self::Missing)
+    }
+
+    /// `None` if omitted, `Some(None)` for `null`, `Some(Some(v))` for a value.
+    pub fn into_option(self) -> Option<Option<T>> {
+        match self {
+            Self::Missing => None,
+            Self::Null => Some(None),
+            Self::Value(v) => Some(Some(v)),
+        }
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for Patch<T> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Option::<T>::deserialize(deserializer)?.map_or(Self::Null, Self::Value))
+    }
+}
+
+impl<T: Serialize> Serialize for Patch<T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Missing | Self::Null => serializer.serialize_none(),
+            Self::Value(v) => serializer.serialize_some(v),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -97,8 +120,10 @@ mod tests {
         let parse = |s: &str| serde_json::from_str::<UpdateFolderRequest>(s).unwrap();
         assert_eq!(parse("{}"), UpdateFolderRequest::default());
         let body = parse(r#"{"retention_max_versions":null,"retention_max_per_day":3}"#);
-        assert_eq!(body.retention_max_versions, Some(None));
-        assert_eq!(body.retention_max_per_day, Some(Some(3)));
+        assert_eq!(body.retention_max_versions, Patch::Null);
+        assert_eq!(body.retention_max_per_day, Patch::Value(3));
+        assert_eq!(body.retention_max_per_day.into_option(), Some(Some(3)));
+        assert_eq!(parse("{}").retention_max_versions.into_option(), None);
         assert!(serde_json::from_str::<UpdateFolderRequest>(r#"{"other":1}"#).is_err());
         assert!(
             serde_json::from_str::<UpdateFolderRequest>(r#"{"retention_max_versions":-1}"#)
