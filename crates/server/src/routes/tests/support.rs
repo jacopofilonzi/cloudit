@@ -125,7 +125,12 @@ impl TestApp {
         if db.url().is_some() && !extra.iter().any(|(k, _)| *k == "SECRET_KEY") {
             vars.push(("SECRET_KEY".to_owned(), TEST_SECRET_KEY.to_owned()));
         }
-        let state = AppState::init(Self::config(&vars)).await.unwrap();
+        let mut state = AppState::init(Self::config(&vars)).await.unwrap();
+        // 2 min 30 s past a whole hour: mid-window for every limit (5 min, 15 min, 1 h).
+        state.rate_limiter = state
+            .rate_limiter
+            .clone()
+            .with_fixed_clock(1_700_002_950_000);
         let app = router(state.clone());
         let origin = state.config.public_url.as_deref().map_or_else(
             || ORIGIN.to_owned(),

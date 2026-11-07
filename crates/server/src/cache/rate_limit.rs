@@ -76,6 +76,9 @@ impl RateDecision {
 pub struct RateLimiter {
     redis: Option<Redis>,
     memory: Arc<MemoryCounter>,
+    /// Tests only: a frozen clock, so a test never straddles a window boundary.
+    #[cfg(test)]
+    fixed_now_ms: Option<u64>,
 }
 
 impl RateLimiter {
@@ -84,12 +87,32 @@ impl RateLimiter {
         Self {
             redis,
             memory: Arc::default(),
+            #[cfg(test)]
+            fixed_now_ms: None,
         }
+    }
+
+    /// Tests only: counts every hit at `now_ms` instead of the wall clock. Windows are
+    /// aligned on the Unix clock, so a test using the real clock fails whenever it runs
+    /// across a boundary (e.g. at hh:15:00 for a 15-minute window).
+    #[cfg(test)]
+    #[must_use]
+    pub fn with_fixed_clock(mut self, now_ms: u64) -> Self {
+        self.fixed_now_ms = Some(now_ms);
+        self
+    }
+
+    fn now_ms(&self) -> u64 {
+        #[cfg(test)]
+        if let Some(now) = self.fixed_now_ms {
+            return now;
+        }
+        now_ms()
     }
 
     /// Counts one hit on `key` and says whether it is allowed.
     pub async fn hit(&self, key: &str, limit: RateLimit) -> RateDecision {
-        let now = now_ms();
+        let now = self.now_ms();
         let window = now / limit.window_ms();
         if let Some(redis) = &self.redis {
             let redis_key = format!("{REDIS_PREFIX}{key}:{window}");
