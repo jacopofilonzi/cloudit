@@ -52,8 +52,10 @@ server (Docker); desktop Windows + Linux (macOS later).
   writes to external services. Tests use fakes and fixtures; live checks are read-only. When running the
   app locally for a check, start from an empty data directory unless told otherwise, and stop it afterwards.
   In this project, for now: nothing acts for real besides the server writing to its configured
-  storage and database (`DATA_DIR`). Coming later: OAuth providers (OIDC, GitHub, Discord) and S3
-  buckets; use dedicated test OAuth apps and test buckets only, never the production ones.
+  database, blob storage (`DATA_DIR` or the S3 bucket) and Redis. Tests touch only temp dirs and
+  the throwaway services of `make test-ha` (`TEST_*` variables): never point them at real
+  ones (the tests create databases and objects there). Coming later: OAuth providers (OIDC,
+  GitHub, Discord); use dedicated test OAuth apps and test buckets only, never the production ones.
 - **Development never uses production credentials or services**: use test accounts, test bots, sandbox
   keys and a separate database.
 
@@ -93,8 +95,10 @@ and align this project's copies with it:
 
 - Secrets (tokens, passwords, client secrets) live only in the redacted `Secret` type
   (`crates/server/src/config/secret.rs`): never logged, never returned, never serialized.
-- Redis is optional and never fails a request: errors degrade (DB lease for jobs, in-memory rate
-  limit, polling instead of pub/sub); the server starts without it.
+- Redis is optional and never fails a request: every call goes through `cache::Redis::run`
+  (timeout, backoff) and degrades (in-memory rate limit, polling instead of pub/sub); the server
+  starts without it and `/ready` never fails because of it. Job leases always use the database
+  (`db::lease`), never Redis.
 - The server is stateless: no correctness-relevant in-memory state. HA comes from the database plus
   object storage; any instance can serve any request.
 - A snapshot commit is the conditional head update
@@ -116,11 +120,17 @@ and align this project's copies with it:
   test to make a change pass.
 - **Upgrading production never loses data or stops the service.** Durable data is not cache: IDs
   and formats stay backward compatible. Schema changes are migrations appended to
-  `crates/server/src/db/migrations/` (planned location, created in milestone 3), never edits to one
-  already released (pushed to `main`). A migration that touches existing rows gets a test that
-  builds a database at the previous version with realistic data and migrates it. The app backs up
-  the database before migrating and refuses to start if the backup fails. Anything the operator must
-  do before deploying (env vars, manual steps) goes in the README upgrade notes.
+  `crates/server/src/db/migrations/`, never edits to one already released (pushed to `main`).
+  Migrations use the SeaORM schema builder only (no backend-specific SQL), follow the table
+  conventions in `db/mod.rs` (UUID v7, UTC timestamps) and must pass on both SQLite (`make
+  test`) and PostgreSQL (`make test-ha`): run `make test-ha` before committing any change that
+  touches SQL. A migration that touches existing rows gets a test that builds a database at the
+  previous version with realistic data and migrates it. On SQLite the app backs up the database
+  before migrating and refuses to start if the backup fails; on PostgreSQL the operator backs up
+  (`pg_dump`, README upgrade notes). Anything the operator must do before deploying (env vars,
+  manual steps) goes in the README upgrade notes.
+- Every multi-instance coordination goes through the database (atomic conditional statements,
+  leases, advisory locks), never through in-process state: any instance can die at any moment.
 
 ## Code
 
@@ -143,6 +153,18 @@ and align this project's copies with it:
     (dev-dependency: types derive `TS` under `cfg(test)`; `TS_RS_LARGE_INT = "number"`).
   - cloudit-core: fastcdc 5 (`v2020` module), sha2 0.11 (digest 0.11, `hybrid-array` outputs),
     zstd 0.14 (bundles C zstd: needs a C compiler, present in the `rust:*-slim` image), hex 0.4.
+  - **SeaORM 2.0** (sea-query 1.0, sqlx 0.9; features `runtime-tokio-rustls`, `sqlx-sqlite`,
+    `sqlx-postgres`, `with-chrono`, `with-uuid`): `.eq()`/`.lt()` on `Expr` need
+    `sea_query::ExprTrait` in scope; `ConnectionTrait::execute(&stmt)` takes a statement builder
+    (raw SQL: `execute_raw(Statement)` / `execute_unprepared`); migrations implement
+    `use_transaction()`; sqlx is reachable as `sea_orm::sqlx`.
+  - **object_store 0.14** (`aws` feature): `put`/`get`/`head`/`delete` live in the
+    `ObjectStoreExt` trait; presigning is `signer::Signer::signed_url`.
+  - **redis 1.8** (not the 2.0 release candidates; features `tokio-comp`, `connection-manager`,
+    no TLS): `ConnectionManager::new_lazy_with_config`. uuid 1 (`v4`, `v7`), chrono 0.4 (the
+    only date/time crate: SeaORM and object_store use it), url 2, reqwest 0.13 (tests only).
+  - TLS is rustls everywhere (no OpenSSL): sqlx uses the `ring` provider, object_store/reqwest
+    `aws-lc-rs` (its C build needs a C compiler; it builds on Windows and in the Docker image).
   - **SvelteKit 3** (not 2): no `svelte.config.js` (options go to `sveltekit({...})` in
     `vite.config.ts`); `$lib` is replaced by `#lib` (package.json `imports`, explicit extensions:
     `#lib/api.ts`); `$app/environment` → `$app/env`; `$app/stores` is gone (use `$app/state`);
@@ -229,6 +251,13 @@ and align this project's copies with it:
 - The Docker image starts as root on purpose: `docker/entrypoint.sh` chowns `DATA_DIR` to
   `PUID:PGID` (default 10001) and drops privileges with `setpriv`. Don't add `USER` to the
   Dockerfile; the server itself never runs as root.
+- SQLite `sqlite::memory:` is one database per pooled connection: tests and tools use a file
+  (`db::testing::TestDb`). SQLite allows one writer: keep write transactions short.
+- `TEST_DATABASE_URL` must point at a throwaway PostgreSQL server: each test creates its own
+  `cloudit_test_*` database there (`make test-ha` removes the whole container afterwards).
+- Official MinIO Docker images are no longer published: the compose files and CI use the
+  community build `pgsty/minio` (+ `pgsty/mc`). GitHub service containers can't take a command,
+  so CI starts MinIO with `docker run`.
 - The web app is an SPA (`ssr = false`, adapter-static `fallback: 'index.html'`); in production the
   Rust server serves `WEB_DIR` and falls back to `index.html`, while unknown `/api/*` paths answer a
   JSON `not_found`.

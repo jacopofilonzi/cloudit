@@ -1,5 +1,7 @@
-# Single-instance deployment: SQLite and filesystem storage under ./data.
-# (The HA setup with PostgreSQL, S3-compatible storage and Redis comes later.)
+# Single-instance deployment: SQLite database and filesystem blobs under ./data
+# (/data in the container: cloudit.db, blobs/, backups/). Settings go in .env (see
+# .env.example). For several instances behind a load balancer (PostgreSQL, S3-compatible
+# storage, Valkey/Redis) see docker-compose.ha.yml.
 services:
   cloudit:
     build: .

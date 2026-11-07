@@ -5,10 +5,11 @@ users' folders; a desktop client (planned) syncs local folders with it, and a we
 server as a static SPA) manages accounts, scopes and folders. The UIs talk to the server only
 through its JSON API under `/api/v1`, whose TypeScript types are generated from the Rust ones.
 
-Current state (milestone 2): the server exposes health probes and serves the web SPA; the web page
-shows the server status. `cloudit-core` implements the sync formats (chunking, chunk encoding,
-manifest, path rules, diff; see "Sync formats"), not used by the server yet. Everything under
-"Planned design" is not implemented yet.
+Current state (milestone 3a): the server has its infrastructure (database with migrations and
+leases, blob storage, optional Redis with a rate limiter, readiness checks), exposes health probes
+and serves the web SPA; the web page shows the server status. `cloudit-core` implements the sync
+formats (chunking, chunk encoding, manifest, path rules, diff; see "Sync formats"), not used by
+the server yet. Everything under "Planned design" is not implemented yet.
 
 ```text
 repo/
@@ -20,14 +21,18 @@ repo/
 ├── packages/
 │   ├── api-types/        `@cloudit/api-types` — TS types generated from Rust by ts-rs
 │   └── ui/               `@cloudit/ui` — shared Svelte components, theme tokens, i18n EN/IT
-├── scripts/              node scripts used by the Makefile (dev, types, set-version, help, clean)
+├── scripts/              node scripts used by the Makefile (dev, types, set-version, help, clean, test-ha)
 ├── .cargo/config.toml    ts-rs env (`TS_RS_EXPORT_DIR`, `TS_RS_LARGE_INT`)
-├── .github/workflows/    ci.yml (make check, ubuntu + windows), release.yml (ghcr image on v*.*.* tags)
+├── .github/workflows/    ci.yml (make check on ubuntu + windows; server tests with PostgreSQL/MinIO/Valkey),
+│                         release.yml (ghcr image on v*.*.* tags)
 ├── Cargo.toml            Cargo workspace (edition 2024, shared version, clippy lints)
 ├── package.json          pnpm workspace root (lint/format tooling, `packageManager`)
 ├── Dockerfile            stages: web (node, pnpm build) → server (rust, release build) → runtime (debian trixie-slim)
 ├── docker/entrypoint.sh  runs as root: chowns DATA_DIR to PUID:PGID, then setpriv → cloudit-server
-├── docker-compose.yml    single instance, `./data:/data`, port 8080
+├── docker/Caddyfile      HA load balancer: round robin over the replicas, health check on /ready
+├── docker-compose.yml    single instance, `./data:/data`, port 8080 (SQLite + fs blobs)
+├── docker-compose.ha.yml HA example: 2 replicas + Caddy (:8080), postgres:18, MinIO (pgsty/minio)
+│                         + one-shot bucket job, valkey:9; also the services of `make test-ha`
 ├── .env.example          every supported env var, documented; `.env` is git-ignored
 └── Makefile              dev commands (run `make help`)
 ```
@@ -40,7 +45,8 @@ eslint-plugin-svelte), `clippy.toml` (unwrap/expect allowed in tests only), `rus
 ```text
 crates/core/src/
 ├── lib.rs            crate docs: shared sync engine, no I/O
-├── protocol.rs       API types: HealthResponse, ErrorCode, ApiErrorBody (ts-rs export under cfg(test))
+├── protocol.rs       API types: HealthResponse, ReadyResponse (+ ReadyStatus, ReadyComponents,
+│                     ComponentStatus), ErrorCode, ApiErrorBody (ts-rs export under cfg(test))
 ├── error.rs          HashParseError, PathError, ChunkerError, ChunkError, ManifestError (thiserror;
 │                     variants are stable kinds, `code()` gives a stable snake_case string)
 ├── hash.rs           ChunkHash, ManifestHash: SHA-256 newtypes, strict lowercase-hex FromStr/Display/serde
@@ -65,17 +71,34 @@ summarizes them.
 
 ```text
 crates/server/src/
-├── main.rs           wiring: config → logging → router → serve with graceful shutdown;
-│                     `cloudit-server healthcheck` runs the probe instead
+├── main.rs           wiring: config → logging → AppState::init → router → serve with graceful
+│                     shutdown; `cloudit-server healthcheck` runs the probe instead
 ├── lib.rs            module list (library so tests can build the router)
+├── state.rs          AppState: config, db, BlobStore, Option<Redis>, RateLimiter, instance_id, Leases;
+│                     `init` connects + migrates (fatal on error); Redis is never fatal
 ├── config/
 │   ├── mod.rs        Config read once from env (`from_env` / testable `from_lookup`)
+│   ├── env.rs        typed getters (empty = unset), bool and duration (`900`, `15m`, `1h`, `1d`)
+│   ├── storage.rs    StorageConfig (`Fs { dir }` | `S3(S3Config)`), validation of the S3_* variables
 │   └── secret.rs     `Secret`: redacted string (Debug/Display print `***`, no Serialize)
+├── db/
+│   ├── mod.rs        connect (SQLite pragmas, pool sizes), ping; table conventions in the module docs
+│   ├── migrate.rs    startup migrations: SQLite VACUUM INTO backup, PostgreSQL advisory lock
+│   ├── migrations/   Migrator + one file per migration (append-only, portable schema builder)
+│   ├── lease.rs      Leases: try_acquire / renew / release, one atomic statement each
+│   └── testing.rs    tests only: TestDb (SQLite temp file, or a fresh database on TEST_DATABASE_URL)
+├── storage/
+│   ├── mod.rs        BlobStore over object_store: put, get (stream), get_bytes, head, delete, list,
+│   │                 presign_put / presign_get, check (readiness)
+│   └── tests.rs      fs round trip, offline presign checks, live S3 test (TEST_S3_*)
+├── cache/
+│   ├── mod.rs        Redis: lazy ConnectionManager, `run` with 2 s timeout + 5 s backoff, rate-limited warnings
+│   └── rate_limit.rs RateLimiter: fixed window in Redis (shared) or in memory (fallback)
 ├── errors/mod.rs     ApiError → JSON `{code, message}` with HTTP status; internal causes logged, not returned
 ├── routes/
-│   ├── mod.rs        router: probes, `/api/v1`, JSON 404 under `/api`, SPA fallback from WEB_DIR; AppState
-│   ├── health.rs     /health (liveness), /ready (readiness)
-│   └── tests.rs      router tests (tower `oneshot`)
+│   ├── mod.rs        router: probes, `/api/v1`, JSON 404 under `/api`, SPA fallback from WEB_DIR
+│   ├── health.rs     /health (liveness), /ready (database + storage checks, Redis reported)
+│   └── tests.rs      router tests (tower `oneshot`, real AppState on temp dirs)
 ├── logging.rs        tracing subscriber (env filter; pretty or json)
 ├── shutdown.rs       Ctrl+C / SIGTERM future (the only OS-specific code)
 └── healthcheck.rs    HTTP/1.0 GET /health on 127.0.0.1:$PORT, std only (Docker HEALTHCHECK)
@@ -86,8 +109,10 @@ crates/server/src/
 Probes at the root (not under the base path):
 
 - `GET /health` → `HealthResponse {status: "ok", version}`: liveness, never checks dependencies.
-- `GET /ready` → `HealthResponse`: readiness; always ok for now, will check DB/storage (503
-  `unavailable`).
+- `GET /ready` → `ReadyResponse {status: "ok" | "unavailable", version, components: {database,
+  storage, redis}}`, each component `ok` / `unavailable` / `disabled`. 200 only if the database
+  (`SELECT 1`) and storage (fs: root writable; s3: bucket listable) are `ok`, else 503 with the
+  same body. Redis is reported but never makes it fail. Each check has a 3 s timeout.
 
 All under `/api/v1`:
 
@@ -102,8 +127,31 @@ logs only.
 
 ### Data and state
 
-Nothing is stored yet. `DATA_DIR` is reserved for the SQLite database and filesystem blobs (see
-"Planned design").
+- **Database** (SeaORM 2, `DATABASE_URL`): SQLite `<DATA_DIR>/cloudit.db` by default (WAL,
+  `foreign_keys=ON`, `synchronous=NORMAL`, 5 s busy timeout), or PostgreSQL. Conventions for
+  every table (module docs of `db`): UUID v7 ids in `uuid` columns (native on PostgreSQL,
+  16-byte BLOB on SQLite: always bind `Uuid`, never strings); UTC `chrono::DateTime<Utc>` in
+  `timestamp_with_time_zone` columns (`timestamptz` / RFC 3339 text that sorts correctly);
+  snake_case plural table names; each migration runs in a transaction.
+- **Tables**: `leases(name TEXT PK, holder TEXT, expires_at TIMESTAMPTZ)`, plus SeaORM's
+  `seaql_migrations`.
+- **Migrations** run at startup (`db/migrate.rs`). SQLite: if any are pending and the database
+  isn't new, `VACUUM INTO <DATA_DIR>/backups/cloudit-<UTC YYYYMMDDTHHMMSSZ>-pre-migrate.db`
+  first; a failed backup aborts startup; backups are never pruned automatically. PostgreSQL:
+  under `pg_advisory_lock(0x636c6f7564697400)`, so concurrent instances migrate once; no
+  automatic backup (the operator runs `pg_dump`). Unknown applied migrations (a downgrade) abort.
+- **Leases** (`db/lease.rs`): `INSERT … ON CONFLICT (name) DO UPDATE … WHERE holder = me OR
+  expires_at < now`, success = 1 row affected; `renew` fails once expired. Holder = the random
+  per-process `instance_id`. Instance clocks must be in sync. Redis is deliberately not used for
+  leases (one mechanism, always available).
+- **Blobs** (`object_store` 0.14, `STORAGE`): `fs` = `LocalFileSystem` at `STORAGE_FS_DIR`
+  (atomic writes, fsync on); `s3` = `AmazonS3` (path-style by default, `http` endpoints
+  allowed). Keys must be canonical object paths. Presigned URLs only with `S3_PRESIGN=true`;
+  when `S3_PUBLIC_ENDPOINT` is set, a second signer-only `AmazonS3` built with it signs the
+  URLs (SigV4 signs the host), so they work for clients.
+- **Redis** (`REDIS_URL`, optional): Redis or Valkey via the `redis` crate's lazy
+  `ConnectionManager`. Used now by the rate limiter (keys `cloudit:rl:<key>:<window>`); any
+  error or 2 s timeout degrades to the in-memory path and skips Redis for 5 s.
 
 ### Configuration
 
@@ -119,6 +167,20 @@ Read once at startup (`config/mod.rs`); empty values count as unset. Documented 
 | `LOG_LEVEL` | `info` | Log level, used when `RUST_LOG` is unset |
 | `RUST_LOG` | unset | Full tracing filter; wins over `LOG_LEVEL` |
 | `LOG_FORMAT` | `pretty` | `pretty` or `json` (Docker: `json`) |
+| `DATABASE_URL` | unset | `sqlite:…` or `postgres://…` (secret); unset = SQLite `<DATA_DIR>/cloudit.db` |
+| `DB_MAX_CONNECTIONS` | 8 (SQLite) / 10 (PostgreSQL) | Pool size per instance |
+| `STORAGE` | `fs` | `fs` or `s3` |
+| `STORAGE_FS_DIR` | `<DATA_DIR>/blobs` | Blob directory for `fs` (created) |
+| `S3_ENDPOINT` | unset (AWS) | S3 API endpoint as seen by the server; `http://` allowed |
+| `S3_REGION` | `us-east-1` | |
+| `S3_BUCKET` | — | Required with `STORAGE=s3`; must exist |
+| `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | unset | Both or neither (then AWS environment credentials); the secret is a `Secret` |
+| `S3_FORCE_PATH_STYLE` | `true` | Path-style URLs (MinIO, Garage); `false` = virtual-hosted |
+| `S3_PRESIGN` | `false` | Hand out presigned URLs; requires `STORAGE=s3` |
+| `S3_PUBLIC_ENDPOINT` | `S3_ENDPOINT` | Endpoint as reached by clients; presigned URLs are signed for it |
+| `S3_PRESIGN_TTL` | `15m` | Presigned URL validity (`900`, `15m`, `1h`…; 1 s to 7 d) |
+| `REDIS_URL` | unset | `redis://…` (secret), Redis or Valkey; optional, never fatal; `rediss://` unsupported |
+| `TEST_DATABASE_URL`, `TEST_S3_*`, `TEST_REDIS_URL` | unset | Tests only (`make test-ha`, CI): run the server tests against PostgreSQL / S3 / Redis instead of SQLite and skipping |
 | `PUID` / `PGID` | `10001` | Docker only, read by the entrypoint (not the server): user/group the server runs as and owner of `DATA_DIR` |
 
 ## Frontend
@@ -247,30 +309,29 @@ set), `missing_chunks(is_available)` (sorted, deduplicated), `logical_size` (sum
 `make help` lists everything. Key ones: `install`, `dev` (server + Vite, `scripts/dev.mjs` stops both
 together), `dev-server`, `dev-web`, `types`, `fmt`, `lint`, `test`, `check` (fmt-check, clippy -D
 warnings, eslint, svelte-check, cargo test, vitest, type freshness, web build), `build`, `docker`,
-`up`/`down`, `clean`, `version V=x.y.z`.
+`up`/`down`, `up-ha`/`down-ha` (HA example stack; `down-ha` keeps volumes), `test-ha`
+(`scripts/test-ha.mjs`: postgres + minio + valkey from `docker-compose.ha.yml` as project
+`cloudit-test` on random 127.0.0.1 ports, `cargo test -p cloudit-server` with the `TEST_*` env, then
+`down -v`; `--keep` leaves them running), `clean`, `version V=x.y.z`.
 
 ## Planned design (NOT implemented yet)
 
 Decided design for the next milestones, kept here so they don't have to re-derive it. Move each part
 into the sections above as it gets built.
 
-Milestones: 1 scaffolding (done) · 2 core chunking/manifest (done) · 3 server DB/storage/auth/devices ·
+Milestones: 1 scaffolding (done) · 2 core chunking/manifest (done) · 3a server infrastructure
+(DB, storage, Redis, readiness: done) · 3b auth/users/devices ·
 4 scopes/folders/sharing/sync protocol/events/jobs · 5 web UI (from mockups) · 6 desktop manual
 sync + conflicts · 7 desktop auto sync/tray/autostart/installers.
 
 Planned layout additions: `apps/desktop` (Tauri 2 + Svelte 5, milestone 6; OS code in a `platform/`
-module), `crates/server/src/db/migrations/` (migrations, append-only).
+module).
 
 ### Storage and deployment
 
-- Database via SeaORM, chosen by `DATABASE_URL`: SQLite (single instance) or PostgreSQL (HA).
-- Blob storage via `object_store`, chosen by `STORAGE=fs|s3`. With S3, optional presigned URLs for
-  direct client upload/download (`S3_PRESIGN`, `S3_PUBLIC_ENDPOINT`), otherwise proxied through the
-  server.
-- Optional Redis (`REDIS_URL`): pub/sub events across instances, rate limiting, job leases. Never
-  fails a request: degrades to DB lease / in-memory limits / polling.
-- Server is stateless; HA = several instances + PostgreSQL + S3 (+ Redis). An HA compose file
-  (Postgres, MinIO, Redis) comes in milestone 3.
+Database, blob storage, Redis, the rate limiter and the HA compose are implemented (see "Data and
+state"). Still planned: Redis pub/sub for events across instances (fallback: polling); background
+jobs on top of `db::lease` (GC, retention); presigned or proxied blob transfer in the sync API.
 
 ### Data model
 
