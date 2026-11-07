@@ -32,6 +32,11 @@ export const en = {
   'error.setup_already_done': 'The server has already been set up.',
   'error.setup_token_invalid': 'Wrong setup token.',
   'error.last_admin': 'At least one active administrator must remain.',
+  'error.provider_not_found': 'This sign-in provider does not exist.',
+  'error.provider_id_taken': 'This provider id is already in use (also by a deleted provider).',
+  'error.provider_discovery_failed':
+    'Cannot read the configuration of the sign-in provider. Check the issuer URL.',
+  'error.provider_error': 'The sign-in provider did not answer as expected. Try again later.',
   'error.network': 'Cannot reach the server.',
   'error.unknown': 'Unexpected error.'
 } as const;

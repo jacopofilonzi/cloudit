@@ -5,4 +5,4 @@
  * translated text; the `message` next to it is English, for logs only.
  * Never rename or reuse a code: clients match on it.
  */
-export type ErrorCode = "bad_request" | "not_found" | "unavailable" | "internal" | "unauthorized" | "forbidden" | "invalid_credentials" | "account_disabled" | "registration_closed" | "invite_invalid" | "token_invalid" | "email_taken" | "validation_failed" | "rate_limited" | "csrf_failed" | "setup_required" | "setup_already_done" | "setup_token_invalid" | "last_admin";
+export type ErrorCode = "bad_request" | "not_found" | "unavailable" | "internal" | "unauthorized" | "forbidden" | "invalid_credentials" | "account_disabled" | "registration_closed" | "invite_invalid" | "token_invalid" | "email_taken" | "validation_failed" | "rate_limited" | "csrf_failed" | "setup_required" | "setup_already_done" | "setup_token_invalid" | "last_admin" | "provider_not_found" | "provider_id_taken" | "provider_discovery_failed" | "provider_error";

@@ -1,9 +1,10 @@
 //! [`AppState`]: the shared handles every request needs, built once at startup.
 //!
 //! Nothing correctness-relevant may live here in memory: instances must stay
-//! interchangeable (HA). Two exceptions, harmless by design: the rate limiter's
-//! in-memory fallback (it only weakens abuse protection) and `setup_done`, a cache of a
-//! fact that can never revert (setup, once completed, stays completed).
+//! interchangeable (HA). Exceptions, harmless by design: the rate limiter's in-memory
+//! fallback (it only weakens abuse protection), `setup_done`, a cache of a fact that
+//! can never revert (setup, once completed, stays completed), and the OIDC discovery
+//! cache in `idp` (refetchable public documents).
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -19,6 +20,7 @@ use crate::crypto::key::KeySource;
 use crate::crypto::{self, SecretBox};
 use crate::db;
 use crate::db::lease::Leases;
+use crate::idp::Idp;
 use crate::storage::BlobStore;
 
 /// `PUBLIC_URL` if set, else the `public_url` setting (also used by the CLI).
@@ -47,6 +49,8 @@ pub struct AppState {
     pub setup_done: Arc<AtomicBool>,
     /// Encryption with the server key (provider client secrets).
     pub secrets: SecretBox,
+    /// Identity providers: HTTP client and OIDC discovery cache (a cache only).
+    pub idp: Idp,
 }
 
 impl AppState {
@@ -125,6 +129,7 @@ impl AppState {
             leases,
             setup_done: Arc::new(AtomicBool::new(!setup_status.is_pending())),
             secrets,
+            idp: Idp::new()?,
         })
     }
 }

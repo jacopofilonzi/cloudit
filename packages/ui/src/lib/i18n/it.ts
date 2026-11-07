@@ -32,6 +32,12 @@ export const it: Dictionary = {
   'error.setup_already_done': 'Il server è già stato configurato.',
   'error.setup_token_invalid': 'Token di configurazione errato.',
   'error.last_admin': 'Deve rimanere almeno un amministratore attivo.',
+  'error.provider_not_found': 'Questo provider di accesso non esiste.',
+  'error.provider_id_taken': 'Questo id di provider è già in uso (anche da un provider eliminato).',
+  'error.provider_discovery_failed':
+    "Impossibile leggere la configurazione del provider di accesso. Controlla l'URL dell'issuer.",
+  'error.provider_error':
+    'Il provider di accesso non ha risposto come previsto. Riprova più tardi.',
   'error.network': 'Impossibile raggiungere il server.',
   'error.unknown': 'Errore imprevisto.'
 };

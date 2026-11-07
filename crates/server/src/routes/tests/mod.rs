@@ -1,7 +1,9 @@
 mod admin;
 mod auth;
 mod devices;
+mod fake_idp;
 mod me;
+mod providers;
 mod secret_key;
 mod setup;
 mod support;

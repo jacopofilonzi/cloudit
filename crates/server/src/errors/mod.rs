@@ -55,6 +55,14 @@ pub enum ApiError {
     SetupTokenInvalid,
     #[error("this would leave no enabled admin")]
     LastAdmin,
+    #[error("identity provider not found")]
+    ProviderNotFound,
+    #[error("provider id already used")]
+    ProviderIdTaken,
+    #[error("identity provider discovery failed")]
+    ProviderDiscoveryFailed,
+    #[error("identity provider error")]
+    ProviderError,
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -89,6 +97,10 @@ impl ApiError {
             Self::SetupAlreadyDone => ErrorCode::SetupAlreadyDone,
             Self::SetupTokenInvalid => ErrorCode::SetupTokenInvalid,
             Self::LastAdmin => ErrorCode::LastAdmin,
+            Self::ProviderNotFound => ErrorCode::ProviderNotFound,
+            Self::ProviderIdTaken => ErrorCode::ProviderIdTaken,
+            Self::ProviderDiscoveryFailed => ErrorCode::ProviderDiscoveryFailed,
+            Self::ProviderError => ErrorCode::ProviderError,
             Self::Internal(_) => ErrorCode::Internal,
         }
     }
@@ -99,7 +111,7 @@ impl ApiError {
             Self::BadRequest(_) | Self::InviteInvalid | Self::TokenInvalid => {
                 StatusCode::BAD_REQUEST
             }
-            Self::NotFound => StatusCode::NOT_FOUND,
+            Self::NotFound | Self::ProviderNotFound => StatusCode::NOT_FOUND,
             Self::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::Unauthorized | Self::InvalidCredentials => StatusCode::UNAUTHORIZED,
             Self::Forbidden
@@ -107,9 +119,12 @@ impl ApiError {
             | Self::RegistrationClosed
             | Self::CsrfFailed
             | Self::SetupTokenInvalid => StatusCode::FORBIDDEN,
-            Self::EmailTaken | Self::SetupRequired | Self::SetupAlreadyDone | Self::LastAdmin => {
-                StatusCode::CONFLICT
-            }
+            Self::EmailTaken
+            | Self::SetupRequired
+            | Self::SetupAlreadyDone
+            | Self::LastAdmin
+            | Self::ProviderIdTaken => StatusCode::CONFLICT,
+            Self::ProviderDiscoveryFailed | Self::ProviderError => StatusCode::BAD_GATEWAY,
             Self::Validation { .. } => StatusCode::UNPROCESSABLE_ENTITY,
             Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,

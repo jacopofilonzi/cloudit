@@ -37,7 +37,11 @@ pub async fn config(State(state): State<AppState>) -> Result<Json<AuthConfig>, A
     Ok(Json(AuthConfig {
         setup_required: setup_pending(&state).await?,
         registration_mode: settings::registration_mode(&state.db).await?,
-        providers: Vec::new(),
+        providers: crate::idp::store::list(&state.db, true)
+            .await?
+            .iter()
+            .map(crate::idp::store::Provider::public)
+            .collect(),
     }))
 }
 

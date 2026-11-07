@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::Sensitive;
+use super::{ProviderKind, Sensitive};
 
 /// Who may create an account (`registration_mode` setting).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,12 +19,13 @@ pub enum RegistrationMode {
     Closed,
 }
 
-/// A sign-in provider shown on the login page (filled from milestone 3c on).
+/// A sign-in provider shown on the login page: enabled, not deleted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct AuthProvider {
-    /// Durable provider id.
+    /// Durable provider id (used in `/api/v1/auth/oauth/{id}/start`).
     pub id: String,
+    pub kind: ProviderKind,
     pub display_name: String,
     /// Preset icon name, or `generic`.
     pub icon: String,
@@ -36,6 +37,7 @@ pub struct AuthProvider {
 pub struct AuthConfig {
     pub setup_required: bool,
     pub registration_mode: RegistrationMode,
+    /// In display order.
     pub providers: Vec<AuthProvider>,
 }
 

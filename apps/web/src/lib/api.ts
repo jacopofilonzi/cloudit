@@ -48,7 +48,11 @@ const SERVER_CODES: Record<ErrorCode, true> = {
   setup_required: true,
   setup_already_done: true,
   setup_token_invalid: true,
-  last_admin: true
+  last_admin: true,
+  provider_not_found: true,
+  provider_id_taken: true,
+  provider_discovery_failed: true,
+  provider_error: true
 };
 
 function isErrorBody(value: unknown): value is ApiErrorBody {

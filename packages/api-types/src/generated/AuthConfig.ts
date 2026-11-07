@@ -5,4 +5,8 @@ import type { RegistrationMode } from "./RegistrationMode";
 /**
  * `GET /api/v1/auth/config`: what the login page needs; no authentication.
  */
-export type AuthConfig = { setup_required: boolean, registration_mode: RegistrationMode, providers: Array<AuthProvider>, };
+export type AuthConfig = { setup_required: boolean, registration_mode: RegistrationMode, 
+/**
+ * In display order.
+ */
+providers: Array<AuthProvider>, };

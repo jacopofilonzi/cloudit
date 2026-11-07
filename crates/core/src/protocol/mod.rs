@@ -13,18 +13,21 @@
 //! - [`auth`]: first-run setup, registration, login, password reset;
 //! - [`me`]: the signed-in user's profile, password and sessions;
 //! - [`devices`]: desktop client login (loopback + PKCE) and device management;
-//! - [`admin`]: user management, invites, password resets and server settings.
+//! - [`admin`]: user management, invites, password resets and server settings;
+//! - [`providers`]: identity providers (presets, admin configuration).
 
 mod admin;
 mod auth;
 mod devices;
 mod me;
+mod providers;
 mod sensitive;
 
 pub use admin::*;
 pub use auth::*;
 pub use devices::*;
 pub use me::*;
+pub use providers::*;
 pub use sensitive::Sensitive;
 
 use serde::{Deserialize, Serialize};
@@ -144,6 +147,16 @@ pub enum ErrorCode {
     SetupTokenInvalid,
     /// The change would leave no enabled admin (409).
     LastAdmin,
+    /// No identity provider with this id (or it was deleted) (404).
+    ProviderNotFound,
+    /// A provider with this id exists or existed (ids are never reused) (409).
+    ProviderIdTaken,
+    /// The provider's OIDC discovery document or keys could not be fetched or are
+    /// invalid (502).
+    ProviderDiscoveryFailed,
+    /// The identity provider failed or answered something unusable (token exchange,
+    /// ID token or user info); details are only in the server logs (502).
+    ProviderError,
 }
 
 /// JSON body of every API error response.

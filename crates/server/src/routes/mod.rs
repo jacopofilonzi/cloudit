@@ -20,6 +20,7 @@ mod devices;
 mod extract;
 mod health;
 mod me;
+mod providers;
 mod setup;
 
 use axum::Router;
@@ -66,6 +67,16 @@ pub fn router(state: AppState) -> Router {
             "/admin/settings",
             get(admin::get_settings).patch(admin::update_settings),
         )
+        .route(
+            "/admin/providers",
+            get(providers::list).post(providers::create),
+        )
+        .route("/admin/providers/presets", get(providers::presets))
+        .route(
+            "/admin/providers/{id}",
+            patch(providers::update).delete(providers::delete),
+        )
+        .route("/admin/providers/{id}/test", post(providers::test))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::auth::middleware::layer,

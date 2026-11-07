@@ -23,6 +23,10 @@ const MESSAGE_KEYS: Record<ClientErrorCode, MessageKey> = {
   setup_already_done: 'error.setup_already_done',
   setup_token_invalid: 'error.setup_token_invalid',
   last_admin: 'error.last_admin',
+  provider_not_found: 'error.provider_not_found',
+  provider_id_taken: 'error.provider_id_taken',
+  provider_discovery_failed: 'error.provider_discovery_failed',
+  provider_error: 'error.provider_error',
   network: 'error.network',
   unknown: 'error.unknown'
 };

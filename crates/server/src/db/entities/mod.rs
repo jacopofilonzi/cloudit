@@ -5,6 +5,7 @@
 //! models derive `Debug`. `setup_state` has no entity: its token is plaintext (the CLI
 //! prints it) and is handled as a `Secret` in `setup`.
 
+pub mod auth_providers;
 pub mod device_auth_codes;
 pub mod devices;
 pub mod invites;
