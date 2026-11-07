@@ -47,6 +47,8 @@ export const en = {
   'error.identity_in_use': 'This account is already linked to another cloudit user.',
   'error.identity_not_linked': 'This account is not linked to any cloudit user.',
   'error.onboarding_expired': 'This sign-up has expired. Sign in again.',
+  'error.last_login_method':
+    'This is your last way to sign in: set a password or link another account first.',
   'error.network': 'Cannot reach the server.',
   'error.unknown': 'Unexpected error.'
 } as const;

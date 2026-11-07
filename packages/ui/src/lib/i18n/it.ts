@@ -49,6 +49,8 @@ export const it: Dictionary = {
   'error.identity_in_use': 'Questo account è già collegato a un altro utente di cloudit.',
   'error.identity_not_linked': 'Questo account non è collegato a nessun utente di cloudit.',
   'error.onboarding_expired': 'Questa registrazione è scaduta. Accedi di nuovo.',
+  'error.last_login_method':
+    "È l'ultimo modo che hai per accedere: imposta una password o collega prima un altro account.",
   'error.network': 'Impossibile raggiungere il server.',
   'error.unknown': 'Errore imprevisto.'
 };

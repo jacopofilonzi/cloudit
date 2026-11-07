@@ -79,6 +79,8 @@ pub enum ApiError {
     IdentityNotLinked,
     #[error("pending sign-up missing or expired")]
     OnboardingExpired,
+    #[error("this is the last way to sign in")]
+    LastLoginMethod,
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -125,6 +127,7 @@ impl ApiError {
             Self::IdentityInUse => ErrorCode::IdentityInUse,
             Self::IdentityNotLinked => ErrorCode::IdentityNotLinked,
             Self::OnboardingExpired => ErrorCode::OnboardingExpired,
+            Self::LastLoginMethod => ErrorCode::LastLoginMethod,
             Self::Internal(_) => ErrorCode::Internal,
         }
     }
@@ -154,7 +157,8 @@ impl ApiError {
             | Self::ProviderIdTaken
             | Self::PublicUrlRequired
             | Self::IdentityInUse
-            | Self::IdentityNotLinked => StatusCode::CONFLICT,
+            | Self::IdentityNotLinked
+            | Self::LastLoginMethod => StatusCode::CONFLICT,
             Self::OnboardingExpired => StatusCode::GONE,
             Self::ProviderDiscoveryFailed | Self::ProviderError => StatusCode::BAD_GATEWAY,
             Self::Validation { .. } => StatusCode::UNPROCESSABLE_ENTITY,

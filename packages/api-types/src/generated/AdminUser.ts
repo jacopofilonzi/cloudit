@@ -15,4 +15,9 @@ admin: boolean,
 /**
  * Admin granted by identity-provider groups (milestone 3c; read-only).
  */
-admin_from_groups: boolean, disabled_at: string | null, has_password: boolean, created_at: string, };
+admin_from_groups: boolean, disabled_at: string | null, has_password: boolean, 
+/**
+ * Ids of the providers this account has identities at (sorted; deleted
+ * providers included).
+ */
+identity_providers: Array<string>, created_at: string, };

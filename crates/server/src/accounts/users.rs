@@ -123,6 +123,18 @@ pub async fn update_profile(
     }
 }
 
+/// Sets `admin_from_groups` of a just-created account (no last-admin guard needed: it
+/// only grants). Changes after a sign-in go through `admin::set_admin_from_groups`.
+pub async fn grant_admin_from_groups(db: &impl ConnectionTrait, id: Uuid) -> anyhow::Result<()> {
+    users::Entity::update_many()
+        .col_expr(users::Column::AdminFromGroups, Expr::value(true))
+        .filter(users::Column::Id.eq(id))
+        .exec(db)
+        .await
+        .context("setting admin_from_groups")?;
+    Ok(())
+}
+
 /// A page of accounts, oldest first, and the total count.
 pub async fn list(
     db: &impl ConnectionTrait,

@@ -7,12 +7,12 @@ use std::collections::HashMap;
 use anyhow::Context as _;
 use sea_orm::sea_query::Expr;
 use sea_orm::{
-    ActiveValue::Set, ColumnTrait as _, ConnectionTrait, EntityTrait as _, QueryFilter as _,
-    QueryOrder as _,
+    ActiveValue::Set, ColumnTrait as _, ConnectionTrait, DatabaseConnection, EntityTrait as _,
+    QueryFilter as _, QueryOrder as _, TransactionTrait as _,
 };
 use uuid::Uuid;
 
-use crate::db::entities::identities;
+use crate::db::entities::{identities, users};
 use crate::errors::ApiError;
 use crate::idp::claims::ExternalIdentity;
 
@@ -122,4 +122,48 @@ pub async fn provider_ids_by_user(
         ids.sort();
     }
     Ok(map)
+}
+
+/// Unlinks identity `id` of `user_id`: `not_found` if it isn't theirs,
+/// `last_login_method` if afterwards the account would have no password and no other
+/// identity on an enabled provider. Atomic: the first statement writes the user's row,
+/// which serializes concurrent unlinks of one account (row lock on PostgreSQL, the
+/// write lock on SQLite), so two requests can't each remove "the other" method.
+pub async fn unlink(db: &DatabaseConnection, user_id: Uuid, id: Uuid) -> Result<(), ApiError> {
+    let tx = db.begin().await.context("starting a transaction")?;
+    users::Entity::update_many()
+        .col_expr(
+            users::Column::UpdatedAt,
+            Expr::col(users::Column::UpdatedAt),
+        )
+        .filter(users::Column::Id.eq(user_id))
+        .exec(&tx)
+        .await
+        .context("locking the account")?;
+    let deleted = identities::Entity::delete_many()
+        .filter(identities::Column::Id.eq(id))
+        .filter(identities::Column::UserId.eq(user_id))
+        .exec(&tx)
+        .await
+        .context("unlinking an identity")?;
+    if deleted.rows_affected != 1 {
+        return Err(ApiError::NotFound);
+    }
+    let user = crate::accounts::users::find(&tx, user_id)
+        .await?
+        .ok_or(ApiError::Unauthorized)?;
+    let active: Vec<String> = crate::idp::store::list(&tx, true)
+        .await?
+        .into_iter()
+        .map(|p| p.id)
+        .collect();
+    let other_method = list_for_user(&tx, user_id)
+        .await?
+        .iter()
+        .any(|i| active.contains(&i.provider_id));
+    if user.password_hash.is_none() && !other_method {
+        return Err(ApiError::LastLoginMethod);
+    }
+    tx.commit().await.context("committing the unlink")?;
+    Ok(())
 }

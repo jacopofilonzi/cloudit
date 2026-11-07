@@ -4,6 +4,7 @@ mod devices;
 mod fake_idp;
 mod me;
 mod oauth;
+mod onboarding;
 mod providers;
 mod secret_key;
 mod setup;

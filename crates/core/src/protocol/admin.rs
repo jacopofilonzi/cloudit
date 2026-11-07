@@ -20,6 +20,9 @@ pub struct AdminUser {
     pub admin_from_groups: bool,
     pub disabled_at: Option<String>,
     pub has_password: bool,
+    /// Ids of the providers this account has identities at (sorted; deleted
+    /// providers included).
+    pub identity_providers: Vec<String>,
     pub created_at: String,
 }
 

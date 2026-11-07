@@ -50,8 +50,17 @@ pub async fn find_usable(
     db: &impl ConnectionTrait,
     token: &str,
 ) -> anyhow::Result<Option<invites::Model>> {
+    find_usable_by_hash(db, &tokens::hash_token(token)).await
+}
+
+/// [`find_usable`] by the token's stored hash (an invite carried through a provider
+/// sign-in keeps only the hash).
+pub async fn find_usable_by_hash(
+    db: &impl ConnectionTrait,
+    token_hash: &str,
+) -> anyhow::Result<Option<invites::Model>> {
     let invite = invites::Entity::find()
-        .filter(invites::Column::TokenHash.eq(tokens::hash_token(token)))
+        .filter(invites::Column::TokenHash.eq(token_hash))
         .one(db)
         .await
         .context("loading an invite")?;

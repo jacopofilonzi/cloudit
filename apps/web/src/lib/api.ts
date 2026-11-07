@@ -60,7 +60,8 @@ const SERVER_CODES: Record<ErrorCode, true> = {
   group_not_allowed: true,
   identity_in_use: true,
   identity_not_linked: true,
-  onboarding_expired: true
+  onboarding_expired: true,
+  last_login_method: true
 };
 
 function isErrorBody(value: unknown): value is ApiErrorBody {

@@ -21,6 +21,7 @@ mod extract;
 mod health;
 mod me;
 mod oauth;
+mod onboarding;
 mod providers;
 mod setup;
 
@@ -48,6 +49,18 @@ pub fn router(state: AppState) -> Router {
         .route("/me/password", post(me::change_password))
         .route("/me/sessions", get(me::list_sessions))
         .route("/me/sessions/{id}", delete(me::delete_session))
+        .route("/me/identities", get(me::list_identities))
+        .route("/me/identities/{id}", delete(me::unlink_identity))
+        .route("/auth/onboarding", get(onboarding::info))
+        .route("/auth/onboarding/create", post(onboarding::create))
+        .route(
+            "/auth/onboarding/link",
+            post(onboarding::link_with_password),
+        )
+        .route(
+            "/auth/onboarding/link/{provider}/start",
+            post(onboarding::link_with_provider),
+        )
         .route("/devices", get(devices::list))
         .route("/devices/authorize", post(devices::authorize))
         .route("/devices/token", post(devices::token))

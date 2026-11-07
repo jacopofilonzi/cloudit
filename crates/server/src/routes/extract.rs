@@ -45,7 +45,8 @@ pub fn profile(user: &users::Model) -> UserProfile {
     }
 }
 
-pub fn admin_user(user: &users::Model) -> AdminUser {
+/// `identity_providers`: provider ids of the user's identities (sorted).
+pub fn admin_user(user: &users::Model, identity_providers: Vec<String>) -> AdminUser {
     AdminUser {
         id: user.id.to_string(),
         email: user.email.clone(),
@@ -56,6 +57,7 @@ pub fn admin_user(user: &users::Model) -> AdminUser {
         admin_from_groups: user.admin_from_groups,
         disabled_at: rfc3339_opt(user.disabled_at),
         has_password: user.password_hash.is_some(),
+        identity_providers,
         created_at: rfc3339(user.created_at),
     }
 }

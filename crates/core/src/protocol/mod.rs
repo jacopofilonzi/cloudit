@@ -15,13 +15,15 @@
 //! - [`devices`]: desktop client login (loopback + PKCE) and device management;
 //! - [`admin`]: user management, invites, password resets and server settings;
 //! - [`providers`]: identity providers (presets, admin configuration);
-//! - [`oauth`]: sign-in through providers and linked identities.
+//! - [`oauth`]: sign-in through providers and linked identities;
+//! - [`onboarding`]: first sign-in of an unknown identity.
 
 mod admin;
 mod auth;
 mod devices;
 mod me;
 mod oauth;
+mod onboarding;
 mod providers;
 mod sensitive;
 
@@ -30,6 +32,7 @@ pub use auth::*;
 pub use devices::*;
 pub use me::*;
 pub use oauth::*;
+pub use onboarding::*;
 pub use providers::*;
 pub use sensitive::Sensitive;
 
@@ -179,6 +182,9 @@ pub enum ErrorCode {
     /// The pending provider sign-up is missing, expired or already used: sign in
     /// again (410).
     OnboardingExpired,
+    /// Unlinking this identity would leave the account without a password or another
+    /// identity on an enabled provider (409).
+    LastLoginMethod,
 }
 
 /// JSON body of every API error response.

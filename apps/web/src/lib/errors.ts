@@ -35,6 +35,7 @@ const MESSAGE_KEYS: Record<ClientErrorCode, MessageKey> = {
   identity_in_use: 'error.identity_in_use',
   identity_not_linked: 'error.identity_not_linked',
   onboarding_expired: 'error.onboarding_expired',
+  last_login_method: 'error.last_login_method',
   network: 'error.network',
   unknown: 'error.unknown'
 };

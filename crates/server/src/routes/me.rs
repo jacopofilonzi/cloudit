@@ -1,10 +1,18 @@
-//! `/api/v1/me`: the signed-in user's profile, password and web sessions.
+//! `/api/v1/me`: the signed-in user's profile, password, web sessions and linked
+//! identities.
+
+use std::collections::HashMap;
 
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse as _, Response};
-use cloudit_core::protocol::{ChangePasswordRequest, SessionInfo, UpdateMeRequest, UserProfile};
+
+use anyhow::Context as _;
+use cloudit_core::protocol::{
+    ChangePasswordRequest, IdentityInfo, IdentityProviderRef, SessionInfo, UpdateMeRequest,
+    UserProfile,
+};
 
 use super::extract::{ApiJson, parse_id, profile, session_info};
 use crate::accounts::users;
@@ -12,7 +20,10 @@ use crate::auth::extractors::{AnyUser, Client, SessionUser};
 use crate::auth::{limits, password, sessions};
 use crate::db::entities::users as user_entity;
 use crate::errors::ApiError;
+use crate::idp::store::{self, Provider};
+use crate::oauth::identities;
 use crate::state::AppState;
+use crate::time::{rfc3339, rfc3339_opt};
 use crate::validate;
 
 /// Checks `current_password` against the account's password (rate limited per user).
@@ -130,4 +141,52 @@ pub async fn delete_session(
         return Ok((StatusCode::NO_CONTENT, [(header::SET_COOKIE, cookie)]).into_response());
     }
     Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+/// `GET /me/identities` (session): linked provider accounts, oldest first (identities
+/// of disabled or deleted providers included and flagged).
+pub async fn list_identities(
+    State(state): State<AppState>,
+    session: SessionUser,
+) -> Result<Json<Vec<IdentityInfo>>, ApiError> {
+    let providers: HashMap<String, Provider> = store::list_all(&state.db)
+        .await?
+        .into_iter()
+        .map(|p| (p.id.clone(), p))
+        .collect();
+    let list = identities::list_for_user(&state.db, session.user.id).await?;
+    let mut out = Vec::with_capacity(list.len());
+    for identity in list {
+        let provider = providers
+            .get(&identity.provider_id)
+            .context("identity of an unknown provider")?;
+        out.push(IdentityInfo {
+            id: identity.id.to_string(),
+            provider: IdentityProviderRef {
+                id: provider.id.clone(),
+                kind: provider.kind,
+                display_name: provider.fields.display_name.clone(),
+                icon: provider.fields.icon.clone(),
+                enabled: provider.is_active(),
+                deleted: provider.deleted_at.is_some(),
+            },
+            email: identity.email,
+            created_at: rfc3339(identity.created_at),
+            last_login_at: rfc3339_opt(identity.last_login_at),
+        });
+    }
+    Ok(Json(out))
+}
+
+/// `DELETE /me/identities/{id}` (session) → 204; `last_login_method` if it is the
+/// account's last way to sign in.
+pub async fn unlink_identity(
+    State(state): State<AppState>,
+    session: SessionUser,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let id = parse_id(&id)?;
+    identities::unlink(&state.db, session.user.id, id).await?;
+    tracing::info!(user_id = %session.user.id, identity_id = %id, "identity unlinked");
+    Ok(StatusCode::NO_CONTENT)
 }

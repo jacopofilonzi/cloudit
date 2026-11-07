@@ -17,6 +17,7 @@ use super::extract::{ApiJson, admin_user, invite_info, parse_id};
 use crate::accounts::{admin, invites, password_resets, settings, users};
 use crate::auth::extractors::AdminUser;
 use crate::errors::ApiError;
+use crate::oauth::identities;
 use crate::state::AppState;
 use crate::time::rfc3339;
 use crate::validate;
@@ -44,8 +45,13 @@ pub async fn list_users(
         return Err(ApiError::validation("limit", format!("1 to {MAX_LIMIT}")));
     }
     let (list, total) = users::list(&state.db, limit, params.offset.unwrap_or(0)).await?;
+    let ids: Vec<_> = list.iter().map(|u| u.id).collect();
+    let mut providers = identities::provider_ids_by_user(&state.db, &ids).await?;
     Ok(Json(AdminUserList {
-        users: list.iter().map(admin_user).collect(),
+        users: list
+            .iter()
+            .map(|u| admin_user(u, providers.remove(&u.id).unwrap_or_default()))
+            .collect(),
         total,
     }))
 }
@@ -67,7 +73,11 @@ pub async fn update_user(
         disabled = user.is_disabled(),
         "account flags changed"
     );
-    Ok(Json(admin_user(&user)))
+    let mut providers = identities::provider_ids_by_user(&state.db, &[user.id]).await?;
+    Ok(Json(admin_user(
+        &user,
+        providers.remove(&user.id).unwrap_or_default(),
+    )))
 }
 
 /// `POST /admin/users/{id}/password-reset` → 201 with a 24-hour single-use link. Works
