@@ -10,4 +10,16 @@ export type UpdateSettingsRequest = { registration_mode?: RegistrationMode, pass
  * `http(s)://host[:port]` (a trailing `/` is removed; no path, query or fragment);
  * an empty string clears it.
  */
-public_url?: string, };
+public_url?: string, 
+/**
+ * 0 (unlimited) to 100000.
+ */
+retention_max_versions?: number, 
+/**
+ * 0 (unlimited) to 100000.
+ */
+retention_max_per_day?: number, 
+/**
+ * 1 to 3650.
+ */
+trash_retention_days?: number, };

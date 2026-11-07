@@ -30,4 +30,18 @@ public_url_from_env: boolean,
  * The URL in use (environment, else stored): identity-provider callback URLs are
  * built from it.
  */
-effective_public_url: string | null, };
+effective_public_url: string | null, 
+/**
+ * Default of a folder's `retention_max_versions`: snapshots kept per folder
+ * (0 = unlimited). Default 20.
+ */
+retention_max_versions: number, 
+/**
+ * Default of a folder's `retention_max_per_day`: snapshots kept per UTC day
+ * (0 = unlimited). Default 5.
+ */
+retention_max_per_day: number, 
+/**
+ * Days an item stays in the trash before it is deleted for good. Default 30.
+ */
+trash_retention_days: number, };

@@ -1,8 +1,9 @@
 //! Server settings in the `settings` table: one JSON value per key, editable by admins.
 //! A missing key means the default. Keys: `registration_mode` (default `invite`),
 //! `password_new_accounts` (default `approval`),
-//! `autolink_email` (default `false`), `public_url` (`null`/missing = none) and
-//! `secret_key_check` (see `crypto::canary`).
+//! `autolink_email` (default `false`), `public_url` (`null`/missing = none),
+//! `retention_max_versions` (default 20), `retention_max_per_day` (default 5),
+//! `trash_retention_days` (default 30) and `secret_key_check` (see `crypto::canary`).
 
 use anyhow::Context as _;
 use cloudit_core::protocol::{NewAccounts, RegistrationMode};
@@ -160,4 +161,63 @@ pub async fn set_password_new_accounts(
     by: Option<Uuid>,
 ) -> anyhow::Result<()> {
     set(db, PASSWORD_NEW_ACCOUNTS, &policy, by).await
+}
+
+/// Server default of a folder's `retention_max_versions` (0 = unlimited).
+pub const RETENTION_MAX_VERSIONS: &str = "retention_max_versions";
+/// Server default of a folder's `retention_max_per_day` (0 = unlimited).
+pub const RETENTION_MAX_PER_DAY: &str = "retention_max_per_day";
+/// Days an item stays in the trash before it is deleted for good.
+pub const TRASH_RETENTION_DAYS: &str = "trash_retention_days";
+
+pub const DEFAULT_RETENTION_MAX_VERSIONS: u32 = 20;
+pub const DEFAULT_RETENTION_MAX_PER_DAY: u32 = 5;
+pub const DEFAULT_TRASH_RETENTION_DAYS: u32 = 30;
+
+/// Server defaults of the folder retention limits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RetentionDefaults {
+    pub max_versions: u32,
+    pub max_per_day: u32,
+}
+
+pub async fn retention_defaults(db: &impl ConnectionTrait) -> anyhow::Result<RetentionDefaults> {
+    Ok(RetentionDefaults {
+        max_versions: get(db, RETENTION_MAX_VERSIONS)
+            .await?
+            .unwrap_or(DEFAULT_RETENTION_MAX_VERSIONS),
+        max_per_day: get(db, RETENTION_MAX_PER_DAY)
+            .await?
+            .unwrap_or(DEFAULT_RETENTION_MAX_PER_DAY),
+    })
+}
+
+pub async fn set_retention_max_versions(
+    db: &impl ConnectionTrait,
+    value: u32,
+    by: Option<Uuid>,
+) -> anyhow::Result<()> {
+    set(db, RETENTION_MAX_VERSIONS, &value, by).await
+}
+
+pub async fn set_retention_max_per_day(
+    db: &impl ConnectionTrait,
+    value: u32,
+    by: Option<Uuid>,
+) -> anyhow::Result<()> {
+    set(db, RETENTION_MAX_PER_DAY, &value, by).await
+}
+
+pub async fn trash_retention_days(db: &impl ConnectionTrait) -> anyhow::Result<u32> {
+    Ok(get(db, TRASH_RETENTION_DAYS)
+        .await?
+        .unwrap_or(DEFAULT_TRASH_RETENTION_DAYS))
+}
+
+pub async fn set_trash_retention_days(
+    db: &impl ConnectionTrait,
+    days: u32,
+    by: Option<Uuid>,
+) -> anyhow::Result<()> {
+    set(db, TRASH_RETENTION_DAYS, &days, by).await
 }

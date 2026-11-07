@@ -1,5 +1,6 @@
 //! `/api/v1/admin/*` (web session of an effective admin): users (flags, approval),
-//! password resets, invites, settings, summary.
+//! password resets, invites, settings (registration, sign-up approval, auto-link,
+//! public URL, retention defaults, trash retention), summary.
 
 use std::time::Duration;
 
@@ -27,6 +28,8 @@ use crate::validate;
 /// Default and maximum page size of `GET /admin/users`.
 const DEFAULT_LIMIT: u64 = 50;
 const MAX_LIMIT: u64 = 200;
+/// Longest trash retention, in days (10 years).
+const MAX_TRASH_RETENTION_DAYS: u32 = 3650;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -217,6 +220,7 @@ pub async fn get_settings(
     State(state): State<AppState>,
     _admin: AdminUser,
 ) -> Result<Json<ServerSettings>, ApiError> {
+    let retention = settings::retention_defaults(&state.db).await?;
     Ok(Json(ServerSettings {
         registration_mode: settings::registration_mode(&state.db).await?,
         password_new_accounts: settings::password_new_accounts(&state.db).await?,
@@ -224,6 +228,9 @@ pub async fn get_settings(
         public_url: settings::public_url(&state.db).await?,
         public_url_from_env: state.config.public_url.is_some(),
         effective_public_url: state.public_url().await?,
+        retention_max_versions: retention.max_versions,
+        retention_max_per_day: retention.max_per_day,
+        trash_retention_days: settings::trash_retention_days(&state.db).await?,
     }))
 }
 
@@ -241,6 +248,30 @@ pub async fn update_settings(
             url => validate::public_url(url, "public_url").map(Some),
         })
         .transpose()?;
+    let max_versions = body
+        .retention_max_versions
+        .map(|v| validate::range(v, "retention_max_versions", 0, validate::MAX_RETENTION))
+        .transpose()?;
+    let max_per_day = body
+        .retention_max_per_day
+        .map(|v| validate::range(v, "retention_max_per_day", 0, validate::MAX_RETENTION))
+        .transpose()?;
+    let trash_days = body
+        .trash_retention_days
+        .map(|v| validate::range(v, "trash_retention_days", 1, MAX_TRASH_RETENTION_DAYS))
+        .transpose()?;
+    if let Some(value) = max_versions {
+        settings::set_retention_max_versions(&state.db, value, Some(me.user.id)).await?;
+        tracing::info!(admin_id = %me.user.id, value, "default retention_max_versions changed");
+    }
+    if let Some(value) = max_per_day {
+        settings::set_retention_max_per_day(&state.db, value, Some(me.user.id)).await?;
+        tracing::info!(admin_id = %me.user.id, value, "default retention_max_per_day changed");
+    }
+    if let Some(days) = trash_days {
+        settings::set_trash_retention_days(&state.db, days, Some(me.user.id)).await?;
+        tracing::info!(admin_id = %me.user.id, days, "trash retention changed");
+    }
     if let Some(url) = public_url {
         settings::set_public_url(&state.db, url.as_deref(), Some(me.user.id)).await?;
         tracing::info!(admin_id = %me.user.id, public_url = url.as_deref().unwrap_or("-"), "public URL changed");

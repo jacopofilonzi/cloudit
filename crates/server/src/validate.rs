@@ -69,6 +69,24 @@ pub fn public_url(raw: &str, field: &'static str) -> Result<String, ApiError> {
     Ok(url.as_str().trim_end_matches('/').to_owned())
 }
 
+/// Largest retention limit (snapshots kept per folder, or per day).
+pub const MAX_RETENTION: u32 = 100_000;
+
+/// A number in `min..=max`.
+pub fn range(value: u32, field: &'static str, min: u32, max: u32) -> Result<u32, ApiError> {
+    if (min..=max).contains(&value) {
+        Ok(value)
+    } else {
+        Err(ApiError::validation(field, format!("{min} to {max}")))
+    }
+}
+
+/// A retention limit: 0 (unlimited) to [`MAX_RETENTION`], as stored (`i32`).
+pub fn retention(value: u32, field: &'static str) -> Result<i32, ApiError> {
+    let value = range(value, field, 0, MAX_RETENTION)?;
+    i32::try_from(value).map_err(|_| ApiError::validation(field, "too large"))
+}
+
 /// A display name (see [`text`]).
 pub fn display_name(raw: &str) -> Result<String, ApiError> {
     text(raw, "display_name", MAX_NAME_CHARS)

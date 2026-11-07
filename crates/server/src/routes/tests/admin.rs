@@ -245,7 +245,9 @@ async fn settings_round_trip() {
         json!({
             "registration_mode": "invite", "password_new_accounts": "approval",
             "autolink_email": false, "public_url": null,
-            "public_url_from_env": false, "effective_public_url": null
+            "public_url_from_env": false, "effective_public_url": null,
+            "retention_max_versions": 20, "retention_max_per_day": 5,
+            "trash_retention_days": 30
         })
     );
     let resp = app
@@ -266,7 +268,9 @@ async fn settings_round_trip() {
             "registration_mode": "closed", "password_new_accounts": "auto",
             "autolink_email": true,
             "public_url": "https://sync.example.com", "public_url_from_env": false,
-            "effective_public_url": "https://sync.example.com"
+            "effective_public_url": "https://sync.example.com",
+            "retention_max_versions": 20, "retention_max_per_day": 5,
+            "trash_retention_days": 30
         })
     );
     let resp = app.get("/api/v1/auth/config", &As::Anon).await;
@@ -330,4 +334,45 @@ async fn env_public_url_wins_over_the_stored_one() {
     assert_eq!(resp.body["public_url"], "https://db.example.com");
     assert_eq!(resp.body["public_url_from_env"], true);
     assert_eq!(resp.body["effective_public_url"], "https://env.example.com");
+}
+
+#[tokio::test]
+async fn retention_and_trash_settings() {
+    let app = TestApp::new().await;
+    let admin = app.setup_admin().await;
+    let patch =
+        |body: serde_json::Value| app.call("PATCH", "/api/v1/admin/settings", &admin, Some(body));
+    let resp = patch(json!({
+        "retention_max_versions": 0, "retention_max_per_day": 12, "trash_retention_days": 7
+    }))
+    .await;
+    resp.assert(StatusCode::OK);
+    assert_eq!(resp.body["retention_max_versions"], 0, "0 = unlimited");
+    assert_eq!(resp.body["retention_max_per_day"], 12);
+    assert_eq!(resp.body["trash_retention_days"], 7);
+    for (body, field) in [
+        (
+            json!({ "retention_max_versions": 100_001 }),
+            "retention_max_versions",
+        ),
+        (
+            json!({ "retention_max_per_day": 100_001 }),
+            "retention_max_per_day",
+        ),
+        (json!({ "trash_retention_days": 0 }), "trash_retention_days"),
+        (
+            json!({ "trash_retention_days": 3651 }),
+            "trash_retention_days",
+        ),
+    ] {
+        let resp = patch(body).await;
+        resp.assert_error(StatusCode::UNPROCESSABLE_ENTITY, "validation_failed");
+        assert_eq!(resp.body["field"], field);
+    }
+    patch(json!({ "retention_max_versions": -1 }))
+        .await
+        .assert_error(StatusCode::BAD_REQUEST, "bad_request");
+    let resp = app.get("/api/v1/admin/settings", &admin).await;
+    assert_eq!(resp.body["retention_max_versions"], 0);
+    assert_eq!(resp.body["trash_retention_days"], 7);
 }

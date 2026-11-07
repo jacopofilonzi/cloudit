@@ -143,6 +143,14 @@ pub struct ServerSettings {
     /// The URL in use (environment, else stored): identity-provider callback URLs are
     /// built from it.
     pub effective_public_url: Option<String>,
+    /// Default of a folder's `retention_max_versions`: snapshots kept per folder
+    /// (0 = unlimited). Default 20.
+    pub retention_max_versions: u32,
+    /// Default of a folder's `retention_max_per_day`: snapshots kept per UTC day
+    /// (0 = unlimited). Default 5.
+    pub retention_max_per_day: u32,
+    /// Days an item stays in the trash before it is deleted for good. Default 30.
+    pub trash_retention_days: u32,
 }
 
 /// `PATCH /api/v1/admin/settings`: omitted fields stay unchanged.
@@ -164,6 +172,18 @@ pub struct UpdateSettingsRequest {
     #[serde(default)]
     #[cfg_attr(test, ts(optional))]
     pub public_url: Option<String>,
+    /// 0 (unlimited) to 100000.
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
+    pub retention_max_versions: Option<u32>,
+    /// 0 (unlimited) to 100000.
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
+    pub retention_max_per_day: Option<u32>,
+    /// 1 to 3650.
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
+    pub trash_retention_days: Option<u32>,
 }
 
 /// `GET /api/v1/admin/summary`: counters for the admin UI (badges).
