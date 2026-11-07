@@ -36,6 +36,11 @@ url = "2.5.8"
 futures = "0.3.34"
 bytes = "1.12.1"
 tempfile = "3.27.0"
+# Auth (server): password hashing, token randomness/encoding, constant-time compares.
+argon2 = "0.6.0"
+getrandom = "0.4.3"
+base64 = "0.23.1"
+subtle = "2.6.1"
 # Tests only (already in the tree through object_store): presigned URL checks.
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 

@@ -14,6 +14,8 @@
 //! `down` is not implemented: rollback is restoring the pre-migration backup.
 
 mod m20261107_000001_create_leases;
+mod m20261107_000002_create_accounts;
+mod m20261107_000003_create_tokens;
 
 use sea_orm_migration::{MigrationTrait, MigratorTrait};
 
@@ -22,6 +24,10 @@ pub struct Migrator;
 
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        vec![Box::new(m20261107_000001_create_leases::Migration)]
+        vec![
+            Box::new(m20261107_000001_create_leases::Migration),
+            Box::new(m20261107_000002_create_accounts::Migration),
+            Box::new(m20261107_000003_create_tokens::Migration),
+        ]
     }
 }

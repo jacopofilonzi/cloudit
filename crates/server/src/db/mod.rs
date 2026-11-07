@@ -9,6 +9,7 @@
 //! - [`migrations`] holds the schema history: append-only, written with the portable
 //!   SeaORM schema builder so the same code runs on both backends.
 //! - [`lease`]: named, expiring locks for background jobs across instances.
+//! - [`entities`]: SeaORM models of the tables.
 //!
 //! # Conventions for tables (both backends)
 //!
@@ -23,7 +24,18 @@
 //! - Names are snake_case, tables plural (`leases`, `users`).
 //! - Every migration forces a transaction (`use_transaction() -> Some(true)`): SQLite
 //!   supports transactional DDL too, so a failed migration leaves no half-applied schema.
+//! - Secrets are stored as SHA-256 hex in `*_hash` columns (`auth::tokens`), passwords as
+//!   argon2id PHC strings; the setup token is the one plaintext secret (`setup_state`).
+//! - Booleans are `boolean()` (SQLite stores 0/1); nullable timestamps mark state
+//!   changes (`used_at`, `revoked_at`, `disabled_at`) instead of status columns.
+//! - A transaction that writes starts with a write: on SQLite a transaction that read
+//!   first can't take the write lock while another connection writes, and fails with
+//!   `SQLITE_BUSY` instead of waiting for the busy timeout.
+//!
+//! Entities are SeaORM models without relations; the queries live in the
+//! modules that own the tables (`accounts`, `auth::sessions`, `devices`).
 
+pub mod entities;
 pub mod lease;
 pub mod migrate;
 pub mod migrations;

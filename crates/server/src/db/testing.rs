@@ -68,6 +68,11 @@ impl TestDb {
         test
     }
 
+    /// PostgreSQL URL of this test's database; `None` for SQLite.
+    pub fn url(&self) -> Option<&str> {
+        self.pg_url.as_deref()
+    }
+
     pub fn backups_dir(&self) -> PathBuf {
         self.dir.path().join("backups")
     }
