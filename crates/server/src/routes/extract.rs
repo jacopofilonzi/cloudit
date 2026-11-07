@@ -102,3 +102,12 @@ pub fn invite_info(invite: &invite_entity::Model, now: DateTime<Utc>) -> InviteI
         revoked_at: rfc3339_opt(invite.revoked_at),
     }
 }
+
+/// An optional JSON body: empty (or only whitespace) gives `T::default()`; anything
+/// else must parse, else `bad_request`.
+pub fn optional_json<T: DeserializeOwned + Default>(body: &[u8]) -> Result<T, ApiError> {
+    if body.iter().all(u8::is_ascii_whitespace) {
+        return Ok(T::default());
+    }
+    serde_json::from_slice(body).map_err(|err| ApiError::BadRequest(err.to_string()))
+}

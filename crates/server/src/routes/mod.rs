@@ -18,12 +18,15 @@ mod admin;
 mod auth;
 mod devices;
 mod extract;
+mod folders;
 mod health;
 mod me;
 mod oauth;
 mod onboarding;
 mod providers;
+mod scopes;
 mod setup;
+mod trash;
 
 use axum::Router;
 use axum::routing::{delete, get, patch, post};
@@ -96,6 +99,34 @@ pub fn router(state: AppState) -> Router {
             patch(providers::update).delete(providers::delete),
         )
         .route("/admin/providers/{id}/test", post(providers::test))
+        .route("/scopes", get(scopes::list).post(scopes::create))
+        .route(
+            "/scopes/{id}",
+            get(scopes::get)
+                .patch(scopes::update)
+                .delete(scopes::delete),
+        )
+        .route("/scopes/{id}/restore", post(scopes::restore))
+        .route(
+            "/scopes/{id}/members",
+            get(scopes::list_members).post(scopes::add_member),
+        )
+        .route(
+            "/scopes/{id}/members/{user_id}",
+            patch(scopes::update_member).delete(scopes::remove_member),
+        )
+        .route(
+            "/scopes/{id}/folders",
+            get(folders::list).post(folders::create),
+        )
+        .route(
+            "/folders/{id}",
+            get(folders::get)
+                .patch(folders::update)
+                .delete(folders::delete),
+        )
+        .route("/folders/{id}/restore", post(folders::restore))
+        .route("/trash", get(trash::list))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::auth::middleware::layer,
