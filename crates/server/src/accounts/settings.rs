@@ -3,7 +3,8 @@
 //! `password_new_accounts` (default `approval`),
 //! `autolink_email` (default `false`), `public_url` (`null`/missing = none),
 //! `retention_max_versions` (default 20), `retention_max_per_day` (default 5),
-//! `trash_retention_days` (default 30) and `secret_key_check` (see `crypto::canary`).
+//! `trash_retention_days` (default 30), `default_quota_bytes` (`null`/missing =
+//! unlimited) and `secret_key_check` (see `crypto::canary`).
 
 use anyhow::Context as _;
 use cloudit_core::protocol::{NewAccounts, RegistrationMode};
@@ -220,4 +221,21 @@ pub async fn set_trash_retention_days(
     by: Option<Uuid>,
 ) -> anyhow::Result<()> {
     set(db, TRASH_RETENTION_DAYS, &days, by).await
+}
+
+/// Storage quota of accounts without their own (bytes); `null`/missing = unlimited.
+pub const DEFAULT_QUOTA_BYTES: &str = "default_quota_bytes";
+
+/// The server default quota in bytes; `None` = unlimited.
+pub async fn default_quota_bytes(db: &impl ConnectionTrait) -> anyhow::Result<Option<u64>> {
+    Ok(get::<Option<u64>>(db, DEFAULT_QUOTA_BYTES).await?.flatten())
+}
+
+/// Sets (or, with `None`, clears to unlimited) the server default quota.
+pub async fn set_default_quota_bytes(
+    db: &impl ConnectionTrait,
+    value: Option<u64>,
+    by: Option<Uuid>,
+) -> anyhow::Result<()> {
+    set(db, DEFAULT_QUOTA_BYTES, &value, by).await
 }

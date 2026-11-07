@@ -16,6 +16,8 @@
 //!   code exchange and ID token verification).
 //! - [`oauth`]: provider sign-in state (flows, identities, pending signups) and outcomes.
 //! - [`scopes`]: scopes, members, folders, the trash and the access checks.
+//! - [`sync`]: chunks, manifests, snapshots (commit, conflicts, restore), zip archives,
+//!   storage usage and quotas.
 //! - [`cli`]: `cloudit-server` subcommands (`setup-token`, `admin reset-password`).
 //! - [`validate`], [`time`]: input validation and timestamp helpers.
 //! - [`errors`]: [`errors::ApiError`] and its JSON shape with stable error codes.
@@ -44,5 +46,6 @@ pub mod scopes;
 pub mod shutdown;
 pub mod state;
 pub mod storage;
+pub mod sync;
 pub mod time;
 pub mod validate;

@@ -16,6 +16,7 @@
 
 mod admin;
 mod auth;
+mod chunks;
 mod devices;
 mod extract;
 mod folders;
@@ -29,6 +30,7 @@ mod setup;
 mod trash;
 
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{delete, get, patch, post};
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
@@ -126,6 +128,16 @@ pub fn router(state: AppState) -> Router {
                 .delete(folders::delete),
         )
         .route("/folders/{id}/restore", post(folders::restore))
+        .route("/folders/{id}/chunks/check", post(chunks::check))
+        .route("/folders/{id}/chunks/download", post(chunks::download_urls))
+        .route(
+            "/folders/{id}/chunks/{hash}",
+            get(chunks::download)
+                .put(chunks::upload)
+                .layer(DefaultBodyLimit::max(
+                    cloudit_core::protocol::MAX_STORED_CHUNK_BYTES,
+                )),
+        )
         .route("/trash", get(trash::list))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

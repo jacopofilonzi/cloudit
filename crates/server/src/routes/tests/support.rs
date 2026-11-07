@@ -86,6 +86,27 @@ impl Resp {
     }
 }
 
+/// A response with its raw body.
+#[derive(Debug)]
+pub struct RawResp {
+    pub status: StatusCode,
+    pub headers: HeaderMap,
+    pub body: bytes::Bytes,
+}
+
+impl RawResp {
+    #[track_caller]
+    pub fn assert(&self, status: StatusCode) -> &Self {
+        assert_eq!(
+            self.status,
+            status,
+            "body: {}",
+            String::from_utf8_lossy(&self.body)
+        );
+        self
+    }
+}
+
 pub struct TestApp {
     pub state: AppState,
     pub app: Router,
@@ -206,6 +227,52 @@ impl TestApp {
                 .unwrap(),
             None => builder.body(Body::empty()).unwrap(),
         }
+    }
+
+    /// A request with a raw body of `content_type`.
+    pub fn raw_request(
+        &self,
+        method: &str,
+        uri: &str,
+        who: &As,
+        content_type: &str,
+        body: Vec<u8>,
+    ) -> Request<Body> {
+        let mut request = self.request(method, uri, who, None);
+        request
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, content_type.parse().unwrap());
+        *request.body_mut() = Body::from(body);
+        request
+    }
+
+    /// Sends a raw body (`application/octet-stream`); the answer as JSON.
+    pub fn send_raw<'a>(
+        &'a self,
+        method: &str,
+        uri: &str,
+        who: &As,
+        body: Vec<u8>,
+    ) -> impl Future<Output = Resp> + use<'a> {
+        self.send(self.raw_request(method, uri, who, "application/octet-stream", body))
+    }
+
+    /// Sends `request`; the answer with its raw body.
+    pub async fn send_for_bytes(&self, request: Request<Body>) -> RawResp {
+        let response = self.app.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let headers = response.headers().clone();
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        RawResp {
+            status,
+            headers,
+            body,
+        }
+    }
+
+    /// `GET uri`; the answer with its raw body.
+    pub fn get_bytes<'a>(&'a self, uri: &str, who: &As) -> impl Future<Output = RawResp> + use<'a> {
+        self.send_for_bytes(self.request("GET", uri, who, None))
     }
 
     /// Builds the request now, so the future borrows only `self`.

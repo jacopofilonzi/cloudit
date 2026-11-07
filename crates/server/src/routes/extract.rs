@@ -2,7 +2,10 @@
 //! rejections, and model → API conversions shared by the route modules.
 
 use axum::Json;
+use axum::body::Bytes;
+use axum::extract::rejection::BytesRejection;
 use axum::extract::{FromRequest, Request};
+use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use cloudit_core::protocol::{AdminUser, DeviceInfo, InviteInfo, SessionInfo, UserProfile};
 use serde::de::DeserializeOwned;
@@ -14,7 +17,7 @@ use crate::errors::ApiError;
 use crate::time::{rfc3339, rfc3339_opt};
 
 /// JSON body; malformed JSON, a wrong content type or unknown fields give
-/// `bad_request` (400).
+/// `bad_request` (400), a body over the route's limit `payload_too_large` (413).
 pub struct ApiJson<T>(pub T);
 
 impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ApiJson<T> {
@@ -23,9 +26,24 @@ impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ApiJson<T> {
     async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
         match Json::<T>::from_request(request, state).await {
             Ok(Json(value)) => Ok(Self(value)),
+            Err(rejection) if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE => {
+                Err(ApiError::PayloadTooLarge)
+            }
             Err(rejection) => Err(ApiError::BadRequest(rejection.body_text())),
         }
     }
+}
+
+/// A raw body (take it as `Result<Bytes, BytesRejection>`): over the route's
+/// `DefaultBodyLimit` → `payload_too_large` (413), other failures `bad_request`.
+pub fn body_bytes(body: Result<Bytes, BytesRejection>) -> Result<Bytes, ApiError> {
+    body.map_err(|rejection| {
+        if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            ApiError::PayloadTooLarge
+        } else {
+            ApiError::BadRequest(rejection.body_text())
+        }
+    })
 }
 
 /// An id from the path; anything that isn't a UUID is `not_found`.

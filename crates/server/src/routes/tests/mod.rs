@@ -1,6 +1,7 @@
 mod admin;
 mod approval;
 mod auth;
+mod chunks;
 mod devices;
 mod fake_idp;
 mod folders;
@@ -12,6 +13,7 @@ mod scopes;
 mod secret_key;
 mod setup;
 mod support;
+mod sync_client;
 
 use std::path::{Path, PathBuf};
 
