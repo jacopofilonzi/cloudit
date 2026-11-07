@@ -1,13 +1,14 @@
 //! Password-reset links: created by an admin or by the CLI, valid 24 hours, single use.
-//! Consuming is one conditional UPDATE (`used_at IS NULL AND expires_at > now`).
+//! Consuming is one conditional UPDATE (`used_at IS NULL AND expires_at > now`). A new
+//! reset invalidates the user's earlier unused ones.
 
 use std::time::Duration;
 
 use anyhow::Context as _;
 use sea_orm::sea_query::Expr;
 use sea_orm::{
-    ActiveValue::Set, ColumnTrait as _, ConnectionTrait, EntityTrait as _, QueryFilter as _,
-    QuerySelect as _,
+    ActiveValue::Set, ColumnTrait as _, ConnectionTrait, DatabaseConnection, EntityTrait as _,
+    QueryFilter as _, QuerySelect as _, TransactionTrait as _,
 };
 use uuid::Uuid;
 
@@ -18,14 +19,24 @@ use crate::db::entities::password_resets;
 /// Validity of a reset link.
 pub const TTL: Duration = Duration::from_secs(24 * 3600);
 
-/// Creates a reset for `user_id`; `created_by` is `None` for the CLI.
+/// Creates a reset for `user_id`; `created_by` is `None` for the CLI. The user's
+/// earlier unused resets stop working (marked used) in the same transaction: only the
+/// newest link is valid.
 pub async fn create(
-    db: &impl ConnectionTrait,
+    db: &DatabaseConnection,
     user_id: Uuid,
     created_by: Option<Uuid>,
 ) -> anyhow::Result<(Secret, password_resets::Model)> {
     let token = tokens::new_token()?;
     let now = crate::time::now();
+    let tx = db.begin().await.context("starting a transaction")?;
+    password_resets::Entity::update_many()
+        .col_expr(password_resets::Column::UsedAt, Expr::value(now))
+        .filter(password_resets::Column::UserId.eq(user_id))
+        .filter(password_resets::Column::UsedAt.is_null())
+        .exec(&tx)
+        .await
+        .context("invalidating older password resets")?;
     let model = password_resets::ActiveModel {
         id: Set(Uuid::now_v7()),
         token_hash: Set(tokens::hash_token(token.expose())),
@@ -36,9 +47,10 @@ pub async fn create(
         used_at: Set(None),
     };
     let reset = password_resets::Entity::insert(model)
-        .exec_with_returning(db)
+        .exec_with_returning(&tx)
         .await
         .context("creating a password reset")?;
+    tx.commit().await.context("committing a password reset")?;
     Ok((token, reset))
 }
 

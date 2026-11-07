@@ -283,10 +283,10 @@ async fn disabled_user_is_locked_out() {
     )
     .await
     .assert(StatusCode::OK);
-    // Existing session stops working at once; login is refused after the password check.
+    // The sessions are deleted at once; login is refused after the password check.
     app.get("/api/v1/me", &user)
         .await
-        .assert_error(StatusCode::FORBIDDEN, "account_disabled");
+        .assert_error(StatusCode::UNAUTHORIZED, "unauthorized");
     app.login("user@example.com", PASSWORD)
         .await
         .assert_error(StatusCode::FORBIDDEN, "account_disabled");
@@ -302,7 +302,13 @@ async fn disabled_user_is_locked_out() {
     )
     .await
     .assert(StatusCode::OK);
-    app.get("/api/v1/me", &user).await.assert(StatusCode::OK);
+    // Re-enabling doesn't revive the old session; signing in again works.
+    app.get("/api/v1/me", &user)
+        .await
+        .assert_error(StatusCode::UNAUTHORIZED, "unauthorized");
+    app.login("user@example.com", PASSWORD)
+        .await
+        .assert(StatusCode::OK);
 }
 
 #[tokio::test]
@@ -544,6 +550,55 @@ async fn password_reset_sets_the_password_and_signs_out() {
         .assert(StatusCode::OK);
     // The admin's session is untouched.
     app.get("/api/v1/me", &admin).await.assert(StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_new_password_reset_invalidates_older_ones() {
+    let app = TestApp::new().await;
+    let admin = app.setup_admin().await;
+    let user = app.user("user@example.com").await;
+    let id = app.user_id(&user).await;
+    let admin_id = app.user_id(&admin).await;
+    let create = |id: String| {
+        let app = &app;
+        let admin = &admin;
+        async move {
+            let resp = app
+                .post(
+                    &format!("/api/v1/admin/users/{id}/password-reset"),
+                    admin,
+                    json!({}),
+                )
+                .await;
+            resp.assert(StatusCode::CREATED);
+            resp.body["token"].as_str().unwrap().to_owned()
+        }
+    };
+    let old = create(id.clone()).await;
+    let admin_reset = create(admin_id).await;
+    // The CLI creates resets too.
+    let cli = crate::cli::reset_password_text(&app.cli_config(), "user@example.com")
+        .await
+        .unwrap();
+    let from_cli = cli
+        .rsplit("/reset-password/")
+        .next()
+        .unwrap()
+        .trim()
+        .to_owned();
+    let newest = create(id).await;
+    let reset = |token: String| {
+        let body = json!({ "token": token, "new_password": "a brand new password" });
+        app.post("/api/v1/auth/password-reset", &As::Anon, body)
+    };
+    for stale in [old, from_cli] {
+        reset(stale)
+            .await
+            .assert_error(StatusCode::BAD_REQUEST, "token_invalid");
+    }
+    // Another user's reset is unaffected.
+    reset(admin_reset).await.assert(StatusCode::NO_CONTENT);
+    reset(newest).await.assert(StatusCode::NO_CONTENT);
 }
 
 #[tokio::test]

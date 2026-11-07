@@ -7,6 +7,10 @@
 //! row lock on `setup_state` (id 1), on SQLite the database write lock (the first
 //! statement of the transaction is a write). After the lock the check sees every
 //! committed change.
+//!
+//! Disabling an account deletes all its web sessions in the same transaction, so
+//! re-enabling it does not sign anyone back in; device tokens are kept (refused while
+//! disabled).
 
 use anyhow::Context as _;
 use sea_orm::sea_query::{Expr, ExprTrait as _, Query};
@@ -89,6 +93,11 @@ pub async fn update_flags(
         .exec(&tx)
         .await
         .context("updating admin flags")?;
+    if new_disabled_at.is_some() {
+        // Signed out for good: re-enabling must not revive old sessions. Device
+        // tokens stay (they are refused while disabled and work again afterwards).
+        crate::auth::sessions::delete_all(&tx, target, None).await?;
+    }
     let updated = users::find(&tx, target)
         .await?
         .context("user vanished during update")?;
