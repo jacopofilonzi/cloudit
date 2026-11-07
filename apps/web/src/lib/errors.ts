@@ -40,6 +40,12 @@ const MESSAGE_KEYS: Record<ClientErrorCode, MessageKey> = {
   account_rejected: 'error.account_rejected',
   name_taken: 'error.name_taken',
   user_not_found: 'error.user_not_found',
+  conflict: 'error.conflict',
+  chunk_missing: 'error.chunk_missing',
+  chunk_invalid: 'error.chunk_invalid',
+  manifest_invalid: 'error.manifest_invalid',
+  quota_exceeded: 'error.quota_exceeded',
+  payload_too_large: 'error.payload_too_large',
   network: 'error.network',
   unknown: 'error.unknown'
 };

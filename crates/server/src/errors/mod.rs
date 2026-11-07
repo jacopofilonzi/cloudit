@@ -3,6 +3,9 @@
 //! [`cloudit_core::protocol::ApiErrorBody`]), plus `field` for validation errors and a
 //! `Retry-After` header for rate limits.
 //!
+//! Sync errors carry typed extras: `head_snapshot_id` (`conflict`), `hashes`
+//! (`chunk_missing`, `chunk_invalid`) and `detail` (`manifest_invalid`).
+//!
 //! `code` is stable and machine-readable; `message` is English for logs. Internal
 //! errors are logged with their full context but answered with a generic message,
 //! so causes (paths, SQL, upstream bodies) never leak to clients.
@@ -12,7 +15,9 @@ use std::time::Duration;
 use axum::Json;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
+use cloudit_core::hash::ChunkHash;
 use cloudit_core::protocol::{ApiErrorBody, ErrorCode};
+use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
@@ -89,6 +94,18 @@ pub enum ApiError {
     NameTaken,
     #[error("no such user")]
     UserNotFound,
+    #[error("the folder head moved")]
+    Conflict { head: Option<Uuid> },
+    #[error("{} referenced chunks are missing", .0.len())]
+    ChunkMissing(Vec<ChunkHash>),
+    #[error("{} uploaded chunks are invalid", .0.len())]
+    ChunkInvalid(Vec<ChunkHash>),
+    #[error("invalid manifest: {0}")]
+    ManifestInvalid(&'static str),
+    #[error("storage quota exceeded")]
+    QuotaExceeded,
+    #[error("request body too large")]
+    PayloadTooLarge,
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -140,6 +157,12 @@ impl ApiError {
             Self::AccountRejected => ErrorCode::AccountRejected,
             Self::NameTaken => ErrorCode::NameTaken,
             Self::UserNotFound => ErrorCode::UserNotFound,
+            Self::Conflict { .. } => ErrorCode::Conflict,
+            Self::ChunkMissing(_) => ErrorCode::ChunkMissing,
+            Self::ChunkInvalid(_) => ErrorCode::ChunkInvalid,
+            Self::ManifestInvalid(_) => ErrorCode::ManifestInvalid,
+            Self::QuotaExceeded => ErrorCode::QuotaExceeded,
+            Self::PayloadTooLarge => ErrorCode::PayloadTooLarge,
             Self::Internal(_) => ErrorCode::Internal,
         }
     }
@@ -173,10 +196,18 @@ impl ApiError {
             | Self::IdentityInUse
             | Self::IdentityNotLinked
             | Self::LastLoginMethod
-            | Self::NameTaken => StatusCode::CONFLICT,
+            | Self::NameTaken
+            | Self::Conflict { .. } => StatusCode::CONFLICT,
             Self::OnboardingExpired => StatusCode::GONE,
             Self::ProviderDiscoveryFailed | Self::ProviderError => StatusCode::BAD_GATEWAY,
-            Self::Validation { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::Validation { .. }
+            | Self::ChunkMissing(_)
+            | Self::ChunkInvalid(_)
+            | Self::ManifestInvalid(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            // WebDAV's "insufficient storage", as Nextcloud answers on quota: distinct
+            // from 413 (one request too large) and 409 (head conflict).
+            Self::QuotaExceeded => StatusCode::INSUFFICIENT_STORAGE,
+            Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -192,15 +223,16 @@ impl IntoResponse for ApiError {
             }
             other => other.to_string(),
         };
-        let field = match &self {
-            Self::Validation { field, .. } => Some((*field).to_owned()),
-            _ => None,
-        };
-        let body = ApiErrorBody {
-            code: self.code(),
-            message,
-            field,
-        };
+        let mut body = ApiErrorBody::new(self.code(), message);
+        match &self {
+            Self::Validation { field, .. } => body.field = Some((*field).to_owned()),
+            Self::Conflict { head } => body.head_snapshot_id = head.map(|id| id.to_string()),
+            Self::ChunkMissing(hashes) | Self::ChunkInvalid(hashes) => {
+                body.hashes = Some(hashes.clone());
+            }
+            Self::ManifestInvalid(detail) => body.detail = Some((*detail).to_owned()),
+            _ => {}
+        }
         let mut response = (self.status(), Json(body)).into_response();
         if let Self::RateLimited { retry_after } = self {
             // Whole seconds, rounded up, at least 1.
@@ -248,6 +280,27 @@ mod tests {
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(body["code"], "validation_failed");
         assert_eq!(body["field"], "email");
+    }
+
+    #[tokio::test]
+    async fn sync_errors_carry_their_extras() {
+        let head = Uuid::now_v7();
+        let (status, body) = body_of(ApiError::Conflict { head: Some(head) }).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["head_snapshot_id"], head.to_string());
+        let (_, body) = body_of(ApiError::Conflict { head: None }).await;
+        assert!(body.get("head_snapshot_id").is_none());
+        let hash = ChunkHash::of(b"x");
+        let (status, body) = body_of(ApiError::ChunkMissing(vec![hash])).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(body["hashes"], serde_json::json!([hash.to_string()]));
+        let (_, body) = body_of(ApiError::ManifestInvalid("manifest_not_sorted")).await;
+        assert_eq!(body["detail"], "manifest_not_sorted");
+        let (status, body) = body_of(ApiError::QuotaExceeded).await;
+        assert_eq!(status, StatusCode::INSUFFICIENT_STORAGE);
+        assert_eq!(body["code"], "quota_exceeded");
+        let (status, _) = body_of(ApiError::PayloadTooLarge).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
     }
 
     #[tokio::test]

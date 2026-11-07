@@ -18,7 +18,10 @@
 //! - [`oauth`]: sign-in through providers and linked identities;
 //! - [`onboarding`]: first sign-in of an unknown identity;
 //! - [`scopes`]: scopes, roles, sharing and the trash;
-//! - [`folders`]: folders and their retention overrides.
+//! - [`folders`]: folders and their retention overrides;
+//! - [`sync`]: chunk check, upload and download;
+//! - [`snapshots`]: commits, history, conflicts, restore, pin and label;
+//! - [`usage`]: storage usage and quotas.
 
 mod admin;
 mod auth;
@@ -30,6 +33,9 @@ mod onboarding;
 mod providers;
 mod scopes;
 mod sensitive;
+mod snapshots;
+mod sync;
+mod usage;
 
 pub use admin::*;
 pub use auth::*;
@@ -41,8 +47,13 @@ pub use onboarding::*;
 pub use providers::*;
 pub use scopes::*;
 pub use sensitive::Sensitive;
+pub use snapshots::*;
+pub use sync::*;
+pub use usage::*;
 
 use serde::{Deserialize, Serialize};
+
+use crate::hash::ChunkHash;
 
 /// Liveness payload returned by `GET /health` and `GET /api/v1/health`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -200,6 +211,23 @@ pub enum ErrorCode {
     NameTaken,
     /// No approved, enabled account has this email (sharing a scope) (404).
     UserNotFound,
+    /// The folder's head moved: it is no longer the commit's `parent` (or the
+    /// restore's `expected_head`). `head_snapshot_id` in the error body is the current
+    /// head (absent: none) (409).
+    Conflict,
+    /// The manifest references chunks the scope doesn't have; `hashes` lists them (at
+    /// most 1000): upload them and commit again (422).
+    ChunkMissing,
+    /// Uploaded chunks don't decode to their hash; `hashes` lists them. Objects
+    /// uploaded through a presigned URL are deleted: upload them again (422).
+    ChunkInvalid,
+    /// The manifest can't be decoded or fails validation; `detail` carries the stable
+    /// `cloudit-core` code (e.g. `manifest_not_sorted`) (422).
+    ManifestInvalid,
+    /// The upload would exceed the storage quota of the scope's owner (507).
+    QuotaExceeded,
+    /// The request body is larger than the endpoint accepts (413).
+    PayloadTooLarge,
 }
 
 /// JSON body of every API error response.
@@ -213,6 +241,33 @@ pub struct ApiErrorBody {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub field: Option<String>,
+    /// With `conflict`: the folder's current head (absent when it has none).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub head_snapshot_id: Option<String>,
+    /// With `chunk_missing` / `chunk_invalid`: the chunks at fault.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub hashes: Option<Vec<ChunkHash>>,
+    /// With `manifest_invalid`: the stable `cloudit-core` error code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub detail: Option<String>,
+}
+
+impl ApiErrorBody {
+    /// A body with only `code` and `message`.
+    #[must_use]
+    pub fn new(code: ErrorCode, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            field: None,
+            head_snapshot_id: None,
+            hashes: None,
+            detail: None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -221,11 +276,7 @@ mod tests {
 
     #[test]
     fn error_codes_are_snake_case() {
-        let body = ApiErrorBody {
-            code: ErrorCode::NotFound,
-            message: "no route".to_owned(),
-            field: None,
-        };
+        let body = ApiErrorBody::new(ErrorCode::NotFound, "no route");
         let json = serde_json::to_value(&body).unwrap();
         assert_eq!(
             json,
@@ -236,9 +287,8 @@ mod tests {
             serde_json::json!("bad_request")
         );
         let body = ApiErrorBody {
-            code: ErrorCode::ValidationFailed,
-            message: "bad email".to_owned(),
             field: Some("email".to_owned()),
+            ..ApiErrorBody::new(ErrorCode::ValidationFailed, "bad email")
         };
         assert_eq!(
             serde_json::to_value(&body).unwrap(),
@@ -247,6 +297,20 @@ mod tests {
         assert_eq!(
             serde_json::to_value(ErrorCode::SetupAlreadyDone).unwrap(),
             serde_json::json!("setup_already_done")
+        );
+        let body = ApiErrorBody {
+            head_snapshot_id: Some("h".to_owned()),
+            hashes: Some(vec![ChunkHash::of(b"x")]),
+            detail: Some("manifest_not_sorted".to_owned()),
+            ..ApiErrorBody::new(ErrorCode::Conflict, "moved")
+        };
+        let json = serde_json::to_value(&body).unwrap();
+        assert_eq!(json["head_snapshot_id"], "h");
+        assert_eq!(json["hashes"][0], ChunkHash::of(b"x").to_string());
+        assert_eq!(json["detail"], "manifest_not_sorted");
+        assert_eq!(
+            serde_json::to_value(ErrorCode::QuotaExceeded).unwrap(),
+            serde_json::json!("quota_exceeded")
         );
     }
 

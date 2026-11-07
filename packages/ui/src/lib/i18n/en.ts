@@ -54,6 +54,12 @@ export const en = {
   'error.account_rejected': 'This account has been rejected by an administrator.',
   'error.name_taken': 'This name is already in use here.',
   'error.user_not_found': 'No account with this email was found.',
+  'error.conflict': 'This folder was changed meanwhile. Reload and try again.',
+  'error.chunk_missing': 'Some file data has not been uploaded yet. Sync again.',
+  'error.chunk_invalid': 'Some uploaded file data is damaged. Sync again.',
+  'error.manifest_invalid': 'The folder description sent to the server is not valid.',
+  'error.quota_exceeded': 'The storage quota of the owner of this scope is full.',
+  'error.payload_too_large': 'The upload is too large.',
   'error.network': 'Cannot reach the server.',
   'error.unknown': 'Unexpected error.'
 } as const;

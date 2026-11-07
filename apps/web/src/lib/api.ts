@@ -65,7 +65,13 @@ const SERVER_CODES: Record<ErrorCode, true> = {
   account_pending: true,
   account_rejected: true,
   name_taken: true,
-  user_not_found: true
+  user_not_found: true,
+  conflict: true,
+  chunk_missing: true,
+  chunk_invalid: true,
+  manifest_invalid: true,
+  quota_exceeded: true,
+  payload_too_large: true
 };
 
 function isErrorBody(value: unknown): value is ApiErrorBody {
