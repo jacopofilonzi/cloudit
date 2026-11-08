@@ -12,6 +12,7 @@ pub const MAX_ROWS: i64 = 1000;
 
 /// One logged operation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct ActivityEntry {
     pub id: i64,
     /// RFC 3339 UTC.

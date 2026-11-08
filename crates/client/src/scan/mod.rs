@@ -46,6 +46,7 @@ const STALE_TEMP: Duration = Duration::from_secs(3600);
 /// Why an item can't be synced.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub enum ProblemKind {
     /// Can't be opened or read (locked by a running program, permissions…).
     Unreadable,
@@ -59,6 +60,7 @@ pub enum ProblemKind {
 
 /// An item that can't be synced.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct ScanProblem {
     /// Relative path (lossy for non-UTF-8 names).
     pub path: String,

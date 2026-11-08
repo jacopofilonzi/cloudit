@@ -18,6 +18,7 @@ use crate::error::{Error, Result};
 /// What an operation is doing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "phase", rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub enum Phase {
     /// Reading the folder: `files` seen so far, `hashed_bytes` read to hash changed files.
     Scanning { files: u64, hashed_bytes: u64 },
@@ -47,6 +48,7 @@ pub enum Phase {
 
 /// One progress report.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct Progress {
     /// The linked folder's local id.
     pub folder: i64,

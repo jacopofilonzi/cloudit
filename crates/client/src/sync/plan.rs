@@ -52,6 +52,11 @@ pub fn visible<'a>(
 /// How a path changed on one side.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, rename = "PathChangeKind")
+)]
 pub enum ChangeKind {
     Added,
     Modified,
@@ -60,6 +65,7 @@ pub enum ChangeKind {
 
 /// One changed path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct PathChange {
     pub path: String,
     pub change: ChangeKind,

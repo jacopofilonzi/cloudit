@@ -9,6 +9,7 @@ use crate::error::Result;
 /// Where the device token is kept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub enum TokenLocation {
     /// The OS keychain (Windows Credential Manager, Secret Service, macOS Keychain).
     Keyring,
@@ -38,6 +39,7 @@ impl TokenLocation {
 
 /// The signed-in account.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct Account {
     /// The server's base URL (`https://host[:port][/path]`, no trailing slash).
     pub server_url: String,

@@ -9,6 +9,7 @@ use crate::scan::ScanProblem;
 /// listed wins).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub enum SyncState {
     /// The local folder doesn't exist (moved, unmounted drive): relink or recreate it.
     MissingLocalPath,
@@ -62,6 +63,7 @@ impl SyncState {
 
 /// The computed status of a linked folder.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct FolderStatus {
     /// Local id of the linked folder.
     pub folder: i64,

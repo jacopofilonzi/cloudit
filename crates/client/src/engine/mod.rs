@@ -326,6 +326,11 @@ impl Engine {
         Ok(account)
     }
 
+    /// The server's version (`GET /health`).
+    pub async fn server_version(&self, ctx: &OpContext) -> Result<String> {
+        Ok(self.api()?.health(ctx).await?.version)
+    }
+
     /// The scopes the account can see.
     pub async fn scopes(&self, ctx: &OpContext) -> Result<Vec<ScopeInfo>> {
         self.api()?.scopes(ctx).await

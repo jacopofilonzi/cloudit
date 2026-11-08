@@ -5,6 +5,9 @@ edition.workspace = true
 publish.workspace = true
 license.workspace = true
 
+[features]
+ts = ["dep:ts-rs"]
+
 [dependencies]
 cloudit-core.workspace = true
 base64.workspace = true
@@ -26,6 +29,8 @@ tokio-util.workspace = true
 tracing.workspace = true
 url.workspace = true
 walkdir.workspace = true
+# TypeScript bindings of the types the desktop UI receives (`make types`).
+ts-rs = { workspace = true, optional = true }
 
 # OS keychains through keyring-core stores (no system libraries needed to build).
 [target.'cfg(target_os = "windows")'.dependencies]

@@ -34,9 +34,14 @@ const MAX_LINE: usize = 1024 * 1024;
 /// What the follower reports.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub enum RemoteEvent {
     /// The stream is open (again).
-    Connected { realtime: RealtimeMode },
+    Connected {
+        // The core type is exported by its own crate; a literal avoids an import.
+        #[cfg_attr(feature = "ts", ts(type = "\"shared\" | \"local\""))]
+        realtime: RealtimeMode,
+    },
     /// The stream dropped; the follower reconnects.
     Disconnected { error: String },
     /// A linked folder's head (or its count of unresolved conflicts) changed.

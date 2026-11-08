@@ -14,6 +14,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 /// Stable, machine-readable error kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub enum ErrorKind {
     /// The server can't be reached (or answered 5xx after the retries): try later.
     Network,
@@ -105,6 +106,7 @@ impl fmt::Display for ErrorKind {
 /// Why a local path can't be linked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub enum LinkRefusal {
     /// The path exists but is not a directory.
     NotADirectory,
@@ -123,6 +125,7 @@ pub enum LinkRefusal {
 /// Why the browser sign-in failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub enum LoginFailure {
     /// The user pressed "Cancel" in the browser.
     Denied,

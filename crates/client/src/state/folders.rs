@@ -11,6 +11,7 @@ use crate::sync::status::SyncState;
 
 /// A local folder linked to a server folder.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct LinkedFolder {
     /// Local id (stable while linked).
     pub id: i64,

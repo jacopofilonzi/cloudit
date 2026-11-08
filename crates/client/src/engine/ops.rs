@@ -36,6 +36,7 @@ use crate::sync::{FolderCtx, Snap, pull, push};
 /// What [`Engine::sync`] did.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub enum SyncOutcome {
     /// Nothing to do (or nothing possible: see the status, e.g. a missing local path).
     UpToDate,
@@ -58,6 +59,7 @@ pub enum SyncOutcome {
 
 /// The outcome of an operation and the folder's status after it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct SyncReport {
     pub outcome: SyncOutcome,
     pub status: FolderStatus,
