@@ -448,6 +448,12 @@ and align this project's copies with it:
   once. The API has no per-account "unlimited" quota (`null` = server default).
 - `make seed` (`crates/server/examples/seed/`) needs a local server with `S3_PRESIGN=false`; for
   back-dated history pass the server's SQLite file with `--db`.
+- The Vite dev proxy must keep the browser's Host (`changeOrigin: false` in
+  `apps/web/vite.config.ts`): with Vite's string shorthand Host becomes `localhost:8080`, the
+  CSRF check compares it with `Origin: http://localhost:5173` and every POST fails with
+  `csrf_failed`. E2E runs against the built app on :8080 don't catch this: try `make dev` too.
+- Popover menus are `position: fixed` (placed from the trigger's rectangle): tables sit in an
+  `overflow-x-auto` wrapper that clips absolutely positioned children.
 - The web app is an SPA (`ssr = false`, adapter-static `fallback: 'index.html'`); in production the
   Rust server serves `WEB_DIR` and falls back to `index.html`, while unknown `/api/*` paths answer a
   JSON `not_found`.

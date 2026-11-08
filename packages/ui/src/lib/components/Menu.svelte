@@ -20,6 +20,31 @@
 
   let open = $state(false);
   let root = $state<HTMLElement>();
+  let trigger = $state<HTMLButtonElement>();
+  let menu = $state<HTMLElement>();
+  // The list is `position: fixed` (placed from the trigger's rectangle) so a scrolling
+  // ancestor such as a table wrapper with `overflow-x: auto` can't clip it.
+  let position = $state({ top: 0, right: 0 });
+
+  const GAP = 6;
+  const MARGIN = 8;
+
+  function place() {
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const height = menu?.offsetHeight ?? 0;
+    const below = rect.bottom + GAP;
+    // Open upwards when the list wouldn't fit below the trigger but fits above it.
+    const top =
+      below + height > window.innerHeight - MARGIN && rect.top - GAP - height >= MARGIN
+        ? rect.top - GAP - height
+        : below;
+    position = { top, right: Math.max(MARGIN, window.innerWidth - rect.right) };
+  }
+
+  $effect(() => {
+    if (open && menu) place();
+  });
 </script>
 
 <svelte:window
@@ -28,6 +53,12 @@
   }}
   onkeydown={(event) => {
     if (event.key === 'Escape') open = false;
+  }}
+  onresize={() => {
+    if (open) place();
+  }}
+  onscrollcapture={() => {
+    if (open) place();
   }}
 />
 
@@ -39,6 +70,7 @@
     aria-expanded={open}
     aria-label={label}
     title={label}
+    bind:this={trigger}
     onclick={() => (open = !open)}
   >
     <Ellipsis size={16} aria-hidden="true" />
@@ -46,7 +78,10 @@
   {#if open}
     <div
       role="menu"
-      class="card absolute right-0 z-30 mt-1.5 min-w-48 p-1 shadow-[0_12px_30px_var(--cl-shadow)]"
+      bind:this={menu}
+      style:top="{position.top}px"
+      style:right="{position.right}px"
+      class="card fixed z-50 min-w-48 p-1 whitespace-nowrap shadow-[0_12px_30px_var(--cl-shadow)]"
     >
       {#each items as item (item.label)}
         <button

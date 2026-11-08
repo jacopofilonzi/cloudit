@@ -5,7 +5,10 @@ import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 
 // The cloudit server (`make dev-server`) the dev server proxies API calls to.
-const apiTarget = 'http://localhost:8080';
+// `changeOrigin: false` keeps the browser's Host (`localhost:5173`): the server's CSRF
+// check compares `Origin` with its own origin built from Host, and Vite's string
+// shorthand would rewrite Host to the target and make every POST fail with `csrf_failed`.
+const apiTarget = { target: 'http://localhost:8080', changeOrigin: false };
 
 export default defineConfig({
   plugins: [
