@@ -223,6 +223,8 @@ async fn restore_and_keep_local() {
     assert_eq!(resp.body["parent_id"], second.as_str());
     assert_eq!(resp.body["is_head"], true);
     assert_eq!(resp.body["device_id"], json!(null), "made with a session");
+    assert_eq!(resp.body["device_name"], json!(null));
+    assert!(!resp.body["author_name"].as_str().unwrap().is_empty());
     let source = app
         .get(&format!("/api/v1/snapshots/{first}"), &t.viewer)
         .await;

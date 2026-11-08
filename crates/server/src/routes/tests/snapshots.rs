@@ -41,6 +41,8 @@ async fn first_and_incremental_commits() {
     assert_eq!(first["manifest_hash"], manifest.hash().unwrap().to_string());
     assert_eq!(first["author_id"], app.user_id(&t.owner).await.as_str());
     assert!(first["device_id"].is_string());
+    assert!(!first["author_name"].as_str().unwrap().is_empty());
+    assert_eq!(first["device_name"], "Gaming PC");
     assert_eq!(first["pinned"], false);
     let first_id = first["id"].as_str().unwrap().to_owned();
 

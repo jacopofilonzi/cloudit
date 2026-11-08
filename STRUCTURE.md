@@ -396,7 +396,7 @@ Bearer cld_…`); **admin** (session of an effective admin); **onboarding** (the
 | `GET /folders/{id}/chunks/{hash}` | any; viewer | the stored chunk bytes (`application/octet-stream`); 404 unless the scope has it |
 | `POST /folders/{id}/snapshots?parent=<id\|none>&kind=normal\|conflict` | any; editor | body = stored manifest (≤ 64 MiB) → 201 `CommitResponse {unchanged: false, snapshot}`, or 200 `{unchanged: true, snapshot: head}`; 409 `conflict` (+ `head_snapshot_id`), 422 `manifest_invalid` (+ `detail`), `chunk_missing` / `chunk_invalid` (+ `hashes`), `validation_failed` (`parent` not a snapshot id or a snapshot of another folder, `kind` restore), 507 `quota_exceeded`; an unknown `parent` id (e.g. deleted by retention) → 409 `conflict` for `normal`, kept as a dangling `parent_id` for `conflict` |
 | `GET /folders/{id}/snapshots?cursor=&limit=&kind=&unresolved=` | any; viewer | `SnapshotList {snapshots, next_cursor}` (newest first; limit 1..=200, default 50) |
-| `GET /snapshots/{id}` | any; viewer | `SnapshotInfo` |
+| `GET /snapshots/{id}` | any; viewer | `SnapshotInfo` (with `author_name` and `device_name`, looked up in two batched queries per page) |
 | `PATCH /snapshots/{id}` | any; editor | `UpdateSnapshotRequest {pinned?, label?}` (label ≤ 100 characters; `null` / `""` clears) → `SnapshotInfo` |
 | `GET /snapshots/{id}/manifest[?format=json]` | any; viewer | stored manifest bytes, or the canonical JSON (`Manifest`); `ETag` = `"<manifest hash>"`, `If-None-Match` → 304 |
 | `POST /snapshots/{id}/restore` | any; editor | optional `RestoreSnapshotRequest {expected_head?}` → 201 `SnapshotInfo` (kind `restore`, the new head); 409 `conflict` if `expected_head` isn't the head; a conflict source gets resolved |

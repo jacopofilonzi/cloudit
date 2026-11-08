@@ -66,8 +66,12 @@ pub struct SnapshotInfo {
     pub logical_size: u64,
     /// The user who uploaded or restored it.
     pub author_id: String,
+    /// Display name of the author (empty if the account is gone).
+    pub author_name: String,
     /// The device, when it was made with a device token.
     pub device_id: Option<String>,
+    /// Name of that device.
+    pub device_name: Option<String>,
     pub created_at: String,
     /// Pinned snapshots are never removed by retention.
     pub pinned: bool,

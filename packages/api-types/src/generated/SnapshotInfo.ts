@@ -24,9 +24,17 @@ logical_size: number,
  */
 author_id: string, 
 /**
+ * Display name of the author (empty if the account is gone).
+ */
+author_name: string, 
+/**
  * The device, when it was made with a device token.
  */
-device_id: string | null, created_at: string, 
+device_id: string | null, 
+/**
+ * Name of that device.
+ */
+device_name: string | null, created_at: string, 
 /**
  * Pinned snapshots are never removed by retention.
  */

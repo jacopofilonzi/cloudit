@@ -18,12 +18,16 @@ use cloudit_core::protocol::{
     SnapshotList, UpdateSnapshotRequest,
 };
 use futures::{StreamExt as _, TryStreamExt as _};
+use sea_orm::{ColumnTrait as _, DatabaseConnection, EntityTrait as _, QueryFilter as _};
 use serde::Deserialize;
 use uuid::Uuid;
 
 use super::extract::{ApiJson, body_bytes, optional_json, parse_id};
 use crate::auth::extractors::AnyUser;
-use crate::db::entities::{folders as folder_entity, scopes, snapshots as snapshot_entity};
+use crate::db::entities::{
+    devices as device_entity, folders as folder_entity, scopes, snapshots as snapshot_entity,
+    users as user_entity,
+};
 use crate::errors::ApiError;
 use crate::events::notify;
 use crate::hooks::{self, Point};
@@ -40,9 +44,48 @@ const MAX_LISTED: usize = 1000;
 /// Objects verified at once during a commit (uploads through presigned URLs).
 const VERIFY_CONCURRENCY: usize = 8;
 
-pub fn snapshot_info(
+/// Display names of the authors and devices of a set of snapshots (two batched
+/// queries), so the history shows "Marco · Laptop" without one call per row.
+struct Names {
+    users: BTreeMap<Uuid, String>,
+    devices: BTreeMap<Uuid, String>,
+}
+
+impl Names {
+    async fn load(
+        db: &DatabaseConnection,
+        snapshots: &[snapshot_entity::Model],
+    ) -> Result<Self, ApiError> {
+        let mut user_ids: Vec<Uuid> = snapshots.iter().map(|s| s.author_id).collect();
+        user_ids.sort();
+        user_ids.dedup();
+        let mut device_ids: Vec<Uuid> = snapshots.iter().filter_map(|s| s.device_id).collect();
+        device_ids.sort();
+        device_ids.dedup();
+        let users = user_entity::Entity::find()
+            .filter(user_entity::Column::Id.is_in(user_ids))
+            .all(db)
+            .await
+            .context("loading snapshot authors")?
+            .into_iter()
+            .map(|u| (u.id, u.display_name))
+            .collect();
+        let devices = device_entity::Entity::find()
+            .filter(device_entity::Column::Id.is_in(device_ids))
+            .all(db)
+            .await
+            .context("loading snapshot devices")?
+            .into_iter()
+            .map(|d| (d.id, d.name))
+            .collect();
+        Ok(Self { users, devices })
+    }
+}
+
+fn build_info(
     s: &snapshot_entity::Model,
     head: Option<Uuid>,
+    names: &Names,
 ) -> anyhow::Result<SnapshotInfo> {
     Ok(SnapshotInfo {
         id: s.id.to_string(),
@@ -53,7 +96,9 @@ pub fn snapshot_info(
         file_count: usage::bytes(s.file_count),
         logical_size: usage::bytes(s.logical_size),
         author_id: s.author_id.to_string(),
+        author_name: names.users.get(&s.author_id).cloned().unwrap_or_default(),
         device_id: s.device_id.map(|id| id.to_string()),
+        device_name: s.device_id.and_then(|id| names.devices.get(&id).cloned()),
         created_at: rfc3339(s.created_at),
         pinned: s.pinned,
         label: s.label.clone(),
@@ -61,6 +106,29 @@ pub fn snapshot_info(
         conflict_resolved_at: rfc3339_opt(s.conflict_resolved_at),
         is_head: head == Some(s.id),
     })
+}
+
+/// One snapshot as the API shows it.
+pub async fn snapshot_info(
+    db: &DatabaseConnection,
+    s: &snapshot_entity::Model,
+    head: Option<Uuid>,
+) -> Result<SnapshotInfo, ApiError> {
+    let names = Names::load(db, std::slice::from_ref(s)).await?;
+    Ok(build_info(s, head, &names)?)
+}
+
+/// A page of snapshots as the API shows them.
+async fn snapshot_infos(
+    db: &DatabaseConnection,
+    page: &[snapshot_entity::Model],
+    head: Option<Uuid>,
+) -> Result<Vec<SnapshotInfo>, ApiError> {
+    let names = Names::load(db, page).await?;
+    Ok(page
+        .iter()
+        .map(|s| build_info(s, head, &names))
+        .collect::<anyhow::Result<_>>()?)
 }
 
 /// The folder's head as it is now.
@@ -200,7 +268,7 @@ pub async fn commit(
             StatusCode::OK,
             Json(CommitResponse {
                 unchanged: true,
-                snapshot: snapshot_info(&head, Some(head.id))?,
+                snapshot: snapshot_info(&state.db, &head, Some(head.id)).await?,
             }),
         ));
     }
@@ -272,7 +340,7 @@ pub async fn commit(
         StatusCode::CREATED,
         Json(CommitResponse {
             unchanged: false,
-            snapshot: snapshot_info(&snapshot, head)?,
+            snapshot: snapshot_info(&state.db, &snapshot, head).await?,
         }),
     ))
 }
@@ -284,10 +352,14 @@ pub async fn get(
     Path(id): Path<String>,
 ) -> Result<Json<SnapshotInfo>, ApiError> {
     let access = SnapshotAccess::load(&state.db, me.user.id, parse_id(&id)?).await?;
-    Ok(Json(snapshot_info(
-        &access.snapshot,
-        access.folder.folder.head_snapshot_id,
-    )?))
+    Ok(Json(
+        snapshot_info(
+            &state.db,
+            &access.snapshot,
+            access.folder.folder.head_snapshot_id,
+        )
+        .await?,
+    ))
 }
 
 /// `POST /snapshots/{id}/resolve` (editor, conflicts only): marks the conflict resolved
@@ -307,7 +379,7 @@ pub async fn resolve(
         .await?
         .ok_or(ApiError::NotFound)?;
     let head = current_head(&state, snapshot.folder_id).await?;
-    Ok(Json(snapshot_info(&snapshot, head)?))
+    Ok(Json(snapshot_info(&state.db, &snapshot, head).await?))
 }
 
 /// Default and maximum page size of the history.
@@ -362,10 +434,7 @@ pub async fn list(
         } else {
             None
         },
-        snapshots: page
-            .iter()
-            .map(|s| snapshot_info(s, head))
-            .collect::<anyhow::Result<_>>()?,
+        snapshots: snapshot_infos(&state.db, &page, head).await?,
     }))
 }
 
@@ -451,7 +520,7 @@ pub async fn update(
         .await?
         .ok_or(ApiError::NotFound)?;
     let head = current_head(&state, snapshot.folder_id).await?;
-    Ok(Json(snapshot_info(&snapshot, head)?))
+    Ok(Json(snapshot_info(&state.db, &snapshot, head).await?))
 }
 
 /// `POST /snapshots/{id}/restore {expected_head?}` (editor) → 201: a `restore`
@@ -491,7 +560,7 @@ pub async fn restore(
     }
     Ok((
         StatusCode::CREATED,
-        Json(snapshot_info(&snapshot, Some(snapshot.id))?),
+        Json(snapshot_info(&state.db, &snapshot, Some(snapshot.id)).await?),
     ))
 }
 
