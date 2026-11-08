@@ -262,6 +262,8 @@ export const it: Dictionary = {
   'folder.files': 'File',
   'folder.versions': 'Versioni',
   'folder.never_synced': 'mai sincronizzata',
+  'folder.download_zip': 'Scarica ZIP',
+  'folder.download_zip_hint': 'Scarica la versione attuale come archivio ZIP',
   'folder.synced_ago': 'sincronizzata {when}',
   'folder.last_upload': 'ultimo caricamento di {who}',
   'folder.synced_by': 'ultimo sync {when} da {who}',

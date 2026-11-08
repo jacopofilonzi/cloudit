@@ -257,6 +257,8 @@ export const en = {
   'folder.files': 'Files',
   'folder.versions': 'Versions',
   'folder.never_synced': 'never synced',
+  'folder.download_zip': 'Download ZIP',
+  'folder.download_zip_hint': 'Download the current version as a ZIP archive',
   'folder.synced_ago': 'synced {when}',
   'folder.last_upload': 'last upload by {who}',
   'folder.synced_by': 'last sync {when} from {who}',

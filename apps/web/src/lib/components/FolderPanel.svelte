@@ -6,10 +6,12 @@
   // The selected folder: details, then the Versions / Files / Settings tabs. The
   // tab and the version shown in Files are owned by the page (the conflict banner
   // opens "Files" on its snapshot).
+  import Download from '@lucide/svelte/icons/download';
   import Folder from '@lucide/svelte/icons/folder';
   import type { FolderInfo, ScopeRole, SnapshotInfo } from '@cloudit/api-types';
-  import { Tabs, formatBytes, formatNumber, formatRelative } from '@cloudit/ui';
+  import { Button, Tabs, formatBytes, formatNumber, formatRelative } from '@cloudit/ui';
   import { getLang, t } from '@cloudit/ui/i18n';
+  import { archiveUrl } from '#lib/api.ts';
   import FilesTab from './FilesTab.svelte';
   import FolderSettingsTab from './FolderSettingsTab.svelte';
   import HistoryTab from './HistoryTab.svelte';
@@ -67,6 +69,18 @@
       <h2 class="truncate text-[17px]">{folder.name}</h2>
       <div class="text-xs text-muted">{synced}</div>
     </div>
+    {#if folder.head}
+      <Button
+        size="sm"
+        class="ml-auto flex-none"
+        href={archiveUrl(folder.head.snapshot_id)}
+        download
+        title={t('folder.download_zip_hint')}
+      >
+        <Download size={13} aria-hidden="true" />
+        {t('folder.download_zip')}
+      </Button>
+    {/if}
   </div>
 
   <dl class="my-3.5 grid grid-cols-2 gap-2.5">
