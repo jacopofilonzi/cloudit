@@ -5,7 +5,7 @@ users' folders; a desktop client (planned) syncs local folders with it, and a we
 server as a static SPA) manages accounts, scopes and folders. The UIs talk to the server only
 through its JSON API under `/api/v1`, whose TypeScript types are generated from the Rust ones.
 
-Current state (milestone 4b): the server has its infrastructure (database with migrations and
+Current state (milestone 4 done): the server has its infrastructure (database with migrations and
 leases, blob storage, optional Redis with a rate limiter, readiness checks), exposes health probes,
 serves the web SPA and has the account API: first-run setup, password accounts with web sessions,
 invites, admin approval of new accounts, password resets, desktop device login (loopback +
@@ -13,7 +13,9 @@ PKCE), admin endpoints, and sign-in through identity providers (OIDC presets, Gi
 Discord) configured by admins, with onboarding and identity linking. It also has scopes,
 folders, sharing with roles, the trash and the retention settings, and the sync protocol:
 chunk transfer (proxied or presigned), snapshot commits with conflicts, history, restore,
-pin / label, ZIP downloads, storage usage and quotas. API only: the web pages come with the
+pin / label, ZIP downloads, storage usage and quotas; real-time events (SSE, Redis pub/sub
+across instances, `/sync/heads` polling fallback) and the background jobs (retention,
+garbage collection, orphan sweep, trash purge with permanent delete, cleanup). API only: the web pages come with the
 mockups of milestone 5 (the web page shows the server status).
 `cloudit-core` implements the sync formats (chunking, chunk encoding, manifest, path rules, diff;
 see "Sync formats"); the server verifies every upload with it. Everything under "Planned
@@ -77,7 +79,7 @@ crates/core/src/
 │   │                 OnboardingLinkRequest
 │   ├── scopes.rs     ScopeRole (ordered), MemberRole (default editor), ScopeUser, ScopeInfo,
 │   │                 Create/UpdateScopeRequest, RestoreRequest, ScopeMember, AddMemberRequest,
-│   │                 UpdateMemberRequest, TrashItemKind, TrashItem
+│   │                 UpdateMemberRequest, TrashItemKind, TrashItem, TrashEmptyResponse
 │   ├── folders.rs    FolderInfo (+ head: FolderHead, unresolved_conflicts), CreateFolderRequest,
 │   │                 UpdateFolderRequest, Patch<T> (omitted / null / value)
 │   ├── sync.rs       ChunkSpec, ChunkCheckRequest/Response, MissingChunk, Transfer (+ TransferKind
@@ -85,7 +87,12 @@ crates/core/src/
 │   │                 MAX_CHUNKS_PER_REQUEST (10 000), MAX_STORED_CHUNK_BYTES (1 MiB + 1 + 64 KiB)
 │   ├── snapshots.rs  SnapshotKind, SnapshotInfo, CommitResponse, SnapshotList,
 │   │                 UpdateSnapshotRequest, RestoreSnapshotRequest
-│   └── usage.rs      UsageInfo, ScopeUsage
+│   ├── usage.rs      UsageInfo, ScopeUsage
+│   ├── events.rs     ServerEvent (tag `type` + `data`; name(), data_json()), HelloEvent,
+│   │                 RealtimeMode, FolderHeadEvent, ConflictEvent, HistoryChangedEvent,
+│   │                 ChangeKind, FolderChangedEvent, ScopeChangedEvent,
+│   │                 MembershipChangedEvent, UsageChangedEvent, SyncHead, SyncHeads
+│   └── jobs.rs       JobName (ALL, as_str/parse), JobOutcome, JobRunInfo, JobInfo
 ├── error.rs          HashParseError, PathError, ChunkerError, ChunkError, ManifestError (thiserror;
 │                     variants are stable kinds, `code()` gives a stable snake_case string)
 ├── hash.rs           ChunkHash, ManifestHash: SHA-256 newtypes, strict lowercase-hex FromStr/Display/serde
@@ -111,18 +118,41 @@ summarizes them.
 ```text
 crates/server/src/
 ├── main.rs           subcommand (cli::parse) or wiring: config → logging → AppState::init →
-│                     router → serve (with peer addresses) with graceful shutdown
+│                     job scheduler (if JOBS_ENABLED) → router → serve (with peer addresses)
+│                     with graceful shutdown
 ├── cli.rs            subcommands: setup-token, admin reset-password <email>, gen-secret-key,
 │                     healthcheck, help
 ├── lib.rs            module list (library so tests can build the router)
 ├── state.rs          AppState: config, db, BlobStore, Option<Redis>, RateLimiter, instance_id,
-│                     Leases, setup_done, secrets (SecretBox), idp; `init` resolves the secret
+│                     Leases, setup_done, secrets (SecretBox), idp, events (Events),
+│                     job_wakeup (Notify); `init` resolves the secret
 │                     key, connects + migrates, checks the key canary, setup::init (fatal on
 │                     error); Redis is never fatal; `public_url()` = effective public URL
 ├── validate.rs       email (trim + lowercase + shape), text / display_name (trimmed, bounded),
 │                     public_url (http(s)://host[:port] only), range, retention (0..=100000)
 ├── time.rs           now (µs precision), add, rfc3339 (API timestamps `2026-01-31T12:00:00Z`)
 ├── platform.rs       write_new_private_file (0600 on Unix): with shutdown.rs the only OS-specific code
+├── hooks.rs          test pause points (Point; `arm` under cfg(test), no-op otherwise) for forced races
+├── events/           real-time events (design in mod.rs docs)
+│   ├── mod.rs        Events: publish (local broadcast + Redis outbox), subscribe, realtime(),
+│   │                 open_stream (StreamSlot, 20 per user and instance), Delivery
+│   ├── fanout.rs     Redis publisher task (PUBLISH cloudit:events) and subscriber task (one
+│   │                 dedicated pub/sub connection, ping 15 s, reconnect 1–30 s backoff)
+│   └── notify.rs     scope_recipients (owner + members) and one helper per event
+├── jobs/             background jobs (rules in mod.rs docs)
+│   ├── mod.rs        interval(job), Counts, RunContext (lease lost → check() fails), run_job,
+│   │                 request (jobs row + local wake-up)
+│   ├── scheduler.rs  start / start_with (tick 15 s + jitter), is_due, run_leased (lease
+│   │                 job:<name>, TTL 5 min renewed every minute, run recorded)
+│   ├── store.rs      jobs / job_runs: ensure_rows, all, get, request, start (closes stale
+│   │                 runs as interrupted), finish, recent_runs, delete_runs_before, run_info
+│   ├── retention.rs  select (pure, table-tested), delete_snapshot (locks the row), apply, run
+│   ├── gc.rs         unreferenced rows → tombstones + usage in one transaction, then
+│   │                 delete_tombstoned (objects under the scope lock), delete_objects
+│   ├── orphans.rs    orphan_sweep: list scopes/*, old objects without row, delete under the lock
+│   ├── trash_purge.rs purge_scope (rows, then objects by prefix), purge_folder, run
+│   └── cleanup.rs    expired sessions, codes, flows, pending sign-ups, resets, old unused
+│                     invites, old job runs
 ├── crypto/           server key and encryption of stored secrets
 │   ├── mod.rs        SecretBox: XChaCha20-Poly1305, `[1][nonce 24][ciphertext+tag]`, AAD per value
 │   ├── key.rs        SecretKey (32 bytes, base64); resolve: SECRET_KEY, else <DATA_DIR>/secret.key
@@ -165,14 +195,18 @@ crates/server/src/
 │                     trashed_in
 ├── sync/             sync protocol (object layout, invariants and the GC contract in mod.rs docs)
 │   ├── keys.rs       scopes/{scope}/chunks/{hash}, scopes/{scope}/manifests/{hash}
+│   ├── objects.rs    the writer/collector protocol (scope lock, race argument in the docs):
+│   │                 Kind, parse_key, lock_scope, row_exists, Stored, ensure_present
 │   ├── usage.rs      effective_quota, owner_quota, used_by(_many), ensure_room (estimate),
-│   │                 insert_charged (row + scopes.stored_bytes in one transaction, exact
-│   │                 quota under an owner lock), recompute (consistency reference)
+│   │                 insert_charged (scope lock, object check, row + scopes.stored_bytes in
+│   │                 one transaction, exact quota under an owner lock → Charged), recompute
 │   ├── chunks.rs     sizes / exists (batched IN lists), decode (blocking pool), adopt (verify an
-│   │                 object without row: HEAD, bounded GET, decode; invalid → deleted)
+│   │                 object without row: HEAD, bounded GET, decode, then insert_charged with
+│   │                 the HEAD metadata; invalid → deleted under the scope lock)
 │   ├── manifests.rs  decode (bounded, blocking pool), exists, store, stored_bytes, load
 │   ├── snapshots.rs  find, commit (insert + snapshot_chunks + conditional head), resolve, list,
-│   │                 update (pin / label), restore (INSERT … SELECT copy), folder_sync
+│   │                 update (pin / label), restore (locks the source row, INSERT … SELECT
+│   │                 copy), folder_sync
 │   ├── transfer.rs   Transfers: presigned URL or proxy URL (absolute with a public URL)
 │   └── archive.rs    streaming ZIP (async_zip over a duplex pipe), filename, Content-Disposition
 ├── idp/              identity providers (protocol side)
@@ -216,7 +250,9 @@ crates/server/src/
 │   │                 oauth_flows), 000006 account approval (users.approval_*,
 │   │                 signup_source, auth_providers.new_accounts), 000007 scopes
 │   │                 (scopes, scope_members, folders), 000008 sync (chunks, manifests,
-│   │                 snapshots, snapshot_chunks, scopes.stored_bytes, users.quota_bytes)
+│   │                 snapshots, snapshot_chunks, scopes.stored_bytes, users.quota_bytes),
+│   │                 000009 jobs and gc (jobs, job_runs, object_deletions,
+│   │                 scopes/folders.purge_requested_at)
 │   ├── entities/     SeaORM 2 models (`#[sea_orm::model]`, no relations), one file per table
 │   │                 (none for setup_state: its plaintext token is read as a Secret);
 │   │                 oauth_flows keeps verifier and nonce in `Hidden` (Debug prints `***`)
@@ -227,7 +263,8 @@ crates/server/src/
 │   │                 presign_put / presign_get, check (readiness)
 │   └── tests.rs      fs round trip, offline presign checks, live S3 test (TEST_S3_*)
 ├── cache/
-│   ├── mod.rs        Redis: lazy ConnectionManager, `run` with 2 s timeout + 5 s backoff, rate-limited warnings
+│   ├── mod.rs        Redis: lazy ConnectionManager, `run` with 2 s timeout + 5 s backoff, rate-limited
+│   │                 warnings, client() for pub/sub, is_available()
 │   └── rate_limit.rs RateLimiter: fixed window in Redis (shared) or in memory (fallback)
 ├── errors/mod.rs     ApiError → JSON `{code, message, field?}` with HTTP status (+ Retry-After);
 │                     internal causes logged, not returned
@@ -250,7 +287,9 @@ crates/server/src/
 │   ├── providers.rs  /admin/providers* (presets, CRUD, test)
 │   ├── scopes.rs     /scopes* (CRUD, trash, restore) and /scopes/{id}/members*
 │   ├── folders.rs    /scopes/{id}/folders and /folders/{id}* (CRUD, trash, restore)
-│   ├── trash.rs      /trash
+│   ├── trash.rs      /trash, /trash/scopes/{id}, /trash/folders/{id}, /trash/empty
+│   ├── events.rs     /events (SSE stream, credential re-check at each keep-alive), /sync/heads
+│   ├── jobs.rs       /admin/jobs, /admin/jobs/{name}/run
 │   ├── chunks.rs     /folders/{id}/chunks/check, /download, /{hash} (proxy PUT / GET)
 │   ├── snapshots.rs  /folders/{id}/snapshots (commit, history), /snapshots/{id} (get, patch),
 │   │                 /manifest, /restore, /resolve, /archive
@@ -262,7 +301,10 @@ crates/server/src/
 │                     sharing, names, races), folders (trash, retention), sync_client.rs
 │                     (test sync client on cloudit-core), chunks, snapshots (commits,
 │                     conflicts, validation), history (round trip, pages, pin, restore),
-│                     archive, quota, presign (live S3 with TEST_S3_*)
+│                     archive, quota, presign (live S3 with TEST_S3_*), events (SSE
+│                     reader, recipients, revocation, limits, Redis fan-out), jobs
+│                     (scheduler, leases, cleanup), retention, gc (forced races with
+│                     hooks), trash_purge
 ├── logging.rs        tracing subscriber (env filter; pretty or json)
 ├── shutdown.rs       Ctrl+C / SIGTERM future (OS-specific, like platform.rs)
 └── healthcheck.rs    HTTP/1.0 GET /health on 127.0.0.1:$PORT, std only (Docker HEALTHCHECK)
@@ -348,7 +390,7 @@ Bearer cld_…`); **admin** (session of an effective admin); **onboarding** (the
 | `PUT /folders/{id}/chunks/{hash}` | any; editor | body = stored chunk (≤ `MAX_STORED_CHUNK_BYTES`, else 413) → 204; 422 `chunk_invalid` unless it decodes to `hash`; 507 `quota_exceeded`; idempotent |
 | `POST /folders/{id}/chunks/download` | any; viewer | `ChunkDownloadRequest {hashes}` (≤ 10 000) → `ChunkDownloadResponse {chunks: [{hash, download: Transfer}], missing}` |
 | `GET /folders/{id}/chunks/{hash}` | any; viewer | the stored chunk bytes (`application/octet-stream`); 404 unless the scope has it |
-| `POST /folders/{id}/snapshots?parent=<id\|none>&kind=normal\|conflict` | any; editor | body = stored manifest (≤ 64 MiB) → 201 `CommitResponse {unchanged: false, snapshot}`, or 200 `{unchanged: true, snapshot: head}`; 409 `conflict` (+ `head_snapshot_id`), 422 `manifest_invalid` (+ `detail`), `chunk_missing` / `chunk_invalid` (+ `hashes`), `validation_failed` (`parent` not a snapshot of the folder, `kind` restore), 507 `quota_exceeded` |
+| `POST /folders/{id}/snapshots?parent=<id\|none>&kind=normal\|conflict` | any; editor | body = stored manifest (≤ 64 MiB) → 201 `CommitResponse {unchanged: false, snapshot}`, or 200 `{unchanged: true, snapshot: head}`; 409 `conflict` (+ `head_snapshot_id`), 422 `manifest_invalid` (+ `detail`), `chunk_missing` / `chunk_invalid` (+ `hashes`), `validation_failed` (`parent` not a snapshot id or a snapshot of another folder, `kind` restore), 507 `quota_exceeded`; an unknown `parent` id (e.g. deleted by retention) → 409 `conflict` for `normal`, kept as a dangling `parent_id` for `conflict` |
 | `GET /folders/{id}/snapshots?cursor=&limit=&kind=&unresolved=` | any; viewer | `SnapshotList {snapshots, next_cursor}` (newest first; limit 1..=200, default 50) |
 | `GET /snapshots/{id}` | any; viewer | `SnapshotInfo` |
 | `PATCH /snapshots/{id}` | any; editor | `UpdateSnapshotRequest {pinned?, label?}` (label ≤ 100 characters; `null` / `""` clears) → `SnapshotInfo` |
@@ -357,7 +399,14 @@ Bearer cld_…`); **admin** (session of an effective admin); **onboarding** (the
 | `POST /snapshots/{id}/resolve` | any; editor | → `SnapshotInfo` (conflicts only, else 422; idempotent): "keep server" |
 | `GET /snapshots/{id}/archive` | any; viewer | streaming ZIP (`application/zip`, `<folder>-<YYYYMMDD-HHMMSS>.zip`) |
 | `GET /me/usage` | any | `UsageInfo {used_bytes, quota_bytes (effective, null = unlimited), scopes: [{id, name, stored_bytes, trashed}]}` (owned scopes, by name) |
-| `GET /trash` | session | `TrashItem[] {kind: scope\|folder, id, name, scope_id, scope_name, deleted_at, deleted_by, purge_at}`: own trashed scopes + trashed folders of scopes where the caller is owner or admin; newest first |
+| `GET /trash` | session | `TrashItem[] {kind: scope\|folder, id, name, scope_id, scope_name, deleted_at, deleted_by, purge_at}`: own trashed scopes + trashed folders of scopes where the caller is owner or admin, not marked for permanent deletion; newest first |
+| `DELETE /trash/scopes/{id}` | session; owner of the trashed scope | → 202: marks it for permanent deletion (`purge_requested_at`; no longer listed or restorable) and requests a `trash_purge` run; not in the trash or already marked → 404 |
+| `DELETE /trash/folders/{id}` | session; owner / admin of its scope (outside the trash) | → 202: the same for a trashed folder |
+| `POST /trash/empty` | session | → 202 `TrashEmptyResponse {scopes, folders}`: marks everything `GET /trash` lists |
+| `GET /events` | any | `text/event-stream` (see "Real-time events"); 20 open streams per user and instance, more → 429 `rate_limited` |
+| `GET /sync/heads` | any | `SyncHeads {folders: [{scope_id, folder_id, head_snapshot_id, head_created_at, unresolved_conflicts}]}`: every visible folder outside the trash, by folder id; `ETag` (hash of the body), `If-None-Match` → 304 |
+| `GET /admin/jobs` | admin | `JobInfo[] {name, interval_secs, requested_at, last_started_at, recent_runs: JobRunInfo[] {id, job, instance_id, started_at, finished_at, outcome, counts, error}}` (≤ 10 runs, newest first; outcome `running` / `succeeded` / `failed` / `interrupted`), in the order retention, gc, orphan_sweep, trash_purge, cleanup |
+| `POST /admin/jobs/{name}/run` | admin | → 202 `JobInfo`: sets `requested_at`; a scheduler runs it shortly (this instance at once if its jobs are enabled); unknown name → 404 |
 
 Scope routes: "viewer", "editor", "admin", "owner" is the minimum scope role; a scope or
 folder the caller can't see answers 404 `not_found` (also with a device token), a visible one
@@ -494,7 +543,7 @@ request and 409 for head conflicts), `payload_too_large` 413. The callback carri
   refetch); an ID token with an unknown key id refetches the JWKS once.
 - **Start** (`POST /auth/oauth/{provider}/start`, POST so it is CSRF-protected: a cross-site
   GET could start a `link` flow in the victim's session): validates `return_to` (path starting
-  with `/`, not `//` or `/\`, no backslash or control characters, ≤ 1024 bytes; default `/`),
+  with `/`, not `//` or `/`, no backslash or control characters, ≤ 1024 bytes; default `/`),
   stores an `oauth_flows` row (10 min) with SHA-256 of a random `state` and of the browser
   binding, the PKCE S256 verifier, a nonce, purpose (`login`, `link` with the session's user,
   `onboarding_link` with the pending signup), return path and the invite token's hash; sets
@@ -559,8 +608,9 @@ request and 409 for head conflicts), `payload_too_large` 413. The callback carri
 - **Model**: user > scope (owned by `owner_id`) > folder (synced unit) > snapshots.
   Roles, ordered: `viewer` (read scope, folders, members, history; download) < `editor`
   (+ create and rename folders; upload, commit, restore, pin, label, resolve conflicts) < `admin` (+ trash and
-  restore folders, change a folder's retention) < `owner` (+ rename, trash and restore the
-  scope; add members, change their roles, remove them; in 4c delete for good). Membership
+  restore folders, change a folder's retention, delete trashed folders for good) < `owner`
+  (+ rename, trash, restore and delete for good the scope; add members, change their roles,
+  remove them). Membership
   management is **owner-only**; any member can leave (`DELETE` its own membership); the
   owner can't leave. Server admins get no implicit access.
 - **Access** (`scopes/access.rs`): every scope or folder handler starts with
@@ -570,8 +620,8 @@ request and 409 for head conflicts), `payload_too_large` 413. The callback carri
   the owner or an admin of its (non-trashed) scope; anyone else gets 404.
 - **Device tokens** may list and read scopes, members and folders, create scopes and create
   folders (the desktop client links local folders), and use every sync endpoint (chunks,
-  snapshots, ZIP, `/me/usage`); renaming, folder changes, the trash,
-  restores and member management need a web session.
+  snapshots, ZIP, `/me/usage`, `/events`, `/sync/heads`); renaming, folder changes, the
+  trash, restores and member management need a web session.
 - **Sharing** by exact email (normalized like logins): the account must exist, be enabled
   and approved, else `user_not_found` (unknown, pending, rejected and disabled look the
   same; the small enumeration for signed-in owners is accepted and rate limited). The
@@ -590,13 +640,16 @@ request and 409 for head conflicts), `payload_too_large` 413. The callback carri
   then fails with `name_taken` and the client retries with a name). A folder of a trashed
   scope keeps its own state, is unreachable and not listed in the trash; restoring the scope
   brings it back (a folder trashed before stays trashed). `purge_at` = `deleted_at` +
-  `trash_retention_days`; the purge itself is 4c.
-- **Retention settings** (the job is 4c): per folder `retention_max_versions` and
-  `retention_max_per_day` (NULL = server default, 0 = unlimited, at most 100000); server
-  defaults in `settings` (20 and 5). Folder responses show the override and the effective
-  value. Semantics for 4c: keep the last `max_versions` snapshots and, of those, at most
-  `max_per_day` per UTC day (the most recent of each day); the head, pinned and unresolved
-  conflict snapshots are never deleted and don't count.
+  `trash_retention_days`, when the `trash_purge` job deletes it for good. The permanent
+  delete endpoints set `purge_requested_at` (conditional UPDATE on trashed, unmarked
+  items): a marked item is hidden from `GET /trash`, `load_trashed` and restore at once,
+  and purged at the next `trash_purge` run (requested immediately).
+- **Retention** (`retention_max_versions`, `retention_max_per_day` per folder: NULL =
+  server default, 0 = unlimited, at most 100000; server defaults in `settings`, 20 and 5;
+  folder responses show the override and the effective value). The `retention` job
+  ("Background jobs") keeps, per UTC day, the `max_per_day` most recent candidates, then
+  of those the `max_versions` most recent; the head, pinned and unresolved conflict
+  snapshots are never deleted and don't count.
 
 ### Sync protocol
 
@@ -642,7 +695,95 @@ request and 409 for head conflicts), `payload_too_large` 413. The callback carri
   usage + uncompressed sizes of the missing chunks; uploads: usage + the stored size before
   storing the object); the charge itself is exact: with a quota, `insert_charged` first
   writes the owner's `users` row (serializing that owner's charges), inserts, increments and
-  rolls back if the owner's total exceeds the quota. Space is freed only by GC (4c).
+  rolls back if the owner's total exceeds the quota. Space is freed only by `gc` (and a
+  scope purge), which decrements the counter in the transaction that deletes the rows.
+- **Objects and the collectors** (`sync/objects.rs`, the normative argument is in its
+  docs): every transaction that inserts a `chunks` / `manifests` row, and every one that
+  deletes objects, starts with the **scope lock** `UPDATE scopes SET stored_bytes =
+  stored_bytes WHERE id = ?`. Under it a writer checks the object is in place (`HEAD`; a
+  proxy upload or manifest stores it again if gone, an adoption reports the chunk
+  missing) before inserting; a collector checks there is no row (and, for orphans, that
+  the object is still older than the grace period) before deleting. So a deletion and an
+  insertion for one key are serialized, and a row never exists without its object. GC
+  deletes rows first (with a tombstone in `object_deletions` and the usage decrement, one
+  transaction), then the objects of its tombstones under the lock; a scope purge deletes
+  the scope row with all its rows, then the objects by prefix (writers then find no scope
+  to lock). Cost: one `HEAD` per new row inside a transaction holding the scope lock (row
+  inserts of one scope are serialized; puts and verification stay outside), collectors
+  hold it for at most 100 object deletes (16 in flight). Commits that lose a row to GC
+  answer `chunk_missing` (the manifest is stored again once); retention and restore lock
+  the snapshot row first.
+
+### Real-time events
+
+- `GET /api/v1/events` (session or device token) is a Server-Sent Events stream: `event:`
+  = the `ServerEvent` name, `data:` = its JSON payload. First `hello {server_time,
+  instance_id, realtime: shared | local}`, then `folder_head {scope_id, folder_id,
+  snapshot_id}` (commit, restore), `conflict {scope_id, folder_id, snapshot_id}`,
+  `history_changed {scope_id, folder_id}` (pin, label, resolve, a restored conflict,
+  retention deletions), `folder_changed {scope_id, folder_id, change}` and `scope_changed
+  {scope_id, change}` (`created | updated | trashed | restored | deleted`),
+  `membership_changed {scope_id}` (add, role change, remove, leave), `usage_changed {}`
+  (to an owner after GC or a purge freed space). A `: keep-alive` comment every 25 s; a
+  new `hello` when `realtime` changes. Header `X-Accel-Buffering: no`.
+- **Recipients** are computed when publishing, after the change committed: the scope's
+  owner and members (read before deleting, for a purge), plus the affected user of a
+  membership change. A stream forwards only deliveries addressed to its user.
+- **Transport** (`events/`): an in-process `broadcast` channel (1024 deep; a stream that
+  lags is closed). With `REDIS_URL` each event is also queued to one publisher task
+  (`PUBLISH cloudit:events {origin, recipients, event}`, order kept, failures dropped)
+  and every instance holds one dedicated subscription (pinged every 15 s, reconnecting
+  with 1–30 s backoff) that delivers other origins' events locally. `realtime` is
+  `shared` while the subscription is up and Redis is not in backoff, else `local`.
+- **Stream end**: at every keep-alive the stream re-checks its session (exists, not
+  expired) or device (not revoked, not expired) and the user (enabled, approved), and
+  ends otherwise. At most 20 streams per user and instance (in memory) → 429.
+- **Client contract**: on every (re)connect fetch `GET /sync/heads`, then apply events;
+  with `realtime: local` also poll `/sync/heads` (e.g. every 5 minutes, `If-None-Match`);
+  a stream that ends means reconnect and resync.
+
+### Background jobs
+
+- **Scheduler** (`jobs/scheduler.rs`, started by `main` unless `JOBS_ENABLED=false`): every
+  15 s (+ up to 5 s jitter, or at once when woken by a local run request) it reads the
+  `jobs` rows; a job is due when `requested_at` is set, it never ran, or its interval
+  passed since `last_started_at` (shared by all instances). A due job runs only after
+  taking the lease `job:<name>` (`db::lease`, TTL 5 min, renewed every minute); the
+  holder re-checks that it is due, records the start (`last_started_at`, request cleared,
+  older `running` runs → `interrupted`, a new `job_runs` row), runs it and records outcome,
+  counts and error. A lost lease stops the run at its next batch (`interrupted`). Jobs work
+  in small re-checked transactions, so a crash or a second run is harmless.
+- **Intervals** (constants): `retention` 15 min, `gc` 1 h, `orphan_sweep` 24 h,
+  `trash_purge` 1 h, `cleanup` 1 h.
+- **retention**: see "Scopes, folders, sharing and the trash"; folders in the trash or of a
+  trashed scope are skipped. Selection is a pure function (`retention::select`). Each
+  deletion is a transaction whose first statement re-checks and locks the snapshot (not
+  pinned, not an unresolved conflict, not a head), then deletes its `snapshot_chunks` and
+  the row. `parent_id` / `restored_from` of other snapshots may then name a deleted
+  snapshot (no foreign key: dangling ids). `history_changed` per folder.
+- **gc**: per scope, unreferenced `chunks` (no `snapshot_chunks`) and `manifests` (no
+  `snapshots`) created before `now - GC_GRACE`, in batches of 500: scope lock, `DELETE …
+  RETURNING` with the same conditions, tombstones, `stored_bytes -=` the deleted sizes;
+  then the tombstones' objects (see "Sync protocol"). A batch failing on a foreign key (a
+  racing commit, PostgreSQL) is skipped until the next run. `usage_changed` to owners.
+- **orphan_sweep**: lists `scopes/`, keeps keys of the sync layout last modified before
+  `now - GC_GRACE` without a row, and deletes them under the scope lock after re-checking
+  (no row, `HEAD` still old); scopes that no longer exist need no lock. Other keys are
+  never touched.
+- **trash_purge**: scopes, then folders, with `deleted_at` before `now -
+  trash_retention_days` or `purge_requested_at` set. Scope: one transaction (first
+  statement re-checks and locks the scope row) deleting its `snapshot_chunks`,
+  `snapshots`, `folders`, `scope_members`, `chunks`, `manifests`, `object_deletions` and
+  the scope, then its objects by listing `scopes/{id}/`; `scope_changed deleted` to the
+  former members, usage of the owner drops by the scope's bytes. Folder: one transaction
+  (locks the folder row) deleting its snapshots' `snapshot_chunks`, its snapshots and the
+  folder; its chunks and manifests are left to `gc` (they may be shared with other
+  folders of the scope) and a `gc` run is requested. `folder_changed deleted`.
+- **cleanup**: expired sessions, device codes and OAuth flows; expired pending sign-ups no
+  flow references; used or expired password resets; unused invites that expired or were
+  revoked more than 30 days ago (**used invites are kept**: they record who invited whom);
+  finished job runs older than 30 days. Devices are never deleted (snapshots reference
+  them).
 - **ZIP**: streamed from a task through a 256 KiB pipe, files deflated with data descriptors
   (ZIP64-capable), chunks prefetched 4 at a time and hash-verified, DOS mtimes (UTC, 2 s),
   Unix modes 0644 / 0755, empty dirs as `dir/`; a failure aborts the body (no complete-looking
@@ -716,9 +857,17 @@ request and 409 for head conflicts), `payload_too_large` 413. The callback carri
     (folder_id, id) and (scope_id, manifest_hash));
   - `snapshot_chunks(snapshot_id → snapshots, scope_id, hash)` (PK (snapshot_id, hash);
     (scope_id, hash) → chunks; index (scope_id, hash)): the distinct chunks of each snapshot.
+  - `scopes.purge_requested_at?`, `folders.purge_requested_at?` (permanent delete requested);
+  - `jobs(name TEXT PK, requested_at?, last_started_at?)` (one row per job, inserted when
+    missing);
+  - `job_runs(id, job, instance_id, started_at, finished_at?, outcome (`running` |
+    `succeeded` | `failed` | `interrupted`), counts (JSON object text), error?)` (index
+    (job, id));
+  - `object_deletions(scope_id, kind (`chunk` | `manifest`), hash, created_at)` (PK all
+    three but created_at; no foreign key): GC tombstones.
 
-  Expired sessions, codes, flows, pending signups and used tokens are not cleaned up yet (a GC
-  job is planned).
+  Expired sessions, codes, flows, pending sign-ups, used resets and old unused invites are
+  deleted by the `cleanup` job.
 - **Migrations** run at startup (`db/migrate.rs`). SQLite: if any are pending and the database
   isn't new, `VACUUM INTO <DATA_DIR>/backups/cloudit-<UTC YYYYMMDDTHHMMSSZ>-pre-migrate.db`
   first; a failed backup aborts startup; backups are never pruned automatically. PostgreSQL:
@@ -734,8 +883,10 @@ request and 409 for head conflicts), `payload_too_large` 413. The callback carri
   when `S3_PUBLIC_ENDPOINT` is set, a second signer-only `AmazonS3` built with it signs the
   URLs (SigV4 signs the host), so they work for clients.
 - **Redis** (`REDIS_URL`, optional): Redis or Valkey via the `redis` crate's lazy
-  `ConnectionManager`. Used now by the rate limiter (keys `cloudit:rl:<key>:<window>`); any
-  error or 2 s timeout degrades to the in-memory path and skips Redis for 5 s.
+  `ConnectionManager`. Used by the rate limiter (keys `cloudit:rl:<key>:<window>`; any error or
+  2 s timeout degrades to the in-memory path and skips Redis for 5 s) and by the events
+  (pub/sub channel `cloudit:events`, one dedicated subscription per instance; see
+  "Real-time events"). Leases and jobs never use Redis.
 
 ### Configuration
 
@@ -767,6 +918,8 @@ Read once at startup (`config/mod.rs`); empty values count as unset. Documented 
 | `S3_PUBLIC_ENDPOINT` | `S3_ENDPOINT` | Endpoint as reached by clients; presigned URLs are signed for it |
 | `S3_PRESIGN_TTL` | `15m` | Presigned URL validity (`900`, `15m`, `1h`…; 1 s to 7 d) |
 | `REDIS_URL` | unset | `redis://…` (secret), Redis or Valkey; optional, never fatal; `rediss://` unsupported |
+| `JOBS_ENABLED` | `true` | Run the background jobs scheduler on this instance (jobs stay lease-guarded: one instance at a time) |
+| `GC_GRACE` | `24h` | Age (at least `1h`) before unreferenced chunk / manifest rows and objects without row may be deleted |
 | `TEST_DATABASE_URL`, `TEST_S3_*`, `TEST_REDIS_URL` | unset | Tests only (`make test-ha`, CI): run the server tests against PostgreSQL / S3 / Redis instead of SQLite and skipping |
 | `PUID` / `PGID` | `10001` | Docker only, read by the entrypoint (not the server): user/group the server runs as and owner of `DATA_DIR` |
 
@@ -877,7 +1030,7 @@ JSON, `version: 1` (shown wrapped; the canonical form has no whitespace):
 
 Relative, `/`-separated UTF-8, stored as-is: **no Unicode normalization** (NFC and NFD spellings
 are different paths; case-only differences are rejected at manifest level). Rejected: empty; over
-4096 bytes; a segment over 255 bytes; leading `/` or `\`, drive prefix (`C:`, `C:x`), UNC; any
+4096 bytes; a segment over 255 bytes; leading `/` or ``, drive prefix (`C:`, `C:x`), UNC; any
 backslash; empty segment (`a//b`, trailing `/`); `.` or `..`; control characters (Unicode Cc);
 any of `<>:"|?*`; a segment ending in space or dot; Windows device names case-insensitively, with
 or without extension (`CON`, `PRN`, `AUX`, `NUL`, `CONIN$`, `CONOUT$`, `COM0`-`COM9`,
@@ -916,7 +1069,7 @@ Milestones: 1 scaffolding (done) · 2 core chunking/manifest (done) · 3a server
 (DB, storage, Redis, readiness: done) · 3b password accounts, sessions, devices, admin API (done) ·
 3c identity providers (OIDC / OAuth2), onboarding, identity linking (done) ·
 4a scopes, folders, sharing, trash, retention settings (done) · 4b sync protocol, quotas
-(done) · 4c (next) events and background jobs · 5 web UI (from mockups) · 6 desktop manual
+(done) · 4c events and background jobs (done) · 5 (next) web UI (from mockups) · 6 desktop manual
 sync + conflicts · 7 desktop auto sync/tray/autostart/installers.
 
 Planned layout additions: `apps/desktop` (Tauri 2 + Svelte 5, milestone 6; OS code in a `platform/`
@@ -924,29 +1077,10 @@ module).
 
 ### Storage and deployment
 
-Database, blob storage, Redis, the rate limiter, the HA compose and the blob transfer of the
-sync API are implemented. Still planned: Redis pub/sub for events across instances (fallback:
-polling); background jobs on top of `db::lease` (GC, retention).
+Database, blob storage, Redis (rate limits, event pub/sub), the HA compose, the blob
+transfer of the sync API and the lease-guarded background jobs are implemented.
 
 ### Desktop client
 
 - Sync flow: "Sync protocol". Triggers: manual, startup, quiet period, associated process
   exit, SSE events. Local state in SQLite.
-
-### Events and jobs (4c)
-
-- SSE events: in memory on a single instance, Valkey pub/sub across instances, `GET
-  /sync/heads` polling as the fallback.
-- Lease-based jobs (`db::lease`): retention (semantics in "Scopes, folders, sharing and the
-  trash"; never the head, pinned or unresolved conflicts; a deleted snapshot's
-  `snapshot_chunks` go first), chunk and manifest GC, trash purge after
-  `trash_retention_days` plus a manual permanent delete (scope: owner; folder: admin),
-  cleanup of expired sessions, codes, flows and pending signups.
-- GC contract (`sync` module docs): delete a `chunks` / `manifests` row only when no
-  `snapshot_chunks` / `snapshots` row references it (the foreign keys refuse otherwise) and it
-  is older than a 24 h grace period, decrementing `scopes.stored_bytes` by its `stored_size`
-  in the same transaction (count only rows actually deleted), then delete the object; list
-  `scopes/*/chunks/` and `scopes/*/manifests/` for orphan objects (no row: crashes between
-  object and row, presigned uploads never committed) older than the grace period. A commit
-  that races GC fails with `chunk_missing` and the client uploads again. `usage::recompute`
-  checks the counter.

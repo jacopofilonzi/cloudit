@@ -101,10 +101,13 @@ members; any member can leave. Server admins have no access to other users' scop
 Names are unique, ignoring case, among a user's scopes and among a scope's folders.
 Deleting a scope or folder moves it to the **trash** (`GET /api/v1/trash`), where it can be
 restored (under another name if its old one was taken meanwhile) for `trash_retention_days`
-(admin setting, default 30); automatic purging comes later. A folder keeps by default the
-last 20 versions and at most 5 per day (admin settings `retention_max_versions`,
-`retention_max_per_day`; `0` = unlimited), overridable per folder; the retention job comes
-later.
+(admin setting, default 30); after that it is deleted for good. Owners (scopes) and scope
+admins (folders) can also delete trashed items for good right away
+(`DELETE /api/v1/trash/scopes/{id}`, `DELETE /api/v1/trash/folders/{id}`,
+`POST /api/v1/trash/empty`). A folder keeps by default the last 20 versions and at most 5 per
+UTC day (admin settings `retention_max_versions`, `retention_max_per_day`; `0` =
+unlimited), overridable per folder; the current version, pinned versions and unresolved
+conflicts are always kept.
 
 ## Sync, versions and quotas
 
@@ -120,7 +123,24 @@ against their owner, also for members' uploads; scopes in the trash still count)
 a server default (`default_quota_bytes` in `PATCH /api/v1/admin/settings`, unlimited by
 default) and per-user quotas (`PATCH /api/v1/admin/users/{id}` `{"quota_bytes": …}`);
 `GET /api/v1/me/usage` shows a user's usage. Space is given back when old versions are
-cleaned up (the cleanup jobs come in a later release).
+deleted (retention, trash) and the garbage collector removes the data nothing uses any more
+(after `GC_GRACE`, default 24 hours).
+
+## Real-time updates and maintenance jobs
+
+Clients (desktop, web) open `GET /api/v1/events`, a Server-Sent Events stream announcing new
+versions, conflicts, history, folder, scope and membership changes to the users who can see
+them, and fetch `GET /api/v1/sync/heads` on every (re)connect. With several instances,
+events cross instances through Redis/Valkey pub/sub; without it (or while it is down) each
+instance only delivers its own events and clients fall back to polling `/sync/heads`.
+
+Background jobs run on any instance, one at a time per job (a lease in the database):
+**retention** (every 15 minutes), **gc** (unreferenced chunks and manifests, hourly),
+**orphan_sweep** (stored objects without a database row, daily), **trash_purge** (hourly and
+right after a permanent delete) and **cleanup** (expired sessions, codes and tokens, hourly).
+Admins see their runs in `GET /api/v1/admin/jobs` and can start one with
+`POST /api/v1/admin/jobs/{name}/run`. `JOBS_ENABLED=false` keeps an instance out of the
+scheduling; `GC_GRACE` sets how old unused data must be before it is deleted.
 
 ## Sign-in providers (OIDC, GitHub, Discord)
 
@@ -187,9 +207,12 @@ Instances are stateless: run as many as you like behind a load balancer, as long
   `S3_BUCKET` (must exist), `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`,
   `S3_FORCE_PATH_STYLE` (default `true`, needed by MinIO and Garage). Garage signs with
   the region from its `s3_region` setting (usually `garage`): set `S3_REGION` to match.
-- optionally **Redis or Valkey**: `REDIS_URL=redis://host:6379`, so rate limits are shared
-  across instances. If it is missing or down, every instance falls back to its own limits;
-  requests never fail because of Redis.
+- optionally **Redis or Valkey**: `REDIS_URL=redis://host:6379`, so rate limits and
+  real-time events are shared across instances. If it is missing or down, every instance
+  falls back to its own limits and its own events (clients poll); requests never fail
+  because of Redis.
+- background jobs run on every instance by default and coordinate through database leases;
+  set `JOBS_ENABLED=false` on instances that should only serve requests.
 
 Health-check the instances on `/ready`. Keep their clocks in sync (NTP): job leases, sessions
 and tokens use timestamps from the instance clocks. Behind a reverse proxy set
@@ -228,6 +251,17 @@ The server applies database migrations when it starts. With SQLite it backs up t
 first and refuses to start if the backup fails. With PostgreSQL take a backup yourself
 (`pg_dump`) before upgrading.
 
+- **Next release (events and jobs):** no manual step is required, but read on. New tables
+  (`jobs`, `job_runs`, `object_deletions`) and columns (`scopes.purge_requested_at`,
+  `folders.purge_requested_at`) are created at startup. The maintenance jobs start with the
+  server: the first runs apply **retention** to existing folders (by default only the last
+  20 versions, at most 5 per day, are kept: raise `retention_max_versions` /
+  `retention_max_per_day` in the admin settings **before upgrading** if you want to keep
+  more), **delete for good** trashed items older than `trash_retention_days` (30), and free
+  unused storage. New optional variables: `JOBS_ENABLED` (default `true`), `GC_GRACE`
+  (default `24h`). A commit whose `parent` names an unknown (e.g. deleted) snapshot now
+  answers 409 `conflict` instead of 422. Behind a reverse proxy, make sure
+  `/api/v1/events` is not buffered (the server sends `X-Accel-Buffering: no`).
 - **Next release (sync protocol):** nothing required. New tables (`chunks`, `manifests`,
   `snapshots`, `snapshot_chunks`) and columns (`scopes.stored_bytes`, `users.quota_bytes`)
   are created at startup; quotas are unlimited until an admin sets one. Folder responses gain

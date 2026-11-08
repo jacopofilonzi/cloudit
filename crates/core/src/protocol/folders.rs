@@ -1,10 +1,10 @@
 //! Folders: the synced units inside a scope (`/api/v1/scopes/{id}/folders`,
 //! `/api/v1/folders/{id}`).
 //!
-//! Retention (applied by a background job, milestone 4c) keeps per folder the last
-//! `max_versions` snapshots and, of those, at most `max_per_day` per UTC day (the most
-//! recent of each day); the head, pinned and unresolved conflict snapshots are never
-//! deleted and don't count. A folder's override `null` means the server default
+//! Retention (the `retention` background job) keeps per folder, within each UTC day,
+//! the `max_per_day` most recent snapshots, then of those the `max_versions` most
+//! recent; the head, pinned and unresolved conflict snapshots are never deleted and
+//! don't count. A folder's override `null` means the server default
 //! (`/api/v1/admin/settings`); `0` means unlimited.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};

@@ -130,9 +130,17 @@ and align this project's copies with it:
   is decoded with `cloudit-core` (bounded, hash verified) before its row exists; the object is
   stored first, the row second (an object without a row is an orphan for GC). Objects
   uploaded through presigned URLs get their row only when a commit verifies them.
+- **The scope lock guards rows against object deletion** (`sync::objects`): every
+  transaction that inserts a `chunks` / `manifests` row (`usage::insert_charged`) or deletes
+  objects of a scope (GC, orphan sweep, invalid adoptions) starts with
+  `objects::lock_scope`; a writer re-checks its object (`ensure_present`) and a collector
+  re-checks that no row exists under that lock. Never delete a sync object or insert its
+  row any other way. GC deletes rows (tombstone + usage in one transaction) before
+  objects; a scope purge deletes the scope row before its objects.
 - **The usage counter `scopes.stored_bytes` changes only in the transaction that inserts or
   deletes the row** (`sync::usage::insert_charged`: `INSERT … ON CONFLICT DO NOTHING`, charge
-  only when a row was inserted; GC must decrement the same way). `usage::recompute` is the
+  only when a row was inserted; `jobs::gc` decrements by the sizes `DELETE … RETURNING`
+  gave back). `usage::recompute` is the
   reference; tests check the two agree.
 - Every request on a scope or folder resolves the caller's role through `scopes::access`
   (`ScopeAccess` / `FolderAccess`, then `require(role)`), never with ad-hoc queries in a
@@ -144,7 +152,8 @@ and align this project's copies with it:
   `active_key` UNIQUE indexes (NULL in the trash): create, rename and restore are single
   statements that map a unique violation to `name_taken`; never check-then-insert.
 - Snapshots are immutable; a restore creates a new snapshot. Deleting data is soft (trash), except
-  retention/GC jobs, which run with a grace period.
+  the retention, GC and trash purge jobs (GC with a grace period, the purge after
+  `trash_retention_days` or an explicit permanent delete).
 - Frontend API types are generated from Rust (ts-rs) into `packages/api-types/src/generated/`: run
   `make types` and commit the result; never hand-write API models in TS. `make check` fails if they
   are stale.
@@ -173,6 +182,15 @@ and align this project's copies with it:
   policy). Rejected accounts are kept (a ban), never deleted.
 - Every multi-instance coordination goes through the database (atomic conditional statements,
   leases, advisory locks), never through in-process state: any instance can die at any moment.
+- **Background jobs are always lease-guarded and idempotent** (`jobs::scheduler::run_leased`):
+  a job runs only while its instance holds `job:<name>`, works in small transactions that
+  re-check their conditions (deleting a snapshot, folder or scope first locks its row with a
+  conditional UPDATE), and checks `RunContext::check` between batches. Retention never
+  deletes the head, pinned snapshots or unresolved conflicts.
+- **Events are published after the change committed** (`events::notify`), to recipients
+  computed then (scope owner + members, plus the affected user of a membership change):
+  never to users without access, never from inside a transaction. Publishing never fails a
+  request; Redis only extends delivery to other instances.
 - Identity-provider client secrets are stored only encrypted (`crypto::SecretBox` with the
   server key, associated data naming the row) and never returned by the API (`has_secret`
   only). The key comes from `SECRET_KEY` or, SQLite only, `<DATA_DIR>/secret.key`; with
@@ -375,6 +393,15 @@ and align this project's copies with it:
   fail); key ids must be `GK` + 24 hex digits and secrets 64 hex digits. The image has no shell
   or curl: health-check it with `/garage bucket info <bucket>`. GitHub service containers can't
   take a command or mount files, so CI starts Garage with `docker run`.
+- Race tests pause code at `hooks::Point`s (`hooks::arm(point, key)` under `cfg(test)`;
+  keys are scope ids, or `<instance id>:<job>` for jobs, so parallel tests don't collide).
+  Points sit outside transactions: a paused task must never hold a lock (SQLite would block
+  every writer). Tests drive jobs with `scheduler::run_leased(state, job, true, grace)`
+  (`routes::tests::jobs::run_now` uses a zero grace).
+- SSE tests read the body frame by frame (`routes::tests::events::Sse`); keep-alives are
+  shortened with `state.events.set_keepalive`. `tokio::spawn` of futures that borrow in
+  closures (`stream::iter(&keys).map(|k| …)`) fails with "`Send` is not general enough":
+  move owned values into the futures.
 - The web app is an SPA (`ssr = false`, adapter-static `fallback: 'index.html'`); in production the
   Rust server serves `WEB_DIR` and falls back to `index.html`, while unknown `/api/*` paths answer a
   JSON `not_found`.
