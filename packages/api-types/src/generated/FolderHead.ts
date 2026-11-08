@@ -7,4 +7,12 @@ export type FolderHead = { snapshot_id: string, created_at: string,
 /**
  * Sum of the file sizes, in bytes.
  */
-logical_size: number, file_count: number, };
+logical_size: number, file_count: number, 
+/**
+ * Display name of whoever uploaded it.
+ */
+author_name: string, 
+/**
+ * Name of the device it came from (`null` = the web).
+ */
+device_name: string | null, };

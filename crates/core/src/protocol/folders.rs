@@ -24,6 +24,8 @@ pub struct FolderInfo {
     pub head: Option<FolderHead>,
     /// Conflict snapshots the user hasn't resolved yet.
     pub unresolved_conflicts: u64,
+    /// Versions in the history (normal and restore snapshots; conflicts not counted).
+    pub version_count: u64,
     /// The folder's own limit; `null` = the server default.
     pub retention_max_versions: Option<u32>,
     /// The folder's own limit; `null` = the server default.
@@ -46,6 +48,10 @@ pub struct FolderHead {
     /// Sum of the file sizes, in bytes.
     pub logical_size: u64,
     pub file_count: u64,
+    /// Display name of whoever uploaded it.
+    pub author_name: String,
+    /// Name of the device it came from (`null` = the web).
+    pub device_name: Option<String>,
 }
 
 /// `POST /api/v1/scopes/{id}/folders` (editor or more; the retention overrides need

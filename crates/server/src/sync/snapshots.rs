@@ -22,7 +22,7 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
-use crate::db::entities::{folders, snapshot_chunks, snapshots};
+use crate::db::entities::{devices, folders, snapshot_chunks, snapshots, users};
 use crate::errors::ApiError;
 
 /// Rows per multi-row INSERT of `snapshot_chunks` (3 values each: far below the bind
@@ -168,6 +168,10 @@ pub async fn resolve(db: &impl ConnectionTrait, id: Uuid) -> anyhow::Result<bool
 pub struct FolderSync {
     pub head: Option<snapshots::Model>,
     pub unresolved_conflicts: u64,
+    pub version_count: u64,
+    /// Display name of the head's author and the name of its device.
+    pub head_author: String,
+    pub head_device: Option<String>,
 }
 
 /// [`FolderSync`] of each folder (absent: no head, no conflicts).
@@ -190,6 +194,21 @@ pub async fn folder_sync(
             let folder = head.folder_id;
             out.entry(folder).or_default().head = Some(head);
         }
+        head_names(db, &mut out).await?;
+    }
+    let versions: Vec<(Uuid, i64)> = snapshots::Entity::find()
+        .select_only()
+        .column(snapshots::Column::FolderId)
+        .column_as(snapshots::Column::Id.count(), "count")
+        .filter(snapshots::Column::FolderId.is_in(list.iter().map(|f| f.id)))
+        .filter(snapshots::Column::Kind.ne(SnapshotKind::Conflict.as_str()))
+        .group_by(snapshots::Column::FolderId)
+        .into_tuple()
+        .all(db)
+        .await
+        .context("counting versions")?;
+    for (folder, count) in versions {
+        out.entry(folder).or_default().version_count = u64::try_from(count).unwrap_or(0);
     }
     let counts: Vec<(Uuid, i64)> = snapshots::Entity::find()
         .select_only()
@@ -207,6 +226,39 @@ pub async fn folder_sync(
         out.entry(folder).or_default().unresolved_conflicts = u64::try_from(count).unwrap_or(0);
     }
     Ok(out)
+}
+
+/// Fills the author and device names of the loaded heads (two batched queries).
+async fn head_names(
+    db: &impl ConnectionTrait,
+    out: &mut HashMap<Uuid, FolderSync>,
+) -> anyhow::Result<()> {
+    let heads: Vec<&snapshots::Model> = out.values().filter_map(|s| s.head.as_ref()).collect();
+    let user_ids: Vec<Uuid> = heads.iter().map(|h| h.author_id).collect();
+    let device_ids: Vec<Uuid> = heads.iter().filter_map(|h| h.device_id).collect();
+    let users: HashMap<Uuid, String> = users::Entity::find()
+        .filter(users::Column::Id.is_in(user_ids))
+        .all(db)
+        .await
+        .context("loading head authors")?
+        .into_iter()
+        .map(|u| (u.id, u.display_name))
+        .collect();
+    let devices: HashMap<Uuid, String> = devices::Entity::find()
+        .filter(devices::Column::Id.is_in(device_ids))
+        .all(db)
+        .await
+        .context("loading head devices")?
+        .into_iter()
+        .map(|d| (d.id, d.name))
+        .collect();
+    for sync in out.values_mut() {
+        if let Some(head) = &sync.head {
+            sync.head_author = users.get(&head.author_id).cloned().unwrap_or_default();
+            sync.head_device = head.device_id.and_then(|id| devices.get(&id).cloned());
+        }
+    }
+    Ok(())
 }
 
 /// Filters of [`list`].

@@ -43,6 +43,8 @@ pub fn folder_info(
         created_at: rfc3339(h.created_at),
         logical_size: usage::bytes(h.logical_size),
         file_count: usage::bytes(h.file_count),
+        author_name: sync.map(|s| s.head_author.clone()).unwrap_or_default(),
+        device_name: sync.and_then(|s| s.head_device.clone()),
     });
     let max_versions = stored(folder.retention_max_versions);
     let max_per_day = stored(folder.retention_max_per_day);
@@ -54,6 +56,7 @@ pub fn folder_info(
         head_snapshot_id: folder.head_snapshot_id.map(|id| id.to_string()),
         head,
         unresolved_conflicts: sync.map_or(0, |s| s.unresolved_conflicts),
+        version_count: sync.map_or(0, |s| s.version_count),
         retention_max_versions: max_versions,
         retention_max_per_day: max_per_day,
         effective_retention_max_versions: max_versions.unwrap_or(defaults.max_versions),

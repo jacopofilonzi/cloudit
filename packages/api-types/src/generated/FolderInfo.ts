@@ -22,6 +22,10 @@ head: FolderHead | null,
  */
 unresolved_conflicts: number, 
 /**
+ * Versions in the history (normal and restore snapshots; conflicts not counted).
+ */
+version_count: number, 
+/**
  * The folder's own limit; `null` = the server default.
  */
 retention_max_versions: number | null, 
