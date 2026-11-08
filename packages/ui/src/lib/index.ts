@@ -11,6 +11,7 @@ export { default as EmptyState } from './components/EmptyState.svelte';
 export { default as Field, type FieldControl } from './components/Field.svelte';
 export { default as Input } from './components/Input.svelte';
 export { default as Logo } from './components/Logo.svelte';
+export { default as Menu } from './components/Menu.svelte';
 export { default as Modal } from './components/Modal.svelte';
 export { default as ProviderIcon, brandIcon } from './components/ProviderIcon.svelte';
 export { default as RadioCards } from './components/RadioCards.svelte';
