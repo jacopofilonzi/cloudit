@@ -82,6 +82,8 @@
     app.reset();
     // The root layout's guard then sends the browser to the login page.
     session.signedOut();
+    // The login page shows the providers and sign-up mode as they are now.
+    void session.refreshConfig().catch(() => undefined);
   }
 </script>
 

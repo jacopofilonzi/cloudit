@@ -44,6 +44,11 @@ class Session {
     }
   }
 
+  /** Reloads only the login configuration (providers, registration mode). */
+  async refreshConfig(): Promise<void> {
+    this.config = await getAuthConfig();
+  }
+
   /** After setup, login or a sign-up that signed in. */
   signedInAs(profile: UserProfile): void {
     this.user = profile;
