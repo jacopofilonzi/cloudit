@@ -178,6 +178,14 @@ impl TestApp {
             .unwrap()
     }
 
+    /// Another server instance on the same database, storage and Redis (its own
+    /// instance id, events and leases).
+    pub async fn second_instance(&self) -> (AppState, Router) {
+        let state = AppState::init(self.cli_config()).await.unwrap();
+        let app = router(state.clone());
+        (state, app)
+    }
+
     /// The configuration the state was built with (for the CLI functions).
     pub fn cli_config(&self) -> Config {
         (*self.state.config).clone()

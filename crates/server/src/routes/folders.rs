@@ -10,7 +10,8 @@ use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use cloudit_core::protocol::{
-    CreateFolderRequest, FolderHead, FolderInfo, RestoreRequest, ScopeRole, UpdateFolderRequest,
+    ChangeKind, CreateFolderRequest, FolderHead, FolderInfo, RestoreRequest, ScopeRole,
+    UpdateFolderRequest,
 };
 
 use super::extract::{ApiJson, optional_json, parse_id};
@@ -18,6 +19,7 @@ use crate::accounts::settings::{self, RetentionDefaults};
 use crate::auth::extractors::{AnyUser, SessionUser};
 use crate::db::entities::folders as folder_entity;
 use crate::errors::ApiError;
+use crate::events::notify;
 use crate::scopes::access::{FolderAccess, ScopeAccess};
 use crate::scopes::folders::{self, Changes, Retention};
 use crate::scopes::names;
@@ -114,6 +116,7 @@ pub async fn create(
     };
     let folder = folders::create(&state.db, access.scope.id, name, retention, me.user.id).await?;
     tracing::info!(user_id = %me.user.id, scope_id = %access.scope.id, folder_id = %folder.id, "folder created");
+    notify::folder_changed(&state, access.scope.id, folder.id, ChangeKind::Created).await;
     Ok((StatusCode::CREATED, Json(view(&state, &folder).await?)))
 }
 
@@ -158,6 +161,13 @@ pub async fn update(
             .transpose()?,
     };
     folders::update(&state.db, access.folder.id, changes).await?;
+    notify::folder_changed(
+        &state,
+        access.folder.scope_id,
+        access.folder.id,
+        ChangeKind::Updated,
+    )
+    .await;
     let folder = reload(&state, access.folder.id).await?;
     Ok(Json(view(&state, &folder).await?))
 }
@@ -174,6 +184,13 @@ pub async fn delete(
         return Err(ApiError::NotFound);
     }
     tracing::info!(user_id = %me.user.id, folder_id = %access.folder.id, "folder moved to the trash");
+    notify::folder_changed(
+        &state,
+        access.folder.scope_id,
+        access.folder.id,
+        ChangeKind::Trashed,
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -194,6 +211,13 @@ pub async fn restore(
         .transpose()?;
     folders::restore(&state.db, &access.folder, name).await?;
     tracing::info!(user_id = %me.user.id, folder_id = %access.folder.id, "folder restored");
+    notify::folder_changed(
+        &state,
+        access.folder.scope_id,
+        access.folder.id,
+        ChangeKind::Restored,
+    )
+    .await;
     let folder = reload(&state, access.folder.id).await?;
     Ok(Json(view(&state, &folder).await?))
 }

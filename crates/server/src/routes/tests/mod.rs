@@ -4,6 +4,7 @@ mod archive;
 mod auth;
 mod chunks;
 mod devices;
+mod events;
 mod fake_idp;
 mod folders;
 mod history;

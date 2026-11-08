@@ -20,6 +20,7 @@ use crate::crypto::key::KeySource;
 use crate::crypto::{self, SecretBox};
 use crate::db;
 use crate::db::lease::Leases;
+use crate::events::Events;
 use crate::idp::Idp;
 use crate::storage::BlobStore;
 
@@ -51,6 +52,8 @@ pub struct AppState {
     pub secrets: SecretBox,
     /// Identity providers: HTTP client and OIDC discovery cache (a cache only).
     pub idp: Idp,
+    /// Real-time events: publisher and local fan-out (Redis pub/sub when configured).
+    pub events: Events,
 }
 
 impl AppState {
@@ -118,6 +121,7 @@ impl AppState {
             },
         };
 
+        let events = Events::new(instance_id.clone(), redis.clone());
         let leases = Leases::new(db.clone(), instance_id.to_string());
         Ok(Self {
             config: Arc::new(config),
@@ -130,6 +134,7 @@ impl AppState {
             setup_done: Arc::new(AtomicBool::new(!setup_status.is_pending())),
             secrets,
             idp: Idp::new()?,
+            events,
         })
     }
 }

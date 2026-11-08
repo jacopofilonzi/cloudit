@@ -9,8 +9,8 @@ use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use cloudit_core::protocol::{
-    AddMemberRequest, CreateScopeRequest, RestoreRequest, ScopeInfo, ScopeMember, ScopeRole,
-    ScopeUser, UpdateMemberRequest, UpdateScopeRequest,
+    AddMemberRequest, ChangeKind, CreateScopeRequest, RestoreRequest, ScopeInfo, ScopeMember,
+    ScopeRole, ScopeUser, UpdateMemberRequest, UpdateScopeRequest,
 };
 use uuid::Uuid;
 
@@ -20,6 +20,7 @@ use crate::auth::extractors::{AnyUser, SessionUser};
 use crate::auth::limits;
 use crate::db::entities::{scopes as scope_entity, users as user_entity};
 use crate::errors::ApiError;
+use crate::events::notify;
 use crate::scopes::access::ScopeAccess;
 use crate::scopes::{members, names, store};
 use crate::state::AppState;
@@ -112,6 +113,7 @@ pub async fn create(
     let name = names::parse(&body.name, "name")?;
     let scope = store::create(&state.db, me.user.id, name).await?;
     tracing::info!(user_id = %me.user.id, scope_id = %scope.id, "scope created");
+    notify::scope_changed(&state, scope.id, ChangeKind::Created).await;
     Ok((
         StatusCode::CREATED,
         Json(scope_info(&scope, ScopeRole::Owner, &me.user, 0)),
@@ -139,6 +141,7 @@ pub async fn update(
     access.require(ScopeRole::Owner)?;
     let name = names::parse(&body.name, "name")?;
     store::rename(&state.db, access.scope.id, name).await?;
+    notify::scope_changed(&state, access.scope.id, ChangeKind::Updated).await;
     let scope = reload(&state, access.scope.id).await?;
     Ok(Json(view(&state, &scope, access.role).await?))
 }
@@ -155,6 +158,7 @@ pub async fn delete(
         return Err(ApiError::NotFound);
     }
     tracing::info!(user_id = %me.user.id, scope_id = %access.scope.id, "scope moved to the trash");
+    notify::scope_changed(&state, access.scope.id, ChangeKind::Trashed).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -175,6 +179,7 @@ pub async fn restore(
         .transpose()?;
     store::restore(&state.db, &access.scope, name).await?;
     tracing::info!(user_id = %me.user.id, scope_id = %access.scope.id, "scope restored");
+    notify::scope_changed(&state, access.scope.id, ChangeKind::Restored).await;
     let scope = reload(&state, access.scope.id).await?;
     Ok(Json(view(&state, &scope, ScopeRole::Owner).await?))
 }
@@ -256,6 +261,7 @@ pub async fn add_member(
         created,
         "scope shared"
     );
+    notify::membership_changed(&state, access.scope.id, user.id).await;
     let status = if created {
         StatusCode::CREATED
     } else {
@@ -287,6 +293,7 @@ pub async fn update_member(
         role = body.role.as_str(),
         "scope member role changed"
     );
+    notify::membership_changed(&state, access.scope.id, target).await;
     Ok(Json(member_view(&member, &user)))
 }
 
@@ -314,5 +321,6 @@ pub async fn remove_member(
         member_id = %target,
         "scope member removed"
     );
+    notify::membership_changed(&state, access.scope.id, target).await;
     Ok(StatusCode::NO_CONTENT)
 }

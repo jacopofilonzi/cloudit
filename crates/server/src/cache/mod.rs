@@ -52,6 +52,8 @@ struct Health {
 #[derive(Clone)]
 pub struct Redis {
     conn: ConnectionManager,
+    /// For dedicated connections (pub/sub subscriptions, see `events`).
+    client: redis::Client,
     health: Arc<Health>,
 }
 
@@ -73,10 +75,11 @@ impl Redis {
             .set_response_timeout(Some(Duration::from_secs(1)))
             .set_number_of_retries(1)
             .set_max_delay(Duration::from_millis(500));
-        let conn = ConnectionManager::new_lazy_with_config(client, config)
+        let conn = ConnectionManager::new_lazy_with_config(client.clone(), config)
             .map_err(|e| anyhow::anyhow!("preparing the Redis connection: {e}"))?;
         Ok(Self {
             conn,
+            client,
             health: Arc::new(Health::default()),
         })
     }
@@ -113,6 +116,18 @@ impl Redis {
                 None
             }
         }
+    }
+
+    /// The client, for dedicated connections (pub/sub).
+    #[must_use]
+    pub fn client(&self) -> &redis::Client {
+        &self.client
+    }
+
+    /// `false` while in backoff after a failure.
+    #[must_use]
+    pub fn is_available(&self) -> bool {
+        now_ms() >= self.health.down_until_ms.load(Ordering::Relaxed)
     }
 
     /// Readiness check: a `PING`, ignoring the backoff.

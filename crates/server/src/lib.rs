@@ -21,6 +21,7 @@
 //! - [`cli`]: `cloudit-server` subcommands (`setup-token`, `admin reset-password`).
 //! - [`validate`], [`time`]: input validation and timestamp helpers.
 //! - [`errors`]: [`errors::ApiError`] and its JSON shape with stable error codes.
+//! - [`events`]: real-time events: publisher, Redis fan-out, recipients.
 //! - [`routes`]: the axum router (health probes, `/api/v1`, SPA static files).
 //! - [`logging`]: tracing subscriber setup (`pretty` or `json`).
 //! - [`shutdown`], [`platform`]: graceful-shutdown signal and private files (the only
@@ -36,6 +37,7 @@ pub mod crypto;
 pub mod db;
 pub mod devices;
 pub mod errors;
+pub mod events;
 pub mod healthcheck;
 pub mod idp;
 pub mod logging;

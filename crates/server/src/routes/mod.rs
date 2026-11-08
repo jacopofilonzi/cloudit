@@ -18,6 +18,7 @@ mod admin;
 mod auth;
 mod chunks;
 mod devices;
+mod events;
 mod extract;
 mod folders;
 mod health;
@@ -161,6 +162,8 @@ pub fn router(state: AppState) -> Router {
         .route("/snapshots/{id}/restore", post(snapshots::restore))
         .route("/snapshots/{id}/resolve", post(snapshots::resolve))
         .route("/trash", get(trash::list))
+        .route("/events", get(events::stream))
+        .route("/sync/heads", get(events::heads))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::auth::middleware::layer,

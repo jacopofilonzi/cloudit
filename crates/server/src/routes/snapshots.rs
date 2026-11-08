@@ -25,6 +25,7 @@ use super::extract::{ApiJson, body_bytes, optional_json, parse_id};
 use crate::auth::extractors::AnyUser;
 use crate::db::entities::{folders as folder_entity, scopes, snapshots as snapshot_entity};
 use crate::errors::ApiError;
+use crate::events::notify;
 use crate::scopes::access::{FolderAccess, SnapshotAccess};
 use crate::state::AppState;
 use crate::sync::chunks::{self, Adopted};
@@ -242,6 +243,11 @@ pub async fn commit(
         kind = kind.as_str(),
         "snapshot committed"
     );
+    if kind == SnapshotKind::Conflict {
+        notify::conflict(&state, scope.id, folder.id, snapshot.id).await;
+    } else {
+        notify::folder_head(&state, scope.id, folder.id, snapshot.id).await;
+    }
     let head = (kind == SnapshotKind::Normal).then_some(snapshot.id);
     Ok((
         StatusCode::CREATED,
@@ -277,6 +283,7 @@ pub async fn resolve(
     if !snapshots::resolve(&state.db, access.snapshot.id).await? {
         return Err(ApiError::validation("kind", "not a conflict snapshot"));
     }
+    notify::history_changed(&state, access.snapshot.scope_id, access.snapshot.folder_id).await;
     let snapshot = snapshots::find(&state.db, access.snapshot.id)
         .await?
         .ok_or(ApiError::NotFound)?;
@@ -420,6 +427,7 @@ pub async fn update(
         Patch::Value(raw) => Some(Some(validate::text(&raw, "label", MAX_LABEL_CHARS)?)),
     };
     snapshots::update(&state.db, access.snapshot.id, body.pinned, label).await?;
+    notify::history_changed(&state, access.snapshot.scope_id, access.snapshot.folder_id).await;
     let snapshot = snapshots::find(&state.db, access.snapshot.id)
         .await?
         .ok_or(ApiError::NotFound)?;
@@ -458,6 +466,10 @@ pub async fn restore(
         restored_from = %access.snapshot.id,
         "snapshot restored"
     );
+    notify::folder_head(&state, snapshot.scope_id, snapshot.folder_id, snapshot.id).await;
+    if access.snapshot.kind() == SnapshotKind::Conflict {
+        notify::history_changed(&state, snapshot.scope_id, snapshot.folder_id).await;
+    }
     Ok((
         StatusCode::CREATED,
         Json(snapshot_info(&snapshot, Some(snapshot.id))?),
