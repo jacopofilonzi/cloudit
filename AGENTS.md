@@ -259,7 +259,8 @@ and align this project's copies with it:
   `packages/ui/src/styles.css` are placeholders. Real UI work starts from a user-approved mockup.
 - Every UI string goes through i18n, with both the English and the Italian key (`en` is the
   default); the type check must catch a missing key. Dictionaries live in
-  `packages/ui/src/lib/i18n/` (`it` is typed against the `en` keys).
+  `packages/ui/src/lib/i18n/` (`it` is typed against the `en` keys). Italian glossary: scope →
+  "raccolta" (feminine), folder → "cartella", snapshot → "versione".
 - Svelte 5 runes only (`$state`, `$derived`, `$effect`, `$props`): no legacy stores or `export let`.
   Typed state is `$state<T>(…)` (an annotated `let x: T = $state(…)` narrows to the initial value).
   Don't name a variable `state` (it clashes with the rune).

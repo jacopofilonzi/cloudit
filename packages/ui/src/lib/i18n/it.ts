@@ -61,7 +61,7 @@ export const it: Dictionary = {
     'Alcuni dati dei file non sono ancora stati caricati. Sincronizza di nuovo.',
   'error.chunk_invalid': 'Alcuni dati dei file caricati sono danneggiati. Sincronizza di nuovo.',
   'error.manifest_invalid': 'La descrizione della cartella inviata al server non è valida.',
-  'error.quota_exceeded': 'Lo spazio disponibile del proprietario di questo ambito è esaurito.',
+  'error.quota_exceeded': 'Lo spazio disponibile del proprietario di questa raccolta è esaurito.',
   'error.payload_too_large': 'Il caricamento è troppo grande.',
   'error.network': 'Impossibile raggiungere il server.',
   'error.unknown': 'Errore imprevisto.'
