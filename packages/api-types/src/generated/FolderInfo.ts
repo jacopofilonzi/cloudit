@@ -6,6 +6,10 @@ import type { FolderHead } from "./FolderHead";
  */
 export type FolderInfo = { id: string, scope_id: string, name: string, 
 /**
+ * User-chosen emoji shown with the name (`null` = none).
+ */
+emoji: string | null, 
+/**
  * The current snapshot (`null` until the first commit).
  */
 head_snapshot_id: string | null, 

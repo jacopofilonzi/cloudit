@@ -50,6 +50,7 @@ pub fn folder_info(
         id: folder.id.to_string(),
         scope_id: folder.scope_id.to_string(),
         name: folder.name.clone(),
+        emoji: folder.emoji.clone(),
         head_snapshot_id: folder.head_snapshot_id.map(|id| id.to_string()),
         head,
         unresolved_conflicts: sync.map_or(0, |s| s.unresolved_conflicts),
@@ -96,7 +97,7 @@ pub async fn list(
     ))
 }
 
-/// `POST /scopes/{id}/folders {name, retention_max_versions?, retention_max_per_day?}`
+/// `POST /scopes/{id}/folders {name, emoji?, retention_max_versions?, retention_max_per_day?}`
 /// (editor; a retention override needs admin) → 201.
 pub async fn create(
     State(state): State<AppState>,
@@ -114,7 +115,21 @@ pub async fn create(
         max_versions: retention(body.retention_max_versions, "retention_max_versions")?,
         max_per_day: retention(body.retention_max_per_day, "retention_max_per_day")?,
     };
-    let folder = folders::create(&state.db, access.scope.id, name, retention, me.user.id).await?;
+    let emoji = body
+        .emoji
+        .as_deref()
+        .map(|e| validate::emoji(e, "emoji"))
+        .transpose()?
+        .flatten();
+    let folder = folders::create(
+        &state.db,
+        access.scope.id,
+        name,
+        emoji,
+        retention,
+        me.user.id,
+    )
+    .await?;
     tracing::info!(user_id = %me.user.id, scope_id = %access.scope.id, folder_id = %folder.id, "folder created");
     notify::folder_changed(&state, access.scope.id, folder.id, ChangeKind::Created).await;
     Ok((StatusCode::CREATED, Json(view(&state, &folder).await?)))
@@ -130,8 +145,8 @@ pub async fn get(
     Ok(Json(view(&state, &access.folder).await?))
 }
 
-/// `PATCH /folders/{id} {name?, retention_max_versions?, retention_max_per_day?}`:
-/// renaming needs editor, retention changes admin (`null` resets to the default).
+/// `PATCH /folders/{id} {name?, emoji?, retention_max_versions?, retention_max_per_day?}`:
+/// renaming and the emoji need editor, retention changes admin (`null` resets to the default).
 pub async fn update(
     State(state): State<AppState>,
     me: SessionUser,
@@ -148,6 +163,11 @@ pub async fn update(
             .name
             .as_deref()
             .map(|n| names::parse(n, "name"))
+            .transpose()?,
+        emoji: body
+            .emoji
+            .into_option()
+            .map(|e| e.map_or(Ok(None), |e| validate::emoji(&e, "emoji")))
             .transpose()?,
         max_versions: body
             .retention_max_versions

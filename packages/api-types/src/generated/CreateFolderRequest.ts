@@ -11,6 +11,11 @@ export type CreateFolderRequest = {
  */
 name: string, 
 /**
+ * One emoji (a short emoji sequence, at most 32 bytes, no letters); `null`,
+ * omitted or `""` = none.
+ */
+emoji?: string, 
+/**
  * `null` or omitted = server default; `0` = unlimited.
  */
 retention_max_versions?: number, 

@@ -191,6 +191,26 @@ pub struct PasswordResetRequest {
     pub new_password: Sensitive,
 }
 
+/// `POST /api/v1/auth/invites/lookup`: what the invite page shows before signing up.
+/// The token travels in the body so it never appears in request logs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct InviteLookupRequest {
+    pub token: Sensitive,
+}
+
+/// A usable invite, as seen by the person invited.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct InvitePreview {
+    /// The only email that may use it (`null` = any).
+    pub email: Option<String>,
+    pub expires_at: String,
+    /// Display name of the admin who created it.
+    pub invited_by: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

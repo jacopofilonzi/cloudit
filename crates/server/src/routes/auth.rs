@@ -1,12 +1,13 @@
-//! `/api/v1/auth/*`: login page config, registration, login, logout, password reset.
+//! `/api/v1/auth/*`: login page config, registration, login, logout, password reset,
+//! invite lookup.
 
 use axum::Json;
 use axum::extract::State;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse as _, Response};
 use cloudit_core::protocol::{
-    ApprovalStatus, AuthConfig, LoginRequest, NewAccounts, PasswordResetRequest, RegisterRequest,
-    RegistrationMode, SignupPending,
+    ApprovalStatus, AuthConfig, InviteLookupRequest, InvitePreview, LoginRequest, NewAccounts,
+    PasswordResetRequest, RegisterRequest, RegistrationMode, SignupPending,
 };
 use sea_orm::TransactionTrait as _;
 
@@ -19,6 +20,7 @@ use crate::auth::{limits, password, sessions};
 use crate::db::entities::users as user_entity;
 use crate::errors::ApiError;
 use crate::state::AppState;
+use crate::time::rfc3339;
 use crate::validate;
 
 /// Creates a session for `user` and answers its profile with the session cookie.
@@ -204,4 +206,29 @@ pub async fn password_reset(
     tx.commit().await.map_err(anyhow::Error::from)?;
     tracing::info!(%user_id, "password reset");
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /auth/invites/lookup {token}` (no auth, rate limited): the bound email, expiry
+/// and inviter of a usable invite, for the invite page; `invite_invalid` otherwise
+/// (unknown, used, revoked or expired look the same).
+pub async fn lookup_invite(
+    State(state): State<AppState>,
+    Client(client): Client,
+    ApiJson(body): ApiJson<InviteLookupRequest>,
+) -> Result<Json<InvitePreview>, ApiError> {
+    limits::enforce(
+        &state,
+        &format!("invite_lookup:{}", client.ip),
+        limits::INVITE_LOOKUP_PER_IP,
+    )
+    .await?;
+    let invite = invites::find_usable(&state.db, body.token.expose())
+        .await?
+        .ok_or(ApiError::InviteInvalid)?;
+    let inviter = users::find(&state.db, invite.created_by).await?;
+    Ok(Json(InvitePreview {
+        email: invite.email,
+        expires_at: rfc3339(invite.expires_at),
+        invited_by: inviter.map(|u| u.display_name).unwrap_or_default(),
+    }))
 }

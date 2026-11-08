@@ -19,6 +19,8 @@ pub struct Model {
     pub head_snapshot_id: Option<Uuid>,
     pub retention_max_versions: Option<i32>,
     pub retention_max_per_day: Option<i32>,
+    /// User-chosen emoji (`validate::emoji`); NULL = none.
+    pub emoji: Option<String>,
     pub created_by: Uuid,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,

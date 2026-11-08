@@ -673,3 +673,48 @@ async fn cli_reset_password_works_for_any_account() {
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn invite_lookup() {
+    let app = TestApp::new().await;
+    let admin = app.setup_admin().await;
+    let lookup = |token: String| {
+        app.post(
+            "/api/v1/auth/invites/lookup",
+            &As::Anon,
+            json!({ "token": token }),
+        )
+    };
+
+    let token = invite(&app, &admin, Some("Bound@Example.com")).await;
+    let resp = lookup(token.clone()).await;
+    resp.assert(StatusCode::OK);
+    assert_eq!(resp.body["email"], "bound@example.com");
+    assert_eq!(resp.body["invited_by"], "Admin");
+    assert!(resp.body["expires_at"].as_str().unwrap().ends_with('Z'));
+
+    let open = invite(&app, &admin, None).await;
+    assert_eq!(lookup(open.clone()).await.body["email"], json!(null));
+
+    // Unknown and used invites look the same.
+    lookup("nope".to_owned())
+        .await
+        .assert_error(StatusCode::BAD_REQUEST, "invite_invalid");
+    app.post(
+        "/api/v1/auth/register",
+        &As::Anon,
+        register_body("bound@example.com", Some(&token)),
+    )
+    .await
+    .assert(StatusCode::CREATED);
+    lookup(token)
+        .await
+        .assert_error(StatusCode::BAD_REQUEST, "invite_invalid");
+    app.post(
+        "/api/v1/auth/invites/lookup",
+        &As::Anon,
+        json!({ "token": open, "extra": 1 }),
+    )
+    .await
+    .assert_error(StatusCode::BAD_REQUEST, "bad_request");
+}

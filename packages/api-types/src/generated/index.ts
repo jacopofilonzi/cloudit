@@ -44,6 +44,8 @@ export type { IdentityInfo } from './IdentityInfo';
 export type { IdentityProviderRef } from './IdentityProviderRef';
 export type { InviteInfo } from './InviteInfo';
 export type { InviteLink } from './InviteLink';
+export type { InviteLookupRequest } from './InviteLookupRequest';
+export type { InvitePreview } from './InvitePreview';
 export type { InviteStatus } from './InviteStatus';
 export type { JobInfo } from './JobInfo';
 export type { JobName } from './JobName';

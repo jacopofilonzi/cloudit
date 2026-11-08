@@ -64,7 +64,7 @@ crates/core/src/
 │   ├── sensitive.rs  Sensitive: password/token string in API bodies, Debug prints `***`
 │   ├── auth.rs       RegistrationMode, NewAccounts, ApprovalStatus, SignupPending, AuthConfig,
 │   │                 AuthProvider, SetupStatus, SetupRequest, RegisterRequest, LoginRequest,
-│   │                 PasswordResetRequest
+│   │                 PasswordResetRequest, InviteLookupRequest, InvitePreview
 │   ├── me.rs         UserProfile, UpdateMeRequest, ChangePasswordRequest, SessionInfo
 │   ├── devices.rs    TokenTtl (1h/1d/7d/30d/1y/forever), CodeChallengeMethod, DeviceAuthorize*,
 │   │                 DeviceToken*, DeviceInfo, UpdateDeviceRequest
@@ -129,7 +129,8 @@ crates/server/src/
 │                     key, connects + migrates, checks the key canary, setup::init (fatal on
 │                     error); Redis is never fatal; `public_url()` = effective public URL
 ├── validate.rs       email (trim + lowercase + shape), text / display_name (trimmed, bounded),
-│                     public_url (http(s)://host[:port] only), range, retention (0..=100000)
+│                     public_url (http(s)://host[:port] only), range, retention (0..=100000), emoji
+│                     (≤ 32 bytes, no letters / whitespace / controls)
 ├── time.rs           now (µs precision), add, rfc3339 (API timestamps `2026-01-31T12:00:00Z`)
 ├── platform.rs       write_new_private_file (0600 on Unix): with shutdown.rs the only OS-specific code
 ├── hooks.rs          test pause points (Point; `arm` under cfg(test), no-op otherwise) for forced races
@@ -252,7 +253,7 @@ crates/server/src/
 │   │                 (scopes, scope_members, folders), 000008 sync (chunks, manifests,
 │   │                 snapshots, snapshot_chunks, scopes.stored_bytes, users.quota_bytes),
 │   │                 000009 jobs and gc (jobs, job_runs, object_deletions,
-│   │                 scopes/folders.purge_requested_at)
+│   │                 scopes/folders.purge_requested_at), 000010 folder emoji
 │   ├── entities/     SeaORM 2 models (`#[sea_orm::model]`, no relations), one file per table
 │   │                 (none for setup_state: its plaintext token is read as a Secret);
 │   │                 oauth_flows keeps verifier and nonce in `Hidden` (Debug prints `***`)
@@ -335,6 +336,7 @@ Bearer cld_…`); **admin** (session of an effective admin); **onboarding** (the
 | `POST /auth/login` | none, rate limited | `LoginRequest` → 200 `UserProfile` + cookie |
 | `POST /auth/logout` | none | → 204; deletes the current session, clears the cookie |
 | `POST /auth/password-reset` | none, rate limited | `PasswordResetRequest` → 204 (no sign-in) |
+| `POST /auth/invites/lookup` | none, rate limited | `InviteLookupRequest {token}` → `InvitePreview {email?, expires_at, invited_by}` (the inviter's display name); unknown, used, revoked or expired → 400 `invite_invalid`. POST so the token stays out of request logs |
 | `POST /auth/oauth/{provider}/start` | none (`link`: session), rate limited, CSRF | `OAuthStartRequest {purpose: login\|link, return_to?, invite_token?}` → `{redirect_url}` + `cloudit_oauth` cookie |
 | `GET /auth/oauth/{provider}/callback?code&state` | `cloudit_oauth` cookie | 302 to `return_to` (+ session cookie), `/onboarding` (+ `cloudit_onboarding`), or `/login?error=<code>` |
 | `GET /auth/onboarding` | onboarding | `OnboardingInfo` (`invite_required`, `requires_approval`) |
@@ -381,9 +383,9 @@ Bearer cld_…`); **admin** (session of an effective admin); **onboarding** (the
 | `PATCH /scopes/{id}/members/{user_id}` | session; owner | `UpdateMemberRequest {role}` → `ScopeMember`; not a member (incl. the owner) → 404 |
 | `DELETE /scopes/{id}/members/{user_id}` | session; owner, or the member itself (leave) | → 204; the owner can't leave (403) |
 | `GET /scopes/{id}/folders` | any; viewer | `FolderInfo[]` outside the trash, by name |
-| `POST /scopes/{id}/folders` | any; editor (retention overrides: admin) | `CreateFolderRequest {name, retention_max_versions?, retention_max_per_day?}` → 201 `FolderInfo`; 409 `name_taken` |
-| `GET /folders/{id}` | any; viewer | `FolderInfo {id, scope_id, name, head_snapshot_id, head? {snapshot_id, created_at, logical_size, file_count}, unresolved_conflicts, retention_max_versions, retention_max_per_day, effective_retention_max_versions, effective_retention_max_per_day, created_by, created_at, updated_at}` |
-| `PATCH /folders/{id}` | session; editor (retention fields: admin) | `UpdateFolderRequest {name?, retention_max_versions?, retention_max_per_day?}` (retention: omitted = unchanged, `null` = server default) → `FolderInfo` |
+| `POST /scopes/{id}/folders` | any; editor (retention overrides: admin) | `CreateFolderRequest {name, emoji?, retention_max_versions?, retention_max_per_day?}` → 201 `FolderInfo`; 409 `name_taken` |
+| `GET /folders/{id}` | any; viewer | `FolderInfo {id, scope_id, name, emoji, head_snapshot_id, head? {snapshot_id, created_at, logical_size, file_count}, unresolved_conflicts, retention_max_versions, retention_max_per_day, effective_retention_max_versions, effective_retention_max_per_day, created_by, created_at, updated_at}` |
+| `PATCH /folders/{id}` | session; editor (retention fields: admin) | `UpdateFolderRequest {name?, emoji?, retention_max_versions?, retention_max_per_day?}` (emoji: omitted = unchanged, `null` / `""` = none; retention: omitted = unchanged, `null` = server default) → `FolderInfo` |
 | `DELETE /folders/{id}` | session; admin | → 204: to the trash |
 | `POST /folders/{id}/restore` | session; admin of its scope (outside the trash) | optional `RestoreRequest {name?}` → `FolderInfo`; 409 `name_taken` |
 | `POST /folders/{id}/chunks/check` | any; editor | `ChunkCheckRequest {chunks: [{hash, size}]}` (≤ 10 000, size 1..=1 MiB, one size per hash) → `ChunkCheckResponse {missing: [{hash, upload: Transfer}]}` (by hash); 507 `quota_exceeded` if usage + the missing chunks' uncompressed sizes > quota |
@@ -512,9 +514,9 @@ request and 409 for head conflicts), `payload_too_large` 413. The callback carri
 - **Rate limits** (fixed windows, so up to twice the limit may pass across a boundary; shared
   through Redis when available): login (and onboarding link) 20 / 5 min per IP and 10 / 15 min
   per email; register (and onboarding create) 10 / h per IP; setup 10 / 15 min per IP; device
-  token 30 / 15 min per IP; password reset 10 / 15 min per IP; current-password checks
-  (password or email change) 10 / 15 min per user; provider sign-in starts 30 / 5 min per IP;
-  adding scope members (email lookups) 30 / 15 min per user.
+  token 30 / 15 min per IP; password reset 10 / 15 min per IP; invite lookup 30 / 15 min per IP;
+  current-password checks (password or email change) 10 / 15 min per user; provider
+  sign-in starts 30 / 5 min per IP; adding scope members (email lookups) 30 / 15 min per user.
 - **Secrets**: tokens are stored only as SHA-256 hex (`*_hash` columns) and never logged; API
   bodies carry them as `Sensitive`. The setup token is the one secret stored in plaintext (the
   CLI prints it) and logged on purpose while setup is pending. Provider client secrets are
@@ -845,7 +847,7 @@ request and 409 for head conflicts), `payload_too_large` 413. The callback carri
     removing a member deletes the row);
   - `folders(id, scope_id → scopes, name, name_key, active_key?, head_snapshot_id? (no FK:
     SQLite can't add one to an existing table; only commits and restores set it),
-    retention_max_versions?, retention_max_per_day? (integer), created_by → users,
+    retention_max_versions?, retention_max_per_day? (integer), emoji? (text), created_by → users,
     created_at, updated_at, deleted_at?, deleted_by? → users)` (UNIQUE (scope_id, active_key));
   - `scopes.stored_bytes` (bigint, default 0: the usage counter) and `users.quota_bytes?`
     (bigint; NULL = the server default);

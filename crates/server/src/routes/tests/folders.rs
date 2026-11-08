@@ -321,3 +321,70 @@ async fn retention_overrides_and_effective_values() {
     .assert_error(StatusCode::FORBIDDEN, "forbidden");
     assert_eq!(app.get(&custom, &owner).await.body["name"], "Mine");
 }
+
+#[tokio::test]
+async fn folder_emoji() {
+    let app = TestApp::new().await;
+    let t = team(&app).await;
+    let folder = format!("/api/v1/folders/{}", t.folder);
+    assert_eq!(app.get(&folder, &t.viewer).await.body["emoji"], json!(null));
+
+    // Set on create (trimmed); invalid values are refused.
+    let resp = create_folder(
+        &app,
+        &t.editor,
+        &t.scope,
+        json!({ "name": "World", "emoji": " 🌍 " }),
+    )
+    .await;
+    resp.assert(StatusCode::CREATED);
+    assert_eq!(resp.body["emoji"], "🌍");
+    for bad in ["ab", "🌍 🌍", "\u{7}🌍", "12"] {
+        let resp = create_folder(
+            &app,
+            &t.editor,
+            &t.scope,
+            json!({ "name": "Bad", "emoji": bad }),
+        )
+        .await;
+        resp.assert_error(StatusCode::UNPROCESSABLE_ENTITY, "validation_failed");
+        assert_eq!(resp.body["field"], "emoji");
+    }
+
+    // Changed by an editor; other fields untouched; "" and null clear it.
+    let resp = app
+        .call("PATCH", &folder, &t.editor, Some(json!({ "emoji": "🏝️" })))
+        .await;
+    resp.assert(StatusCode::OK);
+    assert_eq!(resp.body["emoji"], "🏝️");
+    assert_eq!(resp.body["name"], "Saves");
+    let resp = app
+        .call(
+            "PATCH",
+            &folder,
+            &t.editor,
+            Some(json!({ "name": "Saves 2" })),
+        )
+        .await;
+    assert_eq!(resp.body["emoji"], "🏝️");
+    let resp = app
+        .call("PATCH", &folder, &t.editor, Some(json!({ "emoji": "" })))
+        .await;
+    assert_eq!(resp.body["emoji"], json!(null));
+    app.call("PATCH", &folder, &t.editor, Some(json!({ "emoji": "🧪" })))
+        .await
+        .assert(StatusCode::OK);
+    let resp = app
+        .call("PATCH", &folder, &t.admin, Some(json!({ "emoji": null })))
+        .await;
+    assert_eq!(resp.body["emoji"], json!(null));
+    app.call("PATCH", &folder, &t.editor, Some(json!({ "emoji": "x" })))
+        .await
+        .assert_error(StatusCode::UNPROCESSABLE_ENTITY, "validation_failed");
+
+    // A viewer can't change it.
+    app.call("PATCH", &folder, &t.viewer, Some(json!({ "emoji": "🧪" })))
+        .await
+        .assert_error(StatusCode::FORBIDDEN, "forbidden");
+    assert_eq!(app.get(&folder, &t.viewer).await.body["emoji"], json!(null));
+}

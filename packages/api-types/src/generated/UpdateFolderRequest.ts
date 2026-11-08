@@ -2,10 +2,15 @@
 
 /**
  * `PATCH /api/v1/folders/{id}`: omitted fields stay unchanged. Renaming needs editor
- * or more, retention changes admin or more. For the retention fields `null` resets
- * to the server default.
+ * or more (the emoji too), retention changes admin or more. For the retention
+ * fields `null` resets to the server default.
  */
 export type UpdateFolderRequest = { name?: string, 
+/**
+ * Omitted: unchanged; `null` or `""`: no emoji; a string: the new emoji (rules as
+ * in [`CreateFolderRequest::emoji`]).
+ */
+emoji?: string | null, 
 /**
  * Omitted: unchanged; `null`: server default; a number: the folder's own limit.
  */

@@ -25,6 +25,8 @@ pub const PASSWORD_RESET_PER_IP: RateLimit = RateLimit::new(10, Duration::from_s
 pub const PASSWORD_CHECK_PER_USER: RateLimit = RateLimit::new(10, Duration::from_secs(15 * MINUTE));
 /// Provider sign-in starts (each stores a flow), per client IP.
 pub const OAUTH_START_PER_IP: RateLimit = RateLimit::new(30, Duration::from_secs(5 * MINUTE));
+/// `POST /auth/invites/lookup`, per client IP (each attempt checks a token).
+pub const INVITE_LOOKUP_PER_IP: RateLimit = RateLimit::new(30, Duration::from_secs(15 * MINUTE));
 /// `POST /scopes/{id}/members`, per user: each attempt looks an email up.
 pub const MEMBER_ADD_PER_USER: RateLimit = RateLimit::new(30, Duration::from_secs(15 * MINUTE));
 

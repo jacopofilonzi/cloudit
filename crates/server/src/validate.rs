@@ -87,6 +87,31 @@ pub fn retention(value: u32, field: &'static str) -> Result<i32, ApiError> {
     i32::try_from(value).map_err(|_| ApiError::validation(field, "too large"))
 }
 
+/// Longest folder emoji in UTF-8 bytes: room for a ZWJ sequence (family, flags with
+/// tags) but not for text.
+pub const MAX_EMOJI_BYTES: usize = 32;
+
+/// A folder emoji: trimmed, `""` = none. At most [`MAX_EMOJI_BYTES`], no whitespace or
+/// control characters, no letters (Unicode `Alphabetic`) and at least one non-ASCII
+/// character: this keeps text out without a grapheme database. Digits, `#` and `*`
+/// stay allowed for keycap sequences (`1️⃣`), and any short emoji sequence fits.
+pub fn emoji(raw: &str, field: &'static str) -> Result<Option<String>, ApiError> {
+    let value = raw.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let invalid = || ApiError::validation(field, "not an emoji");
+    if value.len() > MAX_EMOJI_BYTES
+        || value
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control() || c.is_alphabetic())
+        || value.is_ascii()
+    {
+        return Err(invalid());
+    }
+    Ok(Some(value.to_owned()))
+}
+
 /// A display name (see [`text`]).
 pub fn display_name(raw: &str) -> Result<String, ApiError> {
     text(raw, "display_name", MAX_NAME_CHARS)
@@ -140,6 +165,21 @@ mod tests {
             "https://",
         ] {
             assert!(public_url(bad, "public_url").is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn emojis() {
+        let ok = |raw: &str| emoji(raw, "emoji").unwrap();
+        assert_eq!(ok(" 🌍 "), Some("🌍".to_owned()));
+        assert_eq!(ok("🏝️"), Some("🏝️".to_owned()));
+        assert_eq!(ok("1️⃣"), Some("1️⃣".to_owned()));
+        assert_eq!(ok("👨‍👩‍👧‍👦"), Some("👨‍👩‍👧‍👦".to_owned()));
+        assert_eq!(ok("🇮🇹"), Some("🇮🇹".to_owned()));
+        assert_eq!(ok(""), None);
+        assert_eq!(ok("   "), None);
+        for bad in ["a", "ab", "12", "🌍 🌍", "🌍\u{7}🌍", "é", &"🌍".repeat(9)] {
+            assert!(emoji(bad, "emoji").is_err(), "{bad:?}");
         }
     }
 

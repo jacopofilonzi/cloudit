@@ -26,6 +26,7 @@ pub async fn create(
     db: &impl ConnectionTrait,
     scope: Uuid,
     name: Name,
+    emoji: Option<String>,
     retention: Retention,
     by: Uuid,
 ) -> Result<folders::Model, ApiError> {
@@ -39,6 +40,7 @@ pub async fn create(
         head_snapshot_id: Set(None),
         retention_max_versions: Set(retention.max_versions),
         retention_max_per_day: Set(retention.max_per_day),
+        emoji: Set(emoji),
         created_by: Set(by),
         created_at: Set(now),
         updated_at: Set(now),
@@ -76,6 +78,8 @@ pub async fn list(db: &impl ConnectionTrait, scope: Uuid) -> anyhow::Result<Vec<
 #[derive(Debug, Clone, Default)]
 pub struct Changes {
     pub name: Option<Name>,
+    /// `Some(None)` removes the emoji.
+    pub emoji: Option<Option<String>>,
     /// `Some(None)` resets to the server default.
     pub max_versions: Option<Option<i32>>,
     pub max_per_day: Option<Option<i32>>,
@@ -92,6 +96,9 @@ pub async fn update(db: &impl ConnectionTrait, id: Uuid, changes: Changes) -> Re
             .col_expr(folders::Column::Name, Expr::value(name.name))
             .col_expr(folders::Column::NameKey, Expr::value(name.key.clone()))
             .col_expr(folders::Column::ActiveKey, Expr::value(name.key));
+    }
+    if let Some(value) = changes.emoji {
+        update = update.col_expr(folders::Column::Emoji, Expr::value(value));
     }
     if let Some(value) = changes.max_versions {
         update = update.col_expr(folders::Column::RetentionMaxVersions, Expr::value(value));

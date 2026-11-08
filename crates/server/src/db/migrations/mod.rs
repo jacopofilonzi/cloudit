@@ -22,6 +22,7 @@ mod m20261107_000006_account_approval;
 mod m20261107_000007_create_scopes;
 mod m20261107_000008_create_sync;
 mod m20261108_000009_jobs_and_gc;
+mod m20261108_000010_folder_emoji;
 
 use sea_orm_migration::{MigrationTrait, MigratorTrait};
 
@@ -40,6 +41,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261107_000007_create_scopes::Migration),
             Box::new(m20261107_000008_create_sync::Migration),
             Box::new(m20261108_000009_jobs_and_gc::Migration),
+            Box::new(m20261108_000010_folder_emoji::Migration),
         ]
     }
 }

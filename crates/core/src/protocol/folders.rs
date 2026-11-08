@@ -16,6 +16,8 @@ pub struct FolderInfo {
     pub id: String,
     pub scope_id: String,
     pub name: String,
+    /// User-chosen emoji shown with the name (`null` = none).
+    pub emoji: Option<String>,
     /// The current snapshot (`null` until the first commit).
     pub head_snapshot_id: Option<String>,
     /// Summary of the head snapshot (`null` until the first commit).
@@ -55,6 +57,11 @@ pub struct CreateFolderRequest {
     /// Trimmed; 1 to 100 characters, no control characters; unique in the scope
     /// outside the trash, ignoring case.
     pub name: String,
+    /// One emoji (a short emoji sequence, at most 32 bytes, no letters); `null`,
+    /// omitted or `""` = none.
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
+    pub emoji: Option<String>,
     /// `null` or omitted = server default; `0` = unlimited.
     #[serde(default)]
     #[cfg_attr(test, ts(optional))]
@@ -66,8 +73,8 @@ pub struct CreateFolderRequest {
 }
 
 /// `PATCH /api/v1/folders/{id}`: omitted fields stay unchanged. Renaming needs editor
-/// or more, retention changes admin or more. For the retention fields `null` resets
-/// to the server default.
+/// or more (the emoji too), retention changes admin or more. For the retention
+/// fields `null` resets to the server default.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
@@ -75,6 +82,11 @@ pub struct UpdateFolderRequest {
     #[serde(default)]
     #[cfg_attr(test, ts(optional))]
     pub name: Option<String>,
+    /// Omitted: unchanged; `null` or `""`: no emoji; a string: the new emoji (rules as
+    /// in [`CreateFolderRequest::emoji`]).
+    #[serde(default, skip_serializing_if = "Patch::is_missing")]
+    #[cfg_attr(test, ts(as = "Option<Option<String>>", optional))]
+    pub emoji: Patch<String>,
     /// Omitted: unchanged; `null`: server default; a number: the folder's own limit.
     #[serde(default, skip_serializing_if = "Patch::is_missing")]
     #[cfg_attr(test, ts(as = "Option<Option<u32>>", optional))]
