@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-scopes"
+description = "Enables the scopes command without any pre-configured scope."
+commands.allow = ["scopes"]
+
+[[permission]]
+identifier = "deny-scopes"
+description = "Denies the scopes command without any pre-configured scope."
+commands.deny = ["scopes"]

@@ -16,3 +16,5 @@ data/
 *.md
 Makefile
 apps/web/static/
+apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/icons/

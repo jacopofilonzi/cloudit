@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-server-version"
+description = "Enables the server_version command without any pre-configured scope."
+commands.allow = ["server_version"]
+
+[[permission]]
+identifier = "deny-server-version"
+description = "Denies the server_version command without any pre-configured scope."
+commands.deny = ["server_version"]

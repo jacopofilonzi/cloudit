@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-relocate"
+description = "Enables the relocate command without any pre-configured scope."
+commands.allow = ["relocate"]
+
+[[permission]]
+identifier = "deny-relocate"
+description = "Denies the relocate command without any pre-configured scope."
+commands.deny = ["relocate"]

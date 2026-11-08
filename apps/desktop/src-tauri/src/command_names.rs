@@ -1,0 +1,40 @@
+// The names of the app's commands (`src/commands/`), shared by `build.rs` (which
+// generates one `allow-<name>` permission each) and a test that checks the default
+// capability grants exactly these. Keep in sync with `tauri::generate_handler!`.
+
+/// Every command the front end may invoke.
+pub const COMMANDS: &[&str] = &[
+    "app_info",
+    "session",
+    "suggest_device_name",
+    "normalize_server_url",
+    "start_login",
+    "reopen_login_browser",
+    "cancel_login",
+    "sign_out",
+    "folders",
+    "refresh_status",
+    "refresh_all",
+    "sync_folder",
+    "sync_all",
+    "keep_local",
+    "keep_server",
+    "decide_later",
+    "cancel_op",
+    "scopes",
+    "server_folders",
+    "create_scope",
+    "pick_folder",
+    "link_folder",
+    "create_and_link",
+    "unlink",
+    "relocate",
+    "set_ignore",
+    "set_paused",
+    "refresh_names",
+    "activity",
+    "open_folder",
+    "open_history",
+    "open_log_dir",
+    "server_version",
+];

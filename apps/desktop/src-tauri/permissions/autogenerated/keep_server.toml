@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-keep-server"
+description = "Enables the keep_server command without any pre-configured scope."
+commands.allow = ["keep_server"]
+
+[[permission]]
+identifier = "deny-keep-server"
+description = "Denies the keep_server command without any pre-configured scope."
+commands.deny = ["keep_server"]

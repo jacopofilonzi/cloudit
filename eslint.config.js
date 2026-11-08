@@ -13,7 +13,8 @@ export default defineConfig(
     '**/dist/',
     'target/',
     'data/',
-    'packages/api-types/src/generated/'
+    'packages/api-types/src/generated/',
+    'apps/desktop/src-tauri/gen/'
   ]),
   js.configs.recommended,
   ts.configs.recommended,

@@ -26,3 +26,6 @@ data/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Tauri generated schemas and capability manifests
+apps/desktop/src-tauri/gen/

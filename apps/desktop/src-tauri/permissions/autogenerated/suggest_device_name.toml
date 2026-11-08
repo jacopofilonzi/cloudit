@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-suggest-device-name"
+description = "Enables the suggest_device_name command without any pre-configured scope."
+commands.allow = ["suggest_device_name"]
+
+[[permission]]
+identifier = "deny-suggest-device-name"
+description = "Denies the suggest_device_name command without any pre-configured scope."
+commands.deny = ["suggest_device_name"]
