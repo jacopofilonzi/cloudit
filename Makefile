@@ -3,7 +3,7 @@
 # Targets documented with `## ` show up in `make help`.
 
 .DEFAULT_GOAL := help
-.PHONY: help install dev dev-server dev-web seed types fmt fmt-check lint test check check-types build docker up down up-ha down-ha test-ha clean version
+.PHONY: help install dev dev-server dev-web dev-desktop build-desktop seed types fmt fmt-check lint test check check-types build docker up down up-ha down-ha test-ha clean version
 
 IMAGE ?= cloudit:dev
 
@@ -21,6 +21,12 @@ dev-server: ## Run only the Rust server (http://localhost:8080)
 
 dev-web: ## Run only the Vite dev server (proxies /api to :8080)
 	pnpm --filter @cloudit/web dev
+
+dev-desktop: ## Run the desktop app with hot reload (tauri dev; one instance at a time)
+	cd apps/desktop && pnpm tauri dev
+
+build-desktop: ## Build the desktop release binary (no installer): target/release/cloudit-desktop
+	cd apps/desktop && pnpm tauri build --no-bundle
 
 seed: ## Fill a LOCAL running server with demo data (SEED_ARGS="--url … --db … --setup-token …")
 	cargo run --locked -p cloudit-server --example seed -- $(SEED_ARGS)
@@ -48,8 +54,9 @@ test: ## Rust and JS unit tests
 	cargo test --workspace --locked
 	pnpm -r --if-present run test
 
-check: fmt-check lint test check-types ## Everything CI runs: formatting, lints, tests, type freshness, web build
+check: fmt-check lint test check-types ## Everything CI runs: formatting, lints, tests, type freshness, web and desktop UI builds
 	pnpm --filter @cloudit/web build
+	pnpm --filter @cloudit/desktop build
 
 build: ## Build the web UI and the release server binary
 	pnpm --filter @cloudit/web build

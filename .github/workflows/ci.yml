@@ -30,6 +30,13 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # Tauri 2 Linux prerequisites (the desktop crate is part of the workspace).
+      - name: Tauri system libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev librsvg2-dev libsoup-3.0-dev libgtk-3-dev libssl-dev libxdo-dev patchelf
+
       # Version comes from `packageManager` in package.json.
       - uses: pnpm/action-setup@v6
 
