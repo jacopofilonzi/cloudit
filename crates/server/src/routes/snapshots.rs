@@ -161,18 +161,26 @@ pub async fn commit(
     let parent = match params.parent.as_str() {
         "none" => None,
         raw => {
-            let found = match raw.parse::<Uuid>() {
-                Ok(id) => snapshots::find(&state.db, id).await?,
-                Err(_) => None,
-            };
-            match found {
+            let id = raw
+                .parse::<Uuid>()
+                .map_err(|_| ApiError::validation("parent", "not a snapshot id"))?;
+            match snapshots::find(&state.db, id).await? {
                 Some(s) if s.folder_id == folder.id => Some(s.id),
-                _ => {
+                Some(_) => {
                     return Err(ApiError::validation(
                         "parent",
                         "not a snapshot of this folder",
                     ));
                 }
+                // Unknown: most likely an old base deleted by retention. It can't be
+                // the head, so a normal commit is a conflict; a conflict snapshot
+                // keeps the id (parent_id has no foreign key).
+                None if kind == SnapshotKind::Normal => {
+                    return Err(ApiError::Conflict {
+                        head: folder.head_snapshot_id,
+                    });
+                }
+                None => Some(id),
             }
         }
     };

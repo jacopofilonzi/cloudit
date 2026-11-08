@@ -291,6 +291,23 @@ pub async fn restore(
         restored_from: Some(source.id),
     };
     let tx = db.begin().await.context("starting a transaction")?;
+    // Lock the source first: retention deleting it concurrently either finished (it is
+    // gone: not found) or waits until the copy of its chunk list is committed.
+    let source_alive = snapshots::Entity::update_many()
+        .col_expr(
+            snapshots::Column::Pinned,
+            Expr::col(snapshots::Column::Pinned),
+        )
+        .filter(snapshots::Column::Id.eq(source.id))
+        .exec(&tx)
+        .await
+        .context("locking the restore source")?
+        .rows_affected
+        == 1;
+    if !source_alive {
+        tx.rollback().await.context("rolling back")?;
+        return Err(ApiError::NotFound);
+    }
     let snapshot = snapshots::Entity::insert(model(&new)?)
         .exec_with_returning(&tx)
         .await

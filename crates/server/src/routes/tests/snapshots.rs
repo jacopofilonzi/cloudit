@@ -278,12 +278,21 @@ async fn commits_are_validated() {
         .await;
     elsewhere.assert(StatusCode::CREATED);
     let foreign = elsewhere.body["snapshot"]["id"].as_str().unwrap();
-    for parent in [foreign, "x", "0190d5a0-0000-7000-8000-000000000000"] {
+    for parent in [foreign, "x"] {
         client
             .commit(&manifest, Some(parent), "normal")
             .await
             .assert_error(StatusCode::UNPROCESSABLE_ENTITY, "validation_failed");
     }
+    // An unknown snapshot id (e.g. a base deleted by retention) can't be the head.
+    client
+        .commit(
+            &manifest,
+            Some("0190d5a0-0000-7000-8000-000000000000"),
+            "normal",
+        )
+        .await
+        .assert_error(StatusCode::CONFLICT, "conflict");
     client
         .commit(&manifest, None, "restore")
         .await

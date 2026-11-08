@@ -15,6 +15,7 @@ mod onboarding;
 mod presign;
 mod providers;
 mod quota;
+mod retention;
 mod scopes;
 mod secret_key;
 mod setup;

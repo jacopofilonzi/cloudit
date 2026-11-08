@@ -24,6 +24,7 @@
 //! daily), [`trash_purge`] (1 h, and on request), [`cleanup`] (1 h).
 
 pub mod cleanup;
+pub mod retention;
 pub mod scheduler;
 pub mod store;
 
@@ -99,8 +100,9 @@ pub async fn run_job(
 ) -> anyhow::Result<()> {
     match job {
         JobName::Cleanup => cleanup::run(state, ctx, counts).await,
+        JobName::Retention => retention::run(state, ctx, counts).await,
         // Implemented in the following modules.
-        JobName::Retention | JobName::Gc | JobName::OrphanSweep | JobName::TrashPurge => Ok(()),
+        JobName::Gc | JobName::OrphanSweep | JobName::TrashPurge => Ok(()),
     }
 }
 
