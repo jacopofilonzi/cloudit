@@ -5,7 +5,7 @@ users' folders; a desktop client (planned) syncs local folders with it, and a we
 server as a static SPA) manages accounts, scopes and folders. The UIs talk to the server only
 through its JSON API under `/api/v1`, whose TypeScript types are generated from the Rust ones.
 
-Current state (milestone 5a done): the server has its infrastructure (database with migrations and
+Current state (milestone 5b done): the server has its infrastructure (database with migrations and
 leases, blob storage, optional Redis with a rate limiter, readiness checks), exposes health probes,
 serves the web SPA and has the account API: first-run setup, password accounts with web sessions,
 invites, admin approval of new accounts, password resets, desktop device login (loopback +
@@ -18,7 +18,9 @@ across instances, `/sync/heads` polling fallback) and the background jobs (reten
 garbage collection, orphan sweep, trash purge with permanent delete, cleanup). The web UI
 follows the approved mockup B2: design system, API module, session and route guard, and the
 pages outside the app (login, register, setup, invite, password reset, onboarding, pending,
-desktop device approval) plus an app-shell placeholder; the app pages come with 5b.
+desktop device approval) and the signed-in app: scopes with folders, history, files and conflict
+comparison, sharing, devices, trash, profile (theme and language), live updates; the
+administration pages come with 5c.
 `cloudit-core` implements the sync formats (chunking, chunk encoding, manifest, path rules, diff;
 see "Sync formats"); the server verifies every upload with it. Everything under "Planned
 design" is not implemented yet.
@@ -386,7 +388,7 @@ Bearer cld_…`); **admin** (session of an effective admin); **onboarding** (the
 | `DELETE /scopes/{id}/members/{user_id}` | session; owner, or the member itself (leave) | → 204; the owner can't leave (403) |
 | `GET /scopes/{id}/folders` | any; viewer | `FolderInfo[]` outside the trash, by name |
 | `POST /scopes/{id}/folders` | any; editor (retention overrides: admin) | `CreateFolderRequest {name, emoji?, retention_max_versions?, retention_max_per_day?}` → 201 `FolderInfo`; 409 `name_taken` |
-| `GET /folders/{id}` | any; viewer | `FolderInfo {id, scope_id, name, emoji, head_snapshot_id, head? {snapshot_id, created_at, logical_size, file_count}, unresolved_conflicts, retention_max_versions, retention_max_per_day, effective_retention_max_versions, effective_retention_max_per_day, created_by, created_at, updated_at}` |
+| `GET /folders/{id}` | any; viewer | `FolderInfo {id, scope_id, name, emoji, head_snapshot_id, head? {snapshot_id, created_at, logical_size, file_count, author_name, device_name?}, unresolved_conflicts, version_count (normal + restore snapshots), retention_max_versions, retention_max_per_day, effective_retention_max_versions, effective_retention_max_per_day, created_by, created_at, updated_at}` |
 | `PATCH /folders/{id}` | session; editor (retention fields: admin) | `UpdateFolderRequest {name?, emoji?, retention_max_versions?, retention_max_per_day?}` (emoji: omitted = unchanged, `null` / `""` = none; retention: omitted = unchanged, `null` = server default) → `FolderInfo` |
 | `DELETE /folders/{id}` | session; admin | → 204: to the trash |
 | `POST /folders/{id}/restore` | session; admin of its scope (outside the trash) | optional `RestoreRequest {name?}` → `FolderInfo`; 409 `name_taken` |
@@ -959,16 +961,26 @@ server proxies `/api`, `/health`, `/ready` to `http://localhost:8080`. `#lib/*` 
 | `routes/(auth)/onboarding` | after a provider sign-in: new account (email verified / unverified hint, optional password, invite when required) or link (email + password, or another provider); `onboarding_expired` → back to sign in |
 | `routes/(auth)/pending` | account waiting for approval |
 | `routes/(auth)/device` | desktop app approval (query contract below) |
-| `routes/(app)/+layout.svelte` | the signed-in shell (`AppShell`): sidebar scopes (read-only for now), storage meter, user + sign out |
-| `routes/(app)/+page.svelte` | home placeholder (milestone 5b replaces it) |
+| `routes/(app)/+layout.svelte` | the signed-in shell (`AppShell`): sidebar (scopes with "+", Account: Devices / Trash / Profile, Server: Administration with the pending-users badge for admins), storage meter, user + sign out; loads `app` data, starts / stops `live`, reacts to events (scope list, usage, approvals poll every 60 s) |
+| `routes/(app)/+page.svelte` | `/`: opens the last visited scope (localStorage `cloudit.lastScope`) or the first; with none, an empty state with "create a scope" |
+| `routes/(app)/scopes/[id]/+page.svelte` | a scope: header (counts, size, who it is shared with, `AvatarGroup`), actions by role (Share: owner; ⋯ rename / trash: owner, leave: others; "New folder": editor+), one `ConflictBanner` per folder with open conflicts, `FolderCard`s + the `FolderPanel` of `?folder=<id>` (default: the first folder); loads folders + members, reloads on live events (`tick` makes the panels reload too) |
+| `routes/(app)/devices` | desktop devices (rename, revoke; "never expires", revoked / expired status) and web sessions (current marked, sign out others) |
+| `routes/(app)/trash` | trash: restore (a `name_taken` opens a rename prompt), delete now, empty trash (confirms), who deleted (members of the scope), the space note |
+| `routes/(app)/profile` | name / email (current password when the email changes), language + theme (`Segmented`, function bindings), password (set / change), linked identities (unlink, `last_login_method` shown; link buttons start `purpose: link` with `return_to` = the profile), storage per owned scope |
+| `routes/(app)/admin` | placeholder until 5c |
 | `lib/api.ts` | the only API module: `APP_ROOT`/`API_BASE` from `resolve('')`, one typed function per endpoint, `credentials: 'same-origin'`, `ApiError` (`code`, `status`, `field`, `headSnapshotId`, `hashes`, `detail`, `retryAfter`), `SignupResult` (201 signed in / 202 pending), `archiveUrl`, `eventsUrl` |
 | `lib/errors.ts` | exhaustive map code → i18n key; `codeMessageKey` (codes from URLs), `errorText` (rate limits with the wait), `formError` (`validation_failed` + `field` under the input, the rest to the form banner) |
 | `lib/session.svelte.ts` | `session`: `status`, `config` (`AuthConfig`), `user` (`GET /me`; 401 / `setup_required` / `account_*` = signed out), `load`, `signedInAs`, `signedOut` |
 | `lib/guard.ts` | pure route guard (tested): setup pending → `/setup`; guest pages (`/login`, `/register`, `/invite/…`) send a signed-in user to a safe `return_to` or `/`; open pages (`/reset-password/…`, `/onboarding`, `/pending`) never redirect; everything else (app, `/device`) needs a session → `/login?return_to=<path+query>`; `safeReturnTo` |
 | `lib/device.ts` | `/device` query parsing and checks (as the server), `cancelUrl` (tested) |
-| `lib/fields.ts` | `inviteToken` (token or full link), `osName` (tested) |
+| `lib/fields.ts` | `inviteToken` (token or full link), `osName`, `isEmail`, `browserLabel` (user agent → "Chrome · Windows") (tested) |
+| `lib/app.svelte.ts` | `app`: scopes, usage, pending users shared by the pages; `load*` for direct use after a change, `schedule*` (coalesced) for live events |
+| `lib/live.svelte.ts` | `live` + `onLive(listener)`: one `EventSource` on `/events` while signed in; on every (re)connect fetches `/sync/heads` (ETag) and emits `resync` (not the first time); with `realtime: local` polls every 5 min and emits `folder_head` / `history_changed` / `folder_changed` for what changed; toasts a new conflict; a closed stream re-checks the session |
+| `lib/coalesce.ts` | `coalesced(run, delay)`: bursts of refreshes become few runs, never stale (tested) |
+| `lib/manifest.ts` | `diffManifests` (added / removed / modified / unchanged by chunk hashes, the conflict "Compare"), `filterEntries`, `splitPath`, `mtimeOf` (tested) |
+| `lib/roles.ts`, `lib/plural.ts`, `lib/scope-text.ts` | `atLeast(role, min)`; `tn('base', count)` over `base_one` / `base_other` keys; `joinNames` (`Intl.ListFormat`) |
 | `lib/lang.ts` | initial language (localStorage, else browser) and persisted switching |
-| `lib/components/` | `AuthCard` (centred card: logo or custom header, title, subtitle), `ProviderButtons` ("Continue with …", busy state), `LanguageSwitch`, `AppShell` (250px sidebar: brand, `nav` snippet, storage meter, user; main column), `ShellNavItem`, `ShellNavLabel` |
+| `lib/components/` | `AuthCard` (centred card: logo or custom header, title, subtitle), `ProviderButtons` ("Continue with …", busy state), `LanguageSwitch`, `AppShell` (250px sidebar: brand, `nav` snippet, storage meter, user; main column; a drawer opened from a top bar below `md`), `ShellNavItem`, `ShellNavLabel`; app: `ScopeCreateModal`, `PromptModal` (one text field: rename, label, restore under a new name; errors stay in the dialog), `FolderCard`, `FolderCreateModal` (name + emoji), `FolderPanel` (details grid + tabs; `tab` and `inspect` are bound by the page so "Compare" can open Files on a snapshot) with `HistoryTab` (UTC-day groups, hover / focus / touch actions: restore with `expected_head`, ZIP link, pin, label, files; "older" by cursor; keeps the loaded length on refresh), `FilesTab` (manifest list with filter, or the diff of a conflict snapshot against the head) and `FolderSettingsTab` (rename + emoji: editor; retention + trash: admin; read-only below), `ConflictBanner` (Compare / Keep server = `resolve` / Keep <device> = `restore` with `expected_head`; `conflict` → refresh and tell the user), `ShareModal` (owner: add by email + role, role selects, remove, role explanations) |
 
 **`/device` query contract** (desktop client, milestone 6): the app opens
 `<server>/device?code_challenge=<43 base64url chars>&code_challenge_method=S256&redirect_uri=http://127.0.0.1:<port>/<path>&state=<1..512 chars>&device_name=<name>&os=<windows|linux|macos>`
@@ -988,7 +1000,7 @@ runes, typed props, accessible (labels, focus rings via `:focus-visible`, keyboa
 | File | Responsibility |
 | --- | --- |
 | `styles.css` | colour tokens (`:root` light, `[data-theme='dark']` dark, `@theme inline` → `bg-canvas`, `bg-surface`, `bg-surface-alt`, `text-text`, `text-muted`, `border-border(-strong)`, `primary` / `-hover` / `-fg` (accent text) / `-soft` / `on-primary`, `success`, `warning`, `danger` (+ `-soft`, `-fg`, `-hover`), `off`, `overlay`, `shadow`, `focus`, `--cl-avatar-0..7`); `dark:` variant on `data-theme`; body 14px (root stays 16px so spacing = mockup px); `@utility` `card`, `note`, `icon-tile`, `divider-label`, `btn` + `btn-sm` / `btn-lg` / `btn-primary` / `btn-secondary` / `btn-ghost` / `btn-danger` / `btn-danger-solid`, `input`, `field-label`, `hint`, `field-error`, `tag`, `status-dot`, `data-table` |
-| `lib/components/` | `Button` (variants primary / secondary / ghost / danger / danger-solid, sizes sm / md / lg, `block`, `loading`, `href` → link), `Card`, `Tag` (primary / success / warning / danger / neutral), `StatusDot`, `Input`, `Select`, `Field` (label + control snippet receiving `{id, aria-describedby, aria-invalid}` + hint + error; `group` for radio groups), `Toggle` (switch), `RadioCards`, `Segmented` (`track` / `chips`, native radios), `Tabs` (tablist with arrow keys, or nav links), `Modal` (native `<dialog>`: focus trap, Esc, backdrop click), `ConfirmDialog`, `ConfirmHost`, `Banner` (info / success / warning / danger), `Toaster`, `Avatar`, `AvatarGroup`, `Table` + `TableActions`, `EmptyState`, `Spinner`, `Skeleton`, `ProviderIcon` (Simple Icons logo on the brand colour by icon key or kind; key icon for Microsoft, ZITADEL, Pocket ID, generic OIDC), `EmojiPicker` (curated grid + free input), `Logo` |
+| `lib/components/` | `Button` (variants primary / secondary / ghost / danger / danger-solid, sizes sm / md / lg, `block`, `loading`, `href` → link), `Card`, `Tag` (primary / success / warning / danger / neutral), `StatusDot`, `Input`, `Select`, `Field` (label + control snippet receiving `{id, aria-describedby, aria-invalid}` + hint + error; `group` for radio groups), `Toggle` (switch), `RadioCards`, `Segmented` (`track` / `chips`, native radios), `Tabs` (tablist with arrow keys, or nav links), `Modal` (native `<dialog>`: focus trap, Esc, backdrop click), `ConfirmDialog`, `ConfirmHost`, `Banner` (info / success / warning / danger), `Toaster`, `Avatar`, `AvatarGroup`, `Table` + `TableActions`, `EmptyState`, `Spinner`, `Skeleton`, `ProviderIcon` (Simple Icons logo on the brand colour by icon key or kind; key icon for Microsoft, ZITADEL, Pocket ID, generic OIDC), `EmojiPicker` (curated grid + free input), `Menu` (⋯ actions list), `Logo` |
 | `lib/format.ts` | `formatRelative` (Intl.RelativeTimeFormat), `formatDateTime` / `formatDate` / `formatTime`, `formatBytes` (decimal units, `B` below 1 kB), `formatNumber`, `utcDayKey`, `groupByUtcDay`, `formatUtcDay` ("Today", "Yesterday", "3 Nov"); all take the language |
 | `lib/theme.svelte.ts` | `initTheme`, `getThemeMode` / `setThemeMode` (`system` / `light` / `dark`, localStorage `cloudit.theme`), `getTheme`, `resolveTheme`; writes `<html data-theme>` and follows system changes |
 | `lib/toast.svelte.ts` | `toast.success / info / error`, `showToast`, `dismissToast`, `getToasts` (errors stay 7 s, others 4 s) |
@@ -1096,7 +1108,19 @@ warnings, eslint, svelte-check, cargo test, vitest, type freshness, web build), 
 `up`/`down`, `up-ha`/`down-ha` (HA example stack; `down-ha` keeps volumes), `test-ha`
 (`scripts/test-ha.mjs`: postgres + garage + valkey from `docker-compose.ha.yml` as project
 `cloudit-test` on random 127.0.0.1 ports, `cargo test -p cloudit-server` with the `TEST_*` env, then
-`down -v`; `--keep` leaves them running), `clean`, `version V=x.y.z`.
+`down -v`; `--keep` leaves them running), `seed`, `clean`, `version V=x.y.z`.
+
+**Dev seed** (`make seed`, `crates/server/examples/seed/`: `main.rs` the scenario, `api.rs` HTTP +
+sync client on `cloudit-core`, `data.rs` deterministic demo files): fills a LOCAL running
+server through its real API. `SEED_ARGS="--url http://127.0.0.1:8080 --db <cloudit.db> --setup-token <t>"`
+(`SETUP_TOKEN` env also works); any non-loopback host is refused, and it stops if the admin
+already has scopes (use an empty data dir). It runs the first-run setup, invites and registers two
+friends, creates scopes (one shared with roles, one owned by a friend with the admin as member),
+folders with emoji, several versions over days, a pinned + labelled one, a restore and two open
+conflicts (device sign-in without a browser: loopback + PKCE). The API cannot set creation
+times, so `--db` (the server's SQLite file) lets it back-date the snapshots; without it all
+versions are "today". Users `jacopo@demo.test` (admin), `marco@demo.test`, `luca@demo.test`,
+password `demo-password-1`. Needs `S3_PRESIGN=false` (proxy transfers).
 
 Server CLI (`cloudit-server <command>`; `help` lists them): `setup-token` (prints the pending
 first-run token), `admin reset-password <email>` (prints a 24-hour reset path, plus the URL when
@@ -1114,8 +1138,8 @@ Milestones: 1 scaffolding (done) · 2 core chunking/manifest (done) · 3a server
 3c identity providers (OIDC / OAuth2), onboarding, identity linking (done) ·
 4a scopes, folders, sharing, trash, retention settings (done) · 4b sync protocol, quotas
 (done) · 4c events and background jobs (done) · 5a web UI foundations and pages outside the
-app (done) · 5b (next) the app pages (scopes, folders, history, sharing, devices, trash, profile
-with the theme switch, admin) · 6 desktop manual
+app (done) · 5b the app pages (scopes, folders, history, sharing, devices, trash, profile, live
+updates: done) · 5c (next) the administration pages · 6 desktop manual
 sync + conflicts · 7 desktop auto sync/tray/autostart/installers.
 
 Planned layout additions: `apps/desktop` (Tauri 2 + Svelte 5, milestone 6; OS code in a `platform/`
