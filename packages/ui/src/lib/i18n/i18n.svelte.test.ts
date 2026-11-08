@@ -8,17 +8,17 @@ afterEach(() => setLang(DEFAULT_LANG));
 describe('t', () => {
   test('translates in the default language', () => {
     expect(getLang()).toBe('en');
-    expect(t('health.title')).toBe(en['health.title']);
+    expect(t('login.title')).toBe(en['login.title']);
   });
 
   test('follows the current language', () => {
     setLang('it');
-    expect(t('health.title')).toBe(it['health.title']);
+    expect(t('login.title')).toBe(it['login.title']);
   });
 
   test('replaces placeholders and keeps unknown ones', () => {
-    expect(t('health.version', { version: '1.2.3' })).toBe('Version 1.2.3');
-    expect(t('health.version', {})).toBe('Version {version}');
+    expect(t('home.welcome', { name: 'Ada' })).toBe('Hello, Ada');
+    expect(t('home.welcome', {})).toBe('Hello, {name}');
   });
 });
 

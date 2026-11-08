@@ -1,89 +1,253 @@
 /*
- * Shared theme for every cloudit UI (web and desktop).
+ * Shared theme for every cloudit UI (web and desktop), from the approved mockup "B2".
  * Import it after `@import 'tailwindcss';` in the app's global CSS.
  *
  * Colours are semantic tokens (`bg-surface`, `text-muted`, `border-border`…); markup
- * never uses raw colours. Light values live in `:root`, dark values in the
- * `prefers-color-scheme: dark` block; `@theme inline` maps them to Tailwind utilities.
+ * never uses raw colours. Light values live in `:root`, dark values under
+ * `[data-theme='dark']` on `<html>`; `@theme inline` maps them to Tailwind utilities.
+ * The theme module (`theme.svelte.ts`) sets `data-theme` from the user's choice
+ * (light / dark / system); the app's `app.html` sets it before the first paint.
+ * The `dark:` variant follows the same attribute.
  *
- * PLACEHOLDER VALUES: the palette, layout and components have not been designed yet.
- * They are deliberately neutral (greys) and will be replaced by the user-approved
- * mockup (milestone 5). Keep the token names; change only the values then.
+ * Shapes: controls and buttons `rounded-lg` (8px), cards `rounded-xl` (12px), tags
+ * `rounded-md` (6px); body text 14px (`text-xs` 12px for hints and labels). Sizes in
+ * the markup are Tailwind's scale or the mockup's pixels, never `rem` fractions.
  */
 
 /* Scan this package's components for class names. */
 @source './lib';
 
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
 :root {
-  color-scheme: light dark;
-  --cl-surface: oklch(0.99 0 0);
-  --cl-surface-alt: oklch(0.96 0 0);
-  --cl-text: oklch(0.22 0 0);
-  --cl-muted: oklch(0.5 0 0);
-  --cl-border: oklch(0.88 0 0);
-  --cl-primary: oklch(0.35 0 0);
-  --cl-primary-hover: oklch(0.25 0 0);
-  --cl-on-primary: oklch(0.99 0 0);
-  --cl-danger: oklch(0.56 0.2 25);
-  --cl-danger-hover: oklch(0.5 0.2 25);
-  --cl-on-danger: oklch(0.99 0 0);
-  --cl-success: oklch(0.6 0.15 150);
+  color-scheme: light;
+  --cl-canvas: #f7f7fb;
+  --cl-surface: #ffffff;
+  --cl-surface-alt: #f1f2f7;
+  --cl-text: #1d2030;
+  --cl-muted: #6b7086;
+  --cl-border: #e4e6ef;
+  --cl-border-strong: #cfd2df;
+  --cl-primary: #5b5bd6;
+  --cl-primary-hover: #4b4bc4;
+  --cl-primary-fg: #5b5bd6;
+  --cl-primary-soft: #ececfb;
+  --cl-on-primary: #ffffff;
+  --cl-success: #1f9d6b;
+  --cl-success-soft: #e3f5ec;
+  --cl-warning: #c47a14;
+  --cl-warning-soft: #f7ead6;
+  --cl-warning-border: #ecd3ab;
+  --cl-danger: #d14343;
+  --cl-danger-hover: #b93636;
+  --cl-danger-fg: #d14343;
+  --cl-danger-soft: #fbe6e6;
+  --cl-on-danger: #ffffff;
+  --cl-off: #c3c6d4;
+  --cl-overlay: rgb(29 32 48 / 0.33);
+  --cl-shadow: rgb(29 32 48 / 0.2);
+  --cl-focus: #5b5bd6;
+  /* Avatar backgrounds (white initials), picked deterministically per user. */
+  --cl-avatar-0: #5b5bd6;
+  --cl-avatar-1: #1f9d6b;
+  --cl-avatar-2: #c47a14;
+  --cl-avatar-3: #8a5bd6;
+  --cl-avatar-4: #d6875b;
+  --cl-avatar-5: #2f8fbf;
+  --cl-avatar-6: #c2457a;
+  --cl-avatar-7: #5f7d3a;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --cl-surface: oklch(0.19 0 0);
-    --cl-surface-alt: oklch(0.24 0 0);
-    --cl-text: oklch(0.94 0 0);
-    --cl-muted: oklch(0.7 0 0);
-    --cl-border: oklch(0.34 0 0);
-    --cl-primary: oklch(0.85 0 0);
-    --cl-primary-hover: oklch(0.93 0 0);
-    --cl-on-primary: oklch(0.18 0 0);
-    --cl-danger: oklch(0.66 0.19 25);
-    --cl-danger-hover: oklch(0.72 0.17 25);
-    --cl-on-danger: oklch(0.18 0 0);
-    --cl-success: oklch(0.72 0.15 150);
-  }
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --cl-canvas: #0f1117;
+  --cl-surface: #181b24;
+  --cl-surface-alt: #21252f;
+  --cl-text: #e6e8f0;
+  --cl-muted: #969cb2;
+  --cl-border: #2c303d;
+  --cl-border-strong: #3d4253;
+  --cl-primary: #6262de;
+  --cl-primary-hover: #7272ea;
+  --cl-primary-fg: #a3a3ff;
+  --cl-primary-soft: #262848;
+  --cl-on-primary: #ffffff;
+  --cl-success: #45c48f;
+  --cl-success-soft: #15342a;
+  --cl-warning: #e5a443;
+  --cl-warning-soft: #3a2d16;
+  --cl-warning-border: #5c4520;
+  --cl-danger: #cf4646;
+  --cl-danger-hover: #dd5757;
+  --cl-danger-fg: #f17d7d;
+  --cl-danger-soft: #3d1f22;
+  --cl-on-danger: #ffffff;
+  --cl-off: #4a4f60;
+  --cl-overlay: rgb(0 0 0 / 0.55);
+  --cl-shadow: rgb(0 0 0 / 0.5);
+  --cl-focus: #a3a3ff;
+  --cl-avatar-0: #5b5bd6;
+  --cl-avatar-1: #1c8a5f;
+  --cl-avatar-2: #a86812;
+  --cl-avatar-3: #7a4fc4;
+  --cl-avatar-4: #b86f47;
+  --cl-avatar-5: #27799f;
+  --cl-avatar-6: #a83a69;
+  --cl-avatar-7: #526d31;
 }
 
 @theme inline {
+  --font-sans: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --color-canvas: var(--cl-canvas);
   --color-surface: var(--cl-surface);
   --color-surface-alt: var(--cl-surface-alt);
   --color-text: var(--cl-text);
   --color-muted: var(--cl-muted);
   --color-border: var(--cl-border);
+  --color-border-strong: var(--cl-border-strong);
   --color-primary: var(--cl-primary);
   --color-primary-hover: var(--cl-primary-hover);
+  --color-primary-fg: var(--cl-primary-fg);
+  --color-primary-soft: var(--cl-primary-soft);
   --color-on-primary: var(--cl-on-primary);
+  --color-success: var(--cl-success);
+  --color-success-soft: var(--cl-success-soft);
+  --color-warning: var(--cl-warning);
+  --color-warning-soft: var(--cl-warning-soft);
+  --color-warning-border: var(--cl-warning-border);
   --color-danger: var(--cl-danger);
   --color-danger-hover: var(--cl-danger-hover);
+  --color-danger-fg: var(--cl-danger-fg);
+  --color-danger-soft: var(--cl-danger-soft);
   --color-on-danger: var(--cl-on-danger);
-  --color-success: var(--cl-success);
+  --color-off: var(--cl-off);
+  --color-overlay: var(--cl-overlay);
+  --color-shadow: var(--cl-shadow);
+  --color-focus: var(--cl-focus);
 }
 
 @layer base {
+  /* The root stays 16px so Tailwind's spacing scale equals the mockup's pixels
+     (`p-8` = 32px); the body text is 14px. */
   body {
-    @apply bg-surface text-text antialiased;
+    @apply bg-canvas font-sans text-[14px] text-text antialiased;
+  }
+
+  h1 {
+    @apply text-[24px] leading-tight font-bold;
+  }
+
+  h2 {
+    @apply text-[16px] font-bold;
+  }
+
+  a {
+    @apply text-primary-fg;
+  }
+
+  code {
+    @apply rounded bg-surface-alt px-1 py-0.5 text-[0.85em];
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-focus;
   }
 }
 
+/* Surfaces */
+
 @utility card {
-  @apply rounded-lg border border-border bg-surface-alt p-4 shadow-sm;
+  @apply rounded-xl border border-border bg-surface;
 }
 
+@utility note {
+  @apply rounded-[10px] bg-surface-alt px-3.5 py-3 text-[13px] text-muted;
+}
+
+@utility icon-tile {
+  @apply grid size-9 flex-none place-items-center rounded-[10px] bg-surface-alt text-lg;
+}
+
+@utility divider-label {
+  @apply my-5 flex items-center gap-2.5 text-xs text-muted before:h-px before:flex-1 before:bg-border before:content-[''] after:h-px after:flex-1 after:bg-border after:content-[''];
+}
+
+/* Buttons */
+
 @utility btn {
-  @apply inline-flex cursor-pointer items-center justify-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-50;
+  @apply inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg border px-[13px] py-[7px] whitespace-nowrap no-underline transition-colors disabled:cursor-not-allowed disabled:opacity-55 aria-disabled:cursor-not-allowed aria-disabled:opacity-55;
+}
+
+@utility btn-sm {
+  @apply gap-1.5 px-[9px] py-1 text-xs;
+}
+
+@utility btn-lg {
+  @apply px-4 py-2.5;
 }
 
 @utility btn-primary {
-  @apply border-transparent bg-primary text-on-primary hover:bg-primary-hover;
+  @apply border-primary bg-primary text-on-primary hover:border-primary-hover hover:bg-primary-hover;
 }
 
 @utility btn-secondary {
   @apply border-border bg-surface text-text hover:bg-surface-alt;
 }
 
+@utility btn-ghost {
+  @apply border-transparent bg-transparent text-muted hover:bg-surface-alt hover:text-text;
+}
+
 @utility btn-danger {
-  @apply border-transparent bg-danger text-on-danger hover:bg-danger-hover;
+  @apply border-border bg-surface text-danger-fg hover:bg-danger-soft;
+}
+
+@utility btn-danger-solid {
+  @apply border-danger bg-danger text-on-danger hover:border-danger-hover hover:bg-danger-hover;
+}
+
+/* Form controls */
+
+@utility input {
+  @apply w-full rounded-lg border border-border bg-surface px-3 py-[9px] leading-[18px] text-text placeholder:text-muted/70 hover:border-border-strong read-only:bg-surface-alt disabled:cursor-not-allowed disabled:opacity-60 aria-invalid:border-danger;
+}
+
+@utility field-label {
+  @apply mb-1.5 block text-xs text-muted;
+}
+
+@utility hint {
+  @apply mt-[5px] text-xs text-muted;
+}
+
+@utility field-error {
+  @apply mt-[5px] text-xs text-danger-fg;
+}
+
+/* Tags and dots */
+
+@utility tag {
+  @apply inline-flex items-center gap-1 rounded-md px-[7px] py-px text-[11px] font-semibold whitespace-nowrap;
+}
+
+@utility status-dot {
+  @apply inline-block size-2 flex-none rounded-full;
+}
+
+/* Tables: `<table class="data-table">` inside a `card`. */
+
+@utility data-table {
+  @apply w-full border-collapse;
+
+  & th {
+    @apply border-b border-border px-4 py-2.5 text-left text-xs font-semibold text-muted;
+  }
+
+  & td {
+    @apply border-b border-border px-4 py-3 align-middle;
+  }
+
+  & tr:last-child td {
+    @apply border-b-0;
+  }
 }
