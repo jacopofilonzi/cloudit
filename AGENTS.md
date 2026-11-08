@@ -264,17 +264,40 @@ and align this project's copies with it:
     `vite.config.ts`); `$lib` is replaced by `#lib` (package.json `imports`, explicit extensions:
     `#lib/api.ts`); `$app/environment` → `$app/env`; `$app/stores` is gone (use `$app/state`);
     `base` from `$app/paths` is gone (use `resolve()`/`asset()`); tsconfig extends `$app/tsconfig`.
-    adapter-static 4, Vite 8, vite-plugin-svelte 7, Svelte 5.57.
+    adapter-static 4, Vite 8, vite-plugin-svelte 7, Svelte 5.57 (generic components:
+    `<script lang="ts" generics="T extends string">`, not `generic`). **Typed `resolve()`**:
+    route IDs keep groups (`'/(auth)/login'`), so links use base-relative pathnames without the
+    leading `/` (`resolve('login')`, `resolve('')`); a union-typed or dynamic path can't be
+    passed (the guard builds those from `APP_ROOT`). ESLint's
+    `svelte/no-navigation-without-resolve` wants every `href` / `goto` wrapped in `resolve()`.
   - **TypeScript pinned to 6.0.x**: svelte-check, typescript-eslint and SvelteKit don't support 7 yet.
   - Tailwind 4.3 via `@tailwindcss/vite`; ESLint 10 (flat config); vitest 5; pnpm 12 (pinned in
-    `packageManager`).
+    `packageManager`, which refuses versions younger than its minimum release age: pick an
+    older version rather than adding a `minimumReleaseAgeExclude` entry).
+  - **@lucide/svelte 1.x** (the Svelte 5 package, not `lucide-svelte`): import each icon from
+    its own module, `import Folder from '@lucide/svelte/icons/folder'` (props `size`,
+    `strokeWidth`, `fill`, `class`); the barrel import makes the dev server load every icon.
+  - **simple-icons 16**: named exports `siGithub`… (`{title, slug, hex, path, svg}`), 5 MB of
+    ESM that the build tree-shakes; Microsoft, ZITADEL and Pocket ID have no logo there.
 - Deleting user data means moving it to the trash / soft delete, unless agreed otherwise.
 
 ### UI
 
-- **The UI design is not decided yet.** Palette, layout and components will be chosen from mockups
-  (milestone 5); until then keep UI minimal and neutral, and the token values in
-  `packages/ui/src/styles.css` are placeholders. Real UI work starts from a user-approved mockup.
+- **The design is decided: mockup "B2"** (light, indigo accent `#5b5bd6`, dark values derived).
+  Tokens and `@utility` patterns live in `packages/ui/src/styles.css`, shared components in
+  `packages/ui/src/lib/components/` (STRUCTURE.md "Shared UI"): reuse them instead of
+  restyling pages. New screens or a visibly different layout still start from a mockup the
+  user approves (never committed).
+- Theme: `light` / `dark` / `system` (default) through `theme.svelte.ts`, applied as
+  `<html data-theme>`; style dark mode with the tokens (or the `dark:` variant), never with
+  `prefers-color-scheme` directly.
+- Icons are `@lucide/svelte` (UI) and `ProviderIcon` (identity-provider logos); no emoji as
+  icons. Folder emoji are user data (`FolderInfo.emoji`, `EmojiPicker`).
+- Destructive actions ask through `confirmAction()` / `ConfirmDialog`, never the browser's
+  `confirm()` / `alert()`. Transient feedback uses `toast`.
+- Forms: show `validation_failed` + `field` under the input (`formError`), other errors in a
+  `Banner`; submit buttons stay enabled (native `required` validation), with `loading` while
+  the request runs.
 - Every UI string goes through i18n, with both the English and the Italian key (`en` is the
   default); the type check must catch a missing key. Dictionaries live in
   `packages/ui/src/lib/i18n/` (`it` is typed against the `en` keys). Italian glossary: scope →
@@ -289,6 +312,9 @@ and align this project's copies with it:
 - No external scripts from CDNs unless the platform requires them; libraries are npm packages, and heavy
   ones are loaded lazily.
 - Never hard-code base paths or the API prefix: build URLs from the shared base constant.
+- Routing: the root layout's guard (`apps/web/src/lib/guard.ts`) decides redirects from the
+  session; pages don't redirect on their own. A new page outside the app shell goes under
+  `routes/(auth)/` and, if it must stay reachable signed in or out, into the guard's open list.
 
 ## Testing
 
@@ -402,6 +428,10 @@ and align this project's copies with it:
   shortened with `state.events.set_keepalive`. `tokio::spawn` of futures that borrow in
   closures (`stream::iter(&keys).map(|k| …)`) fails with "`Send` is not general enough":
   move owned values into the futures.
+- The UI picks its language from the browser (`navigator.languages`) unless one was chosen:
+  headless e2e runs on this machine come up in Italian unless the Playwright context sets
+  `locale: 'en-GB'`. Unit tests of formatting pass the language explicitly (Italian CLDR does
+  not group 4-digit numbers: `2410`, but `24.100`).
 - The web app is an SPA (`ssr = false`, adapter-static `fallback: 'index.html'`); in production the
   Rust server serves `WEB_DIR` and falls back to `index.html`, while unknown `/api/*` paths answer a
   JSON `not_found`.

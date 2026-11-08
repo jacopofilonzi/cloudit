@@ -11,8 +11,9 @@ with other users.
 storage, optional Redis), the account API (setup, password accounts, invites, desktop device
 login, admin, sign-in with OIDC / GitHub / Discord), scopes, folders, sharing and the trash
 (API only), the sync protocol (chunk upload and download, versioned snapshots with conflict
-detection, history, restore, ZIP download) with storage quotas, and serves a placeholder web
-page. There is no desktop client yet; don't use it for real data.
+detection, history, restore, ZIP download) with storage quotas. The web UI has its sign-in
+pages (setup, login, registration, invites, password reset, provider onboarding, desktop app
+approval); the pages to manage scopes, folders and the server come next. There is no desktop client yet; don't use it for real data.
 
 ## Quick start (Docker)
 
@@ -39,8 +40,9 @@ Every instance of an HA deployment prints the same token. Use it to create the f
 account; it stops working once setup is done. Until then the API answers `setup_required`.
 To choose the token yourself (automated deployments) set `SETUP_TOKEN` (at least 16 characters).
 
-The setup page of the web UI is not built yet (it comes with the UI milestone); for now use the
-API. Browser-style requests must carry the server's origin:
+Open the web UI: while setup is pending it shows the setup page (token, your account, the
+public URL and the registration mode). Scripts can use the API instead; browser-style
+requests must carry the server's origin:
 
 ```sh
 curl -X POST http://localhost:8080/api/v1/setup \

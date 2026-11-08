@@ -5,7 +5,7 @@ users' folders; a desktop client (planned) syncs local folders with it, and a we
 server as a static SPA) manages accounts, scopes and folders. The UIs talk to the server only
 through its JSON API under `/api/v1`, whose TypeScript types are generated from the Rust ones.
 
-Current state (milestone 4 done): the server has its infrastructure (database with migrations and
+Current state (milestone 5a done): the server has its infrastructure (database with migrations and
 leases, blob storage, optional Redis with a rate limiter, readiness checks), exposes health probes,
 serves the web SPA and has the account API: first-run setup, password accounts with web sessions,
 invites, admin approval of new accounts, password resets, desktop device login (loopback +
@@ -15,8 +15,10 @@ folders, sharing with roles, the trash and the retention settings, and the sync 
 chunk transfer (proxied or presigned), snapshot commits with conflicts, history, restore,
 pin / label, ZIP downloads, storage usage and quotas; real-time events (SSE, Redis pub/sub
 across instances, `/sync/heads` polling fallback) and the background jobs (retention,
-garbage collection, orphan sweep, trash purge with permanent delete, cleanup). API only: the web pages come with the
-mockups of milestone 5 (the web page shows the server status).
+garbage collection, orphan sweep, trash purge with permanent delete, cleanup). The web UI
+follows the approved mockup B2: design system, API module, session and route guard, and the
+pages outside the app (login, register, setup, invite, password reset, onboarding, pending,
+desktop device approval) plus an app-shell placeholder; the app pages come with 5b.
 `cloudit-core` implements the sync formats (chunking, chunk encoding, manifest, path rules, diff;
 see "Sync formats"); the server verifies every upload with it. Everything under "Planned
 design" is not implemented yet.
@@ -929,39 +931,77 @@ Read once at startup (`config/mod.rs`); empty values count as unset. Documented 
 
 ## Frontend
 
-The UI design (palette, layout, components) is not decided: it will come from user-approved
-mockups in milestone 5. The current page and theme are neutral placeholders.
+The design is the user-approved mockup "B2" (light theme, indigo accent `#5b5bd6`; dark values
+derived from it). Tokens and shared patterns live in `packages/ui/src/styles.css`; components in
+`packages/ui/src/lib/components/`. Icons: `@lucide/svelte` (one deep import per icon,
+`@lucide/svelte/icons/<name>`), provider logos from `simple-icons` (named imports, tree-shaken).
 
 ### Web app (`apps/web/src`)
 
 SvelteKit 3 SPA: `ssr = false`, adapter-static with `fallback: 'index.html'`; config lives in
-`apps/web/vite.config.ts` (no `svelte.config.js` in Kit 3). The Vite dev server proxies `/api`,
-`/health`, `/ready` to `http://localhost:8080`. `#lib/*` maps to `src/lib/*` (package.json `imports`).
+`apps/web/vite.config.ts` (no `svelte.config.js` in Kit 3; also the vitest config). The Vite dev
+server proxies `/api`, `/health`, `/ready` to `http://localhost:8080`. `#lib/*` maps to
+`src/lib/*` (package.json `imports`). Links use `resolve('<pathname>')` from `$app/paths`
+(base-relative, no leading `/`: `resolve('login')`, `resolve('')` for the root).
 
 | File | Responsibility |
 | --- | --- |
-| `app.html`, `app.css` | HTML shell; global CSS (`tailwindcss` + `@cloudit/ui/styles.css`) |
+| `app.html`, `app.css` | HTML shell (inline script sets `<html data-theme>` before the first paint); global CSS (`tailwindcss` + `@cloudit/ui/styles.css`) |
 | `routes/+layout.ts` | `ssr = false`, `prerender = false` |
-| `routes/+layout.svelte` | header with app name and language switcher; sets `<html lang>` |
-| `routes/+page.svelte` | server status card (calls `getHealth`) |
-| `lib/api.ts` | the only API module: `APP_ROOT`/`API_BASE` from `resolve('/')`, fetch + JSON, `ApiError` with `code` |
-| `lib/errors.ts` | exhaustive map from error code to i18n key |
+| `routes/+layout.svelte` | root: language, theme, `session.load()`, the route guard (spinner until the session is known or while redirecting; error banner with retry), `Toaster`, `ConfirmHost` |
+| `routes/+error.svelte` | not found / generic error card |
+| `routes/(auth)/+layout.svelte` | centred card layout with the language switch (pages outside the app) |
+| `routes/(auth)/login` | email + password, enabled providers (`POST /auth/oauth/{id}/start` → `redirect_url`), `?error=<code>` banner, "Create an account" only in `open` mode, `?return_to=` |
+| `routes/(auth)/register` | open registration (a message in `invite` mode); 202 → `/pending` |
+| `routes/(auth)/setup` | first-run setup: token, name, email, password, public URL (from `location.origin`), registration mode |
+| `routes/(auth)/invite/[token]` | `POST /auth/invites/lookup` (inviter, host, expiry, bound email locked), providers with `invite_token`, email registration |
+| `routes/(auth)/reset-password/[token]` | new password (repeated) → done → sign in |
+| `routes/(auth)/onboarding` | after a provider sign-in: new account (email verified / unverified hint, optional password, invite when required) or link (email + password, or another provider); `onboarding_expired` → back to sign in |
+| `routes/(auth)/pending` | account waiting for approval |
+| `routes/(auth)/device` | desktop app approval (query contract below) |
+| `routes/(app)/+layout.svelte` | the signed-in shell (`AppShell`): sidebar scopes (read-only for now), storage meter, user + sign out |
+| `routes/(app)/+page.svelte` | home placeholder (milestone 5b replaces it) |
+| `lib/api.ts` | the only API module: `APP_ROOT`/`API_BASE` from `resolve('')`, one typed function per endpoint, `credentials: 'same-origin'`, `ApiError` (`code`, `status`, `field`, `headSnapshotId`, `hashes`, `detail`, `retryAfter`), `SignupResult` (201 signed in / 202 pending), `archiveUrl`, `eventsUrl` |
+| `lib/errors.ts` | exhaustive map code → i18n key; `codeMessageKey` (codes from URLs), `errorText` (rate limits with the wait), `formError` (`validation_failed` + `field` under the input, the rest to the form banner) |
+| `lib/session.svelte.ts` | `session`: `status`, `config` (`AuthConfig`), `user` (`GET /me`; 401 / `setup_required` / `account_*` = signed out), `load`, `signedInAs`, `signedOut` |
+| `lib/guard.ts` | pure route guard (tested): setup pending → `/setup`; guest pages (`/login`, `/register`, `/invite/…`) send a signed-in user to a safe `return_to` or `/`; open pages (`/reset-password/…`, `/onboarding`, `/pending`) never redirect; everything else (app, `/device`) needs a session → `/login?return_to=<path+query>`; `safeReturnTo` |
+| `lib/device.ts` | `/device` query parsing and checks (as the server), `cancelUrl` (tested) |
+| `lib/fields.ts` | `inviteToken` (token or full link), `osName` (tested) |
 | `lib/lang.ts` | initial language (localStorage, else browser) and persisted switching |
+| `lib/components/` | `AuthCard` (centred card: logo or custom header, title, subtitle), `ProviderButtons` ("Continue with …", busy state), `LanguageSwitch`, `AppShell` (250px sidebar: brand, `nav` snippet, storage meter, user; main column), `ShellNavItem`, `ShellNavLabel` |
+
+**`/device` query contract** (desktop client, milestone 6): the app opens
+`<server>/device?code_challenge=<43 base64url chars>&code_challenge_method=S256&redirect_uri=http://127.0.0.1:<port>/<path>&state=<1..512 chars>&device_name=<name>&os=<windows|linux|macos>`
+(`[::1]` also accepted; explicit port, no query or fragment in `redirect_uri`; `device_name`
+and `os` only prefill the page). Signed out, the page goes through `/login?return_to=…` and
+comes back. **Allow** → `POST /devices/authorize` with the edited name and the chosen
+`token_ttl` (default `30d`; `forever` shows a warning) → the browser goes to the returned
+`redirect_url` (`redirect_uri?code=…&state=…`). **Cancel** → the browser goes to
+`redirect_uri?error=access_denied&state=<state>`. A missing or invalid parameter shows an
+error and offers neither.
 
 ### Shared UI (`packages/ui/src`)
 
-Consumed as source (no build step); `.svelte` files are compiled by the app's Vite.
+Consumed as source (no build step); `.svelte` files are compiled by the app's Vite. Svelte 5
+runes, typed props, accessible (labels, focus rings via `:focus-visible`, keyboard, aria).
 
 | File | Responsibility |
 | --- | --- |
-| `styles.css` | semantic colour tokens (light/dark via `prefers-color-scheme`, placeholder values), `@utility` `card`, `btn`, `btn-primary`, `btn-secondary`, `btn-danger`; `@source` for the components |
-| `lib/Button.svelte` | button with `variant` (`primary` / `secondary` / `danger`) |
+| `styles.css` | colour tokens (`:root` light, `[data-theme='dark']` dark, `@theme inline` → `bg-canvas`, `bg-surface`, `bg-surface-alt`, `text-text`, `text-muted`, `border-border(-strong)`, `primary` / `-hover` / `-fg` (accent text) / `-soft` / `on-primary`, `success`, `warning`, `danger` (+ `-soft`, `-fg`, `-hover`), `off`, `overlay`, `shadow`, `focus`, `--cl-avatar-0..7`); `dark:` variant on `data-theme`; body 14px (root stays 16px so spacing = mockup px); `@utility` `card`, `note`, `icon-tile`, `divider-label`, `btn` + `btn-sm` / `btn-lg` / `btn-primary` / `btn-secondary` / `btn-ghost` / `btn-danger` / `btn-danger-solid`, `input`, `field-label`, `hint`, `field-error`, `tag`, `status-dot`, `data-table` |
+| `lib/components/` | `Button` (variants primary / secondary / ghost / danger / danger-solid, sizes sm / md / lg, `block`, `loading`, `href` → link), `Card`, `Tag` (primary / success / warning / danger / neutral), `StatusDot`, `Input`, `Select`, `Field` (label + control snippet receiving `{id, aria-describedby, aria-invalid}` + hint + error; `group` for radio groups), `Toggle` (switch), `RadioCards`, `Segmented` (`track` / `chips`, native radios), `Tabs` (tablist with arrow keys, or nav links), `Modal` (native `<dialog>`: focus trap, Esc, backdrop click), `ConfirmDialog`, `ConfirmHost`, `Banner` (info / success / warning / danger), `Toaster`, `Avatar`, `AvatarGroup`, `Table` + `TableActions`, `EmptyState`, `Spinner`, `Skeleton`, `ProviderIcon` (Simple Icons logo on the brand colour by icon key or kind; key icon for Microsoft, ZITADEL, Pocket ID, generic OIDC), `EmojiPicker` (curated grid + free input), `Logo` |
+| `lib/format.ts` | `formatRelative` (Intl.RelativeTimeFormat), `formatDateTime` / `formatDate` / `formatTime`, `formatBytes` (decimal units, `B` below 1 kB), `formatNumber`, `utcDayKey`, `groupByUtcDay`, `formatUtcDay` ("Today", "Yesterday", "3 Nov"); all take the language |
+| `lib/theme.svelte.ts` | `initTheme`, `getThemeMode` / `setThemeMode` (`system` / `light` / `dark`, localStorage `cloudit.theme`), `getTheme`, `resolveTheme`; writes `<html data-theme>` and follows system changes |
+| `lib/toast.svelte.ts` | `toast.success / info / error`, `showToast`, `dismissToast`, `getToasts` (errors stay 7 s, others 4 s) |
+| `lib/confirm.svelte.ts` | `confirmAction(options) → Promise<boolean>` rendered by `ConfirmHost` (never the browser's `confirm()`) |
+| `lib/avatar.ts` | `initials`, `avatarColorIndex` (stable per id) |
+| `lib/emoji.ts` | `FOLDER_EMOJI` (picker set), `isValidEmoji` (the server's rules) |
 | `lib/i18n/en.ts` | English dictionary; defines `MessageKey` and `Dictionary` |
 | `lib/i18n/it.ts` | Italian dictionary, typed `Dictionary` (missing/extra key = type error) |
 | `lib/i18n/i18n.svelte.ts` | `t(key, params)`, `getLang`/`setLang` (`$state` rune), `detectLang`, `DEFAULT_LANG = 'en'` |
-| `lib/i18n/i18n.svelte.test.ts` | vitest tests for the helper |
+| `lib/*.test.ts` | vitest tests: i18n, format, emoji, theme / toast / confirm / avatar |
 
-Exports: `@cloudit/ui` (components), `@cloudit/ui/i18n`, `@cloudit/ui/styles.css`.
+Exports: `@cloudit/ui` (components, helpers and stores), `@cloudit/ui/i18n`,
+`@cloudit/ui/styles.css`.
 
 ### API types (`packages/api-types/src`)
 
@@ -1073,7 +1113,9 @@ Milestones: 1 scaffolding (done) · 2 core chunking/manifest (done) · 3a server
 (DB, storage, Redis, readiness: done) · 3b password accounts, sessions, devices, admin API (done) ·
 3c identity providers (OIDC / OAuth2), onboarding, identity linking (done) ·
 4a scopes, folders, sharing, trash, retention settings (done) · 4b sync protocol, quotas
-(done) · 4c events and background jobs (done) · 5 (next) web UI (from mockups) · 6 desktop manual
+(done) · 4c events and background jobs (done) · 5a web UI foundations and pages outside the
+app (done) · 5b (next) the app pages (scopes, folders, history, sharing, devices, trash, profile
+with the theme switch, admin) · 6 desktop manual
 sync + conflicts · 7 desktop auto sync/tray/autostart/installers.
 
 Planned layout additions: `apps/desktop` (Tauri 2 + Svelte 5, milestone 6; OS code in a `platform/`
