@@ -380,6 +380,16 @@ and align this project's copies with it:
 
 ## Known pitfalls
 
+- **The desktop app runs as a single instance** (`tauri-plugin-single-instance`, registered first in the
+  builder): nothing (engine, database, keychain, server follower) may be opened before it, and no env var
+  or flag may bypass it. Manual runs: `CLOUDIT_DESKTOP_DATA_DIR` for a scratch state, one instance at a time.
+- Desktop: Tauri 2 (not the 3 alpha). Every command needs an `allow-<name>` permission (`command_names.rs`
+  + `capabilities/default.json`, checked by a test). A plain `cargo build` of `cloudit-desktop` loads the dev
+  server; use `--features custom-protocol` or `make build-desktop` to embed the UI. Linux CI needs
+  `libwebkit2gtk-4.1-dev librsvg2-dev libsoup-3.0-dev libgtk-3-dev`.
+- Git Bash heredocs and double-quoted `node -e` strings mangle backslashes and run backticks: write files
+  with the editor tools.
+
 - The main dev machine is Windows 11; shells are PowerShell and Git Bash. Commands and scripts must work there.
 - **Git Bash rewrites env values that look like paths** (`BASE_PATH=/x` becomes `C:/Program Files/Git/x`):
   prefix the command with `MSYS2_ENV_CONV_EXCL='*'`, or set the value in `.env`.

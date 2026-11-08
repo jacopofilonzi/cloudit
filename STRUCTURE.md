@@ -6,7 +6,7 @@ built; the app is planned), and a web UI (served by the
 server as a static SPA) manages accounts, scopes and folders. The UIs talk to the server only
 through its JSON API under `/api/v1`, whose TypeScript types are generated from the Rust ones.
 
-Current state (milestone 6a done): the server has its infrastructure (database with migrations and
+Current state (milestone 6 done: engine and desktop app): the server has its infrastructure (database with migrations and
 leases, blob storage, optional Redis with a rate limiter, readiness checks), exposes health probes,
 serves the web SPA and has the account API: first-run setup, password accounts with web sessions,
 invites, admin approval of new accounts, password resets, desktop device login (loopback +
@@ -35,6 +35,7 @@ repo/
 │   ├── server/           Rust bin `cloudit-server` — axum HTTP server
 │   └── client/           Rust lib `cloudit-client` — desktop sync engine (state, scan, push, safe pull, conflicts)
 ├── apps/
+│   ├── desktop/          Tauri 2 app: `src/` SvelteKit SPA, `src-tauri/` Rust shell over `cloudit-client`
 │   └── web/              SvelteKit 3 + Svelte 5 + Tailwind 4 SPA (adapter-static)
 ├── packages/
 │   ├── api-types/        `@cloudit/api-types` — TS types generated from Rust by ts-rs
@@ -1196,6 +1197,47 @@ Exports: `@cloudit/ui` (components, helpers and stores), `@cloudit/ui/i18n`,
 `export_bindings` tests, writes `generated/index.ts`). Committed; `make check` fails if stale.
 `index.ts` re-exports them. Never edit by hand.
 
+## Desktop app (`apps/desktop`)
+
+Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus a SvelteKit 3 SPA
+(`src`, adapter-static, same design system and i18n as the web app: `desktop.*` keys in
+`packages/ui/src/lib/i18n/desktop.{en,it}.ts`). Windows and Linux.
+
+- **One instance only.** `tauri-plugin-single-instance` is registered first in the builder: a second
+  launch unminimizes, shows and focuses the first window and exits **before** `setup`, so the engine
+  database, the token store and the server follower are opened by the first process only. No env var
+  bypasses it. Verified on Windows with the built binary (two launches: one process, window restored).
+- `src-tauri/src`: `lib.rs` (builder, plugins dialog / opener / single-instance, setup: data dir = Tauri
+  `app_local_data_dir` or `CLOUDIT_DESKTOP_DATA_DIR`, logging, `Engine::open`), `commands/` (account,
+  folders, linking, misc: one thin command per engine call), `command_names.rs` (list shared with
+  `build.rs`, which generates an `allow-<command>` permission each; a test checks that
+  `capabilities/default.json` grants exactly these plus event listening: the web view has no plugin
+  permissions, dialogs / browser / file manager are opened by the backend), `ops.rs` (runs an operation
+  with cancellation, progress throttled to 120 ms, started / finished / status events), `follower.rs`
+  (`events::follow` while signed in; a head or conflict change refreshes that folder's status),
+  `state.rs`, `events.rs`, `error.rs` (`CommandError {kind: ErrorKind, message, details?}`: the UI
+  translates `kind`), `logging.rs` (daily rolling file in `<data>/logs`, 7 kept).
+- **Events** (Tauri): `folder-progress` (`Progress`), `folder-status`, `folder-op` (started / finished with
+  report or error), `remote` (`RemoteEvent`), `login-finished`. `session` also returns the server stream
+  state, because the UI may load after the `connected` event.
+- **Types**: client and desktop types derive ts-rs (client: cargo feature `ts`, enabled by the desktop
+  crate's dev-dependency; `PathChange.change` is `PathChangeKind`) and `make types` exports them into
+  `@cloudit/api-types` next to the server types.
+- **UI** (`src/`): `lib/api.ts` (the only module calling `invoke`), `events.ts`, `app.svelte.ts` (store),
+  `status.ts` (state to tag / action, tested), `errors.ts` (exhaustive kind / refusal / problem maps),
+  `actions.ts`; routes: `welcome` (server URL, device name, browser sign-in, waiting), `(app)/folders`
+  (list + detail), `link` (3-step wizard), `folders/[id]/conflict` (first stores this computer's version as
+  a conflict snapshot through `sync`, then keep this computer / keep the server / decide later),
+  `folders/[id]/settings`, `activity`, `settings`. A conflict left on the server by another device points
+  to the history on the web. Automatic sync and autostart are shown disabled (milestone 7).
+- **Run**: `make dev-desktop` (tauri dev), `make build-desktop` (release binary
+  `target/release/cloudit-desktop`, no installer). Env: `CLOUDIT_DESKTOP_DATA_DIR` (scratch state),
+  `CLOUDIT_DESKTOP_NO_OPEN` (only log the URLs to open; automated runs), `RUST_LOG`. A plain `cargo build`
+  loads the dev server URL; the cargo feature `custom-protocol` (set by `tauri build`) embeds the UI.
+  `build.rs` creates a stub `apps/desktop/build` when missing so clippy and tests compile without the UI.
+- **Verification used**: the built app driven over WebView2 remote debugging (`--remote-debugging-port`)
+  with Playwright, a real server on a scratch data dir and Chrome for the browser side of the sign-in.
+
 ## Sync formats (`cloudit-core`)
 
 **Durable formats**: chunks and manifests are stored on servers, so everything in this section is
@@ -1315,11 +1357,10 @@ Milestones: 1 scaffolding (done) · 2 core chunking/manifest (done) · 3a server
 (done) · 4c events and background jobs (done) · 5a web UI foundations and pages outside the
 app (done) · 5b the app pages (scopes, folders, history, sharing, devices, trash, profile, live
 updates: done) · 5c administration pages and the final end-to-end check (milestone 5 done) · 6a
-client sync engine `crates/client` (done) · 6b (next) desktop app: manual sync + conflicts over the
-engine · 7 desktop auto sync/tray/autostart/installers.
+client sync engine `crates/client` (done) · 6b desktop app `apps/desktop`: manual sync + conflicts
+over the engine (done) · 7 (next) desktop auto sync/tray/autostart/installers.
 
-Planned layout additions: `apps/desktop` (Tauri 2 + Svelte 5, milestone 6b, a thin UI over
-`cloudit-client` ("Using the engine"); OS code in a `platform/` module).
+Planned for milestone 7 in `apps/desktop`: tray, autostart, automatic sync triggers, installers.
 
 ### Storage and deployment
 
