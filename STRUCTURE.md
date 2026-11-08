@@ -5,18 +5,19 @@ users' folders; a desktop client (planned) syncs local folders with it, and a we
 server as a static SPA) manages accounts, scopes and folders. The UIs talk to the server only
 through its JSON API under `/api/v1`, whose TypeScript types are generated from the Rust ones.
 
-Current state (milestone 4a): the server has its infrastructure (database with migrations and
+Current state (milestone 4b): the server has its infrastructure (database with migrations and
 leases, blob storage, optional Redis with a rate limiter, readiness checks), exposes health probes,
 serves the web SPA and has the account API: first-run setup, password accounts with web sessions,
 invites, admin approval of new accounts, password resets, desktop device login (loopback +
 PKCE), admin endpoints, and sign-in through identity providers (OIDC presets, GitHub,
 Discord) configured by admins, with onboarding and identity linking. It also has scopes,
-folders, sharing with roles, the trash and the retention settings (no snapshots yet). API
-only: the web pages come with the mockups of milestone 5 (the web page shows the server
-status).
+folders, sharing with roles, the trash and the retention settings, and the sync protocol:
+chunk transfer (proxied or presigned), snapshot commits with conflicts, history, restore,
+pin / label, ZIP downloads, storage usage and quotas. API only: the web pages come with the
+mockups of milestone 5 (the web page shows the server status).
 `cloudit-core` implements the sync formats (chunking, chunk encoding, manifest, path rules, diff;
-see "Sync formats"), not used by the server yet. Everything under "Planned design" is not
-implemented yet.
+see "Sync formats"); the server verifies every upload with it. Everything under "Planned
+design" is not implemented yet.
 
 ```text
 repo/
@@ -56,7 +57,8 @@ crates/core/src/
 ├── lib.rs            crate docs: shared sync engine, no I/O
 ├── protocol/         API types (ts-rs export under cfg(test)); conventions in mod.rs docs
 │   ├── mod.rs        HealthResponse, ReadyResponse (+ ReadyStatus, ReadyComponents,
-│   │                 ComponentStatus), ErrorCode, ApiErrorBody {code, message, field?}
+│   │                 ComponentStatus), ErrorCode, ApiErrorBody {code, message, field?,
+│   │                 head_snapshot_id?, hashes?, detail?}
 │   ├── sensitive.rs  Sensitive: password/token string in API bodies, Debug prints `***`
 │   ├── auth.rs       RegistrationMode, NewAccounts, ApprovalStatus, SignupPending, AuthConfig,
 │   │                 AuthProvider, SetupStatus, SetupRequest, RegisterRequest, LoginRequest,
@@ -76,8 +78,14 @@ crates/core/src/
 │   ├── scopes.rs     ScopeRole (ordered), MemberRole (default editor), ScopeUser, ScopeInfo,
 │   │                 Create/UpdateScopeRequest, RestoreRequest, ScopeMember, AddMemberRequest,
 │   │                 UpdateMemberRequest, TrashItemKind, TrashItem
-│   └── folders.rs    FolderInfo, CreateFolderRequest, UpdateFolderRequest, Patch<T> (retention:
-│                     omitted / null / number)
+│   ├── folders.rs    FolderInfo (+ head: FolderHead, unresolved_conflicts), CreateFolderRequest,
+│   │                 UpdateFolderRequest, Patch<T> (omitted / null / value)
+│   ├── sync.rs       ChunkSpec, ChunkCheckRequest/Response, MissingChunk, Transfer (+ TransferKind
+│   │                 proxy | presigned), ChunkDownloadRequest/Response, ChunkDownload,
+│   │                 MAX_CHUNKS_PER_REQUEST (10 000), MAX_STORED_CHUNK_BYTES (1 MiB + 1 + 64 KiB)
+│   ├── snapshots.rs  SnapshotKind, SnapshotInfo, CommitResponse, SnapshotList,
+│   │                 UpdateSnapshotRequest, RestoreSnapshotRequest
+│   └── usage.rs      UsageInfo, ScopeUsage
 ├── error.rs          HashParseError, PathError, ChunkerError, ChunkError, ManifestError (thiserror;
 │                     variants are stable kinds, `code()` gives a stable snake_case string)
 ├── hash.rs           ChunkHash, ManifestHash: SHA-256 newtypes, strict lowercase-hex FromStr/Display/serde
@@ -131,7 +139,8 @@ crates/server/src/
 │   │                 check_token, complete (conditional UPDATE)
 │   ├── settings.rs   settings table: registration_mode (default invite), password_new_accounts
 │   │                 (default approval), autolink_email (default false), public_url,
-│   │                 retention_defaults (20 / 5), trash_retention_days (30);
+│   │                 retention_defaults (20 / 5), trash_retention_days (30),
+│   │                 default_quota_bytes (unlimited);
 │   │                 get_strict, insert_if_absent
 │   ├── invites.rs    create, find_usable(_by_hash), consume (conditional UPDATE), list, revoke, status
 │   └── password_resets.rs  create (24 h; marks the user's older unused resets used), consume
@@ -146,14 +155,26 @@ crates/server/src/
 │   ├── extractors.rs SessionUser, AnyUser, AdminUser, Client
 │   └── limits.rs     rate limits of the auth endpoints and of sharing + enforce
 ├── scopes/           scopes, members, folders, trash (database side; rules in mod.rs docs)
-│   ├── access.rs     ScopeAccess / FolderAccess: load (404 if invisible), load_trashed,
-│   │                 require(role) (403); the only access check
+│   ├── access.rs     ScopeAccess / FolderAccess / SnapshotAccess: load (404 if invisible),
+│   │                 load_trashed, require(role) (403); the only access check
 │   ├── names.rs      name rules (validate::text, 100 chars) + lowercase key
 │   ├── store.rs      scopes: create, find, list_visible, folder_counts, rename, trash,
 │   │                 restore, trashed_owned, managed
 │   ├── members.rs    scope_members: role_of, find, list, upsert, update_role, remove
 │   └── folders.rs    folders: create, find, list, update (name / retention), trash, restore,
 │                     trashed_in
+├── sync/             sync protocol (object layout, invariants and the GC contract in mod.rs docs)
+│   ├── keys.rs       scopes/{scope}/chunks/{hash}, scopes/{scope}/manifests/{hash}
+│   ├── usage.rs      effective_quota, owner_quota, used_by(_many), ensure_room (estimate),
+│   │                 insert_charged (row + scopes.stored_bytes in one transaction, exact
+│   │                 quota under an owner lock), recompute (consistency reference)
+│   ├── chunks.rs     sizes / exists (batched IN lists), decode (blocking pool), adopt (verify an
+│   │                 object without row: HEAD, bounded GET, decode; invalid → deleted)
+│   ├── manifests.rs  decode (bounded, blocking pool), exists, store, stored_bytes, load
+│   ├── snapshots.rs  find, commit (insert + snapshot_chunks + conditional head), resolve, list,
+│   │                 update (pin / label), restore (INSERT … SELECT copy), folder_sync
+│   ├── transfer.rs   Transfers: presigned URL or proxy URL (absolute with a public URL)
+│   └── archive.rs    streaming ZIP (async_zip over a duplex pipe), filename, Content-Disposition
 ├── idp/              identity providers (protocol side)
 │   ├── mod.rs        Idp: shared HttpClient, Discovery cache, GitHub/Discord endpoints
 │   │                 (replaceable only under cfg(test)); discover → provider_discovery_failed
@@ -194,7 +215,8 @@ crates/server/src/
 │   │                 000004 auth_providers, 000005 identities (identities, pending_signups,
 │   │                 oauth_flows), 000006 account approval (users.approval_*,
 │   │                 signup_source, auth_providers.new_accounts), 000007 scopes
-│   │                 (scopes, scope_members, folders)
+│   │                 (scopes, scope_members, folders), 000008 sync (chunks, manifests,
+│   │                 snapshots, snapshot_chunks, scopes.stored_bytes, users.quota_bytes)
 │   ├── entities/     SeaORM 2 models (`#[sea_orm::model]`, no relations), one file per table
 │   │                 (none for setup_state: its plaintext token is read as a Secret);
 │   │                 oauth_flows keeps verifier and nonce in `Hidden` (Debug prints `***`)
@@ -212,14 +234,16 @@ crates/server/src/
 ├── routes/
 │   ├── mod.rs        router: probes, `/api/v1` (behind auth::middleware), JSON 404 under
 │   │                 `/api`, SPA fallback from WEB_DIR
-│   ├── extract.rs    ApiJson (rejections as bad_request), optional_json (empty body = default),
-│   │                 parse_id, model → API conversions
+│   ├── extract.rs    ApiJson (rejections as bad_request / payload_too_large), body_bytes (raw
+│   │                 body with a route limit), optional_json (empty body = default), parse_id,
+│   │                 model → API conversions
 │   ├── health.rs     /health (liveness), /ready (database + storage checks, Redis reported)
 │   ├── setup.rs      /setup
 │   ├── auth.rs       /auth/* (config, register, login, logout, password-reset)
 │   ├── oauth.rs      /auth/oauth/{provider}/start and /callback; begin (shared flow start)
 │   ├── onboarding.rs /auth/onboarding* (info, create, link with password or provider)
 │   ├── me.rs         /me, /me/password, /me/sessions, /me/identities
+│   ├── usage.rs      /me/usage
 │   ├── devices.rs    /devices (authorize, token, list, rename, revoke)
 │   ├── admin.rs      /admin/* (users, approve / reject, password resets, invites, settings,
 │   │                 summary)
@@ -227,12 +251,18 @@ crates/server/src/
 │   ├── scopes.rs     /scopes* (CRUD, trash, restore) and /scopes/{id}/members*
 │   ├── folders.rs    /scopes/{id}/folders and /folders/{id}* (CRUD, trash, restore)
 │   ├── trash.rs      /trash
+│   ├── chunks.rs     /folders/{id}/chunks/check, /download, /{hash} (proxy PUT / GET)
+│   ├── snapshots.rs  /folders/{id}/snapshots (commit, history), /snapshots/{id} (get, patch),
+│   │                 /manifest, /restore, /resolve, /archive
 │   └── tests/        router tests (tower `oneshot`, real AppState; PostgreSQL with
 │                     TEST_DATABASE_URL): mod.rs (probes, SPA), support.rs (TestApp harness),
 │                     fake_idp.rs (fake OIDC / GitHub / Discord server; test-only RSA keys in
 │                     fixtures/), setup, auth, me, devices, admin, providers, oauth,
 │                     onboarding, approval, secret_key, scopes (Team fixture, role matrix,
-│                     sharing, names, races), folders (trash, retention)
+│                     sharing, names, races), folders (trash, retention), sync_client.rs
+│                     (test sync client on cloudit-core), chunks, snapshots (commits,
+│                     conflicts, validation), history (round trip, pages, pin, restore),
+│                     archive, quota, presign (live S3 with TEST_S3_*)
 ├── logging.rs        tracing subscriber (env filter; pretty or json)
 ├── shutdown.rs       Ctrl+C / SIGTERM future (OS-specific, like platform.rs)
 └── healthcheck.rs    HTTP/1.0 GET /health on 127.0.0.1:$PORT, std only (Docker HEALTHCHECK)
@@ -281,8 +311,8 @@ Bearer cld_…`); **admin** (session of an effective admin); **onboarding** (the
 | `GET /devices` | session | `DeviceInfo[]` (revoked and expired included) |
 | `PATCH /devices/{id}` | session | `UpdateDeviceRequest` → `DeviceInfo` |
 | `DELETE /devices/{id}` | session | → 204 (revoke, soft) |
-| `GET /admin/users?limit=&offset=&approval_status=` | admin | `AdminUserList` (oldest first; limit 1..=200, default 50; optional filter `approved` / `pending` / `rejected`, `total` counts the matches; each with `identity_providers`, `has_password`, `approval_status`, `signup_source`, `approval_decided_at`, `approval_decided_by`) |
-| `PATCH /admin/users/{id}` | admin | `AdminUserUpdate {admin?, disabled?}` → `AdminUser`; disabling deletes the web sessions |
+| `GET /admin/users?limit=&offset=&approval_status=` | admin | `AdminUserList` (oldest first; limit 1..=200, default 50; optional filter `approved` / `pending` / `rejected`, `total` counts the matches; each with `identity_providers`, `has_password`, `approval_status`, `signup_source`, `approval_decided_at`, `approval_decided_by`, `used_bytes`, `quota_bytes` (own), `effective_quota_bytes`) |
+| `PATCH /admin/users/{id}` | admin | `AdminUserUpdate {admin?, disabled?, quota_bytes? (null = server default)}` → `AdminUser`; disabling deletes the web sessions |
 | `POST /admin/users/{id}/approve` | admin | → `AdminUser`; pending or rejected (lifts the ban) → approved; already approved: unchanged |
 | `POST /admin/users/{id}/reject` | admin | → `AdminUser`; pending or approved → rejected, web sessions deleted; own account → 403 `forbidden`; 409 `last_admin`; already rejected: unchanged |
 | `GET /admin/summary` | admin | `AdminSummary {pending_users}` |
@@ -290,8 +320,8 @@ Bearer cld_…`); **admin** (session of an effective admin); **onboarding** (the
 | `GET /admin/invites` | admin | `InviteInfo[]` (newest first, no tokens) |
 | `POST /admin/invites` | admin | `CreateInviteRequest {email?, expires_in?}` (default 7d) → 201 `InviteLink {id, token, path: "/invite/<token>", expires_at}` |
 | `DELETE /admin/invites/{id}` | admin | → 204 (revoke, soft) |
-| `GET /admin/settings` | admin | `ServerSettings {registration_mode, password_new_accounts, autolink_email, public_url, public_url_from_env, effective_public_url, retention_max_versions, retention_max_per_day, trash_retention_days}` |
-| `PATCH /admin/settings` | admin | `UpdateSettingsRequest {registration_mode?, password_new_accounts?, autolink_email?, public_url? ("" clears), retention_max_versions? (0..=100000, 0 = unlimited), retention_max_per_day? (same), trash_retention_days? (1..=3650)}` → `ServerSettings`; all fields validated before any is written |
+| `GET /admin/settings` | admin | `ServerSettings {registration_mode, password_new_accounts, autolink_email, public_url, public_url_from_env, effective_public_url, retention_max_versions, retention_max_per_day, trash_retention_days, default_quota_bytes}` |
+| `PATCH /admin/settings` | admin | `UpdateSettingsRequest {registration_mode?, password_new_accounts?, autolink_email?, public_url? ("" clears), retention_max_versions? (0..=100000, 0 = unlimited), retention_max_per_day? (same), trash_retention_days? (1..=3650), default_quota_bytes? (null = unlimited)}` → `ServerSettings`; all fields validated before any is written |
 | `GET /admin/providers/presets` | admin | `ProviderPreset[]` (one per kind) |
 | `GET /admin/providers` | admin | `ProviderInfo[]` (non-deleted, position order; `has_secret`, never the secret; `callback_url` when a public URL is known; `new_accounts` `auto` / `approval`) |
 | `POST /admin/providers` | admin | `CreateProviderRequest` (`new_accounts` default `approval`) → 201 `ProviderInfo`; OIDC: discovery must succeed (502 `provider_discovery_failed`) |
@@ -310,10 +340,23 @@ Bearer cld_…`); **admin** (session of an effective admin); **onboarding** (the
 | `DELETE /scopes/{id}/members/{user_id}` | session; owner, or the member itself (leave) | → 204; the owner can't leave (403) |
 | `GET /scopes/{id}/folders` | any; viewer | `FolderInfo[]` outside the trash, by name |
 | `POST /scopes/{id}/folders` | any; editor (retention overrides: admin) | `CreateFolderRequest {name, retention_max_versions?, retention_max_per_day?}` → 201 `FolderInfo`; 409 `name_taken` |
-| `GET /folders/{id}` | any; viewer | `FolderInfo {id, scope_id, name, head_snapshot_id, retention_max_versions, retention_max_per_day, effective_retention_max_versions, effective_retention_max_per_day, created_by, created_at, updated_at}` |
+| `GET /folders/{id}` | any; viewer | `FolderInfo {id, scope_id, name, head_snapshot_id, head? {snapshot_id, created_at, logical_size, file_count}, unresolved_conflicts, retention_max_versions, retention_max_per_day, effective_retention_max_versions, effective_retention_max_per_day, created_by, created_at, updated_at}` |
 | `PATCH /folders/{id}` | session; editor (retention fields: admin) | `UpdateFolderRequest {name?, retention_max_versions?, retention_max_per_day?}` (retention: omitted = unchanged, `null` = server default) → `FolderInfo` |
 | `DELETE /folders/{id}` | session; admin | → 204: to the trash |
 | `POST /folders/{id}/restore` | session; admin of its scope (outside the trash) | optional `RestoreRequest {name?}` → `FolderInfo`; 409 `name_taken` |
+| `POST /folders/{id}/chunks/check` | any; editor | `ChunkCheckRequest {chunks: [{hash, size}]}` (≤ 10 000, size 1..=1 MiB, one size per hash) → `ChunkCheckResponse {missing: [{hash, upload: Transfer}]}` (by hash); 507 `quota_exceeded` if usage + the missing chunks' uncompressed sizes > quota |
+| `PUT /folders/{id}/chunks/{hash}` | any; editor | body = stored chunk (≤ `MAX_STORED_CHUNK_BYTES`, else 413) → 204; 422 `chunk_invalid` unless it decodes to `hash`; 507 `quota_exceeded`; idempotent |
+| `POST /folders/{id}/chunks/download` | any; viewer | `ChunkDownloadRequest {hashes}` (≤ 10 000) → `ChunkDownloadResponse {chunks: [{hash, download: Transfer}], missing}` |
+| `GET /folders/{id}/chunks/{hash}` | any; viewer | the stored chunk bytes (`application/octet-stream`); 404 unless the scope has it |
+| `POST /folders/{id}/snapshots?parent=<id\|none>&kind=normal\|conflict` | any; editor | body = stored manifest (≤ 64 MiB) → 201 `CommitResponse {unchanged: false, snapshot}`, or 200 `{unchanged: true, snapshot: head}`; 409 `conflict` (+ `head_snapshot_id`), 422 `manifest_invalid` (+ `detail`), `chunk_missing` / `chunk_invalid` (+ `hashes`), `validation_failed` (`parent` not a snapshot of the folder, `kind` restore), 507 `quota_exceeded` |
+| `GET /folders/{id}/snapshots?cursor=&limit=&kind=&unresolved=` | any; viewer | `SnapshotList {snapshots, next_cursor}` (newest first; limit 1..=200, default 50) |
+| `GET /snapshots/{id}` | any; viewer | `SnapshotInfo` |
+| `PATCH /snapshots/{id}` | any; editor | `UpdateSnapshotRequest {pinned?, label?}` (label ≤ 100 characters; `null` / `""` clears) → `SnapshotInfo` |
+| `GET /snapshots/{id}/manifest[?format=json]` | any; viewer | stored manifest bytes, or the canonical JSON (`Manifest`); `ETag` = `"<manifest hash>"`, `If-None-Match` → 304 |
+| `POST /snapshots/{id}/restore` | any; editor | optional `RestoreSnapshotRequest {expected_head?}` → 201 `SnapshotInfo` (kind `restore`, the new head); 409 `conflict` if `expected_head` isn't the head; a conflict source gets resolved |
+| `POST /snapshots/{id}/resolve` | any; editor | → `SnapshotInfo` (conflicts only, else 422; idempotent): "keep server" |
+| `GET /snapshots/{id}/archive` | any; viewer | streaming ZIP (`application/zip`, `<folder>-<YYYYMMDD-HHMMSS>.zip`) |
+| `GET /me/usage` | any | `UsageInfo {used_bytes, quota_bytes (effective, null = unlimited), scopes: [{id, name, stored_bytes, trashed}]}` (owned scopes, by name) |
 | `GET /trash` | session | `TrashItem[] {kind: scope\|folder, id, name, scope_id, scope_name, deleted_at, deleted_by, purge_at}`: own trashed scopes + trashed folders of scopes where the caller is owner or admin; newest first |
 
 Scope routes: "viewer", "editor", "admin", "owner" is the minimum scope role; a scope or
@@ -339,7 +382,12 @@ answered `access_denied`), `group_not_allowed` 403, `identity_in_use` 409, `iden
 409, `onboarding_expired` 410, `last_login_method` 409, `account_pending` 403 (waiting for
 approval), `account_rejected` 403 (rejected by an admin), `name_taken` 409 (scope or folder
 name in use, ignoring case), `user_not_found` 404 (sharing with an email that has no
-approved, enabled account). The callback carries the code in
+approved, enabled account), `conflict` 409 (the folder head moved; `head_snapshot_id`),
+`chunk_missing` 422 (`hashes`, at most 1000), `chunk_invalid` 422 (`hashes`),
+`manifest_invalid` 422 (`detail` = the core code, e.g. `manifest_not_sorted`, or
+`manifest_chunk_size_wrong` when a size disagrees with the stored chunk), `quota_exceeded`
+507 (Insufficient Storage, as WebDAV / Nextcloud: distinct from 413 for one oversized
+request and 409 for head conflicts), `payload_too_large` 413. The callback carries the code in
 `/login?error=<code>` instead of a JSON body.
 
 ### Authentication
@@ -508,9 +556,9 @@ approved, enabled account). The callback carries the code in
 
 ### Scopes, folders, sharing and the trash
 
-- **Model**: user > scope (owned by `owner_id`) > folder (synced unit) > snapshots (4b).
+- **Model**: user > scope (owned by `owner_id`) > folder (synced unit) > snapshots.
   Roles, ordered: `viewer` (read scope, folders, members, history; download) < `editor`
-  (+ create and rename folders; in 4b upload, restore, pin, label) < `admin` (+ trash and
+  (+ create and rename folders; upload, commit, restore, pin, label, resolve conflicts) < `admin` (+ trash and
   restore folders, change a folder's retention) < `owner` (+ rename, trash and restore the
   scope; add members, change their roles, remove them; in 4c delete for good). Membership
   management is **owner-only**; any member can leave (`DELETE` its own membership); the
@@ -521,7 +569,8 @@ approved, enabled account). The callback carries the code in
   Trashed items are reached only through `load_trashed`: a scope by its owner, a folder by
   the owner or an admin of its (non-trashed) scope; anyone else gets 404.
 - **Device tokens** may list and read scopes, members and folders, create scopes and create
-  folders (the desktop client links local folders); renaming, folder changes, the trash,
+  folders (the desktop client links local folders), and use every sync endpoint (chunks,
+  snapshots, ZIP, `/me/usage`); renaming, folder changes, the trash,
   restores and member management need a web session.
 - **Sharing** by exact email (normalized like logins): the account must exist, be enabled
   and approved, else `user_not_found` (unknown, pending, rejected and disabled look the
@@ -549,6 +598,56 @@ approved, enabled account). The callback carries the code in
   `max_per_day` per UTC day (the most recent of each day); the head, pinned and unresolved
   conflict snapshots are never deleted and don't count.
 
+### Sync protocol
+
+- **Objects** (blob storage, dedup per scope): `scopes/{scope_id}/chunks/{chunk_hash}` (stored
+  chunk encoding) and `scopes/{scope_id}/manifests/{manifest_hash}` (zstd canonical JSON). A
+  `chunks` / `manifests` row exists only for a stored object verified with `cloudit-core`;
+  object first, row second.
+- **Client flow**:
+  1. scan the folder, chunk every file (`chunk_reader`), build the `Manifest` (empty dirs as
+     `dir` entries) and its stored form (`Manifest::encode`); unchanged against the last
+     synced manifest → nothing to do;
+  2. `POST /folders/{id}/chunks/check` with every distinct `{hash, size}` (batches of at most
+     10 000) → the missing ones, each with a `Transfer`;
+  3. upload each missing chunk's `encode_chunk` bytes with the transfer: `proxy` = `PUT` to
+     the server with the usual credentials; `presigned` = `PUT` to S3 **without** cloudit
+     credentials (verified at commit). URLs are absolute when the server knows its public URL,
+     else paths (`/api/v1/…`) to resolve against the server URL;
+  4. `POST /folders/{id}/snapshots?parent=<last synced head | none>` with the stored manifest:
+     201 → the new head; 200 `unchanged` → the head already is this state;
+     `chunk_missing` / `chunk_invalid` → upload the listed chunks again and retry;
+  5. 409 `conflict` (`head_snapshot_id` = the current head): download the head; if the user
+     must decide, commit the local state with `kind=conflict` (`parent` = the old base; never
+     moves the head) and later either `POST /snapshots/{conflict}/resolve` (keep server) or
+     `POST /snapshots/{conflict}/restore` with `expected_head` (keep local: a `restore` copy
+     becomes the head and the conflict is resolved);
+  6. download a snapshot: `GET /snapshots/{id}/manifest` (decode with `decode_manifest`;
+     `ETag` for caching), `POST /folders/{id}/chunks/download` for the chunks not held
+     locally, fetch each `Transfer`, `decode_chunk` with the expected hash, reassemble files.
+- **Commit** (server): decode + validate the manifest (bounded, blocking pool); kind `normal`
+  with `parent` = head and the same manifest hash → 200 unchanged; every referenced chunk must
+  have a row, else its object (presigned upload) is verified with a bounded concurrency of 8
+  (HEAD, size ≤ `MAX_STORED_CHUNK_BYTES`, GET, decode) and adopted (row + usage), or deleted
+  if invalid (unless a row appeared meanwhile); sizes must match the rows; the manifest object
+  + row are stored if new; then one transaction: snapshot, `snapshot_chunks` (batches of 1000),
+  conditional head update (`normal`). Author and device (device token) are recorded.
+- **Restore**: a `restore` snapshot with the source's manifest (`snapshot_chunks` copied by
+  one `INSERT … SELECT`), parent = the current head, conditional head update; stores nothing.
+- **Usage and quotas**: `scopes.stored_bytes` = stored sizes of the scope's chunk and manifest
+  rows, incremented in the transaction that inserts the row (only if inserted: concurrent
+  duplicates count once). A user's usage = the sum over the scopes it owns (trashed
+  included): members' uploads count against the owner. Effective quota = `users.quota_bytes`,
+  else the `default_quota_bytes` setting, else unlimited. Estimates fail early (`check`:
+  usage + uncompressed sizes of the missing chunks; uploads: usage + the stored size before
+  storing the object); the charge itself is exact: with a quota, `insert_charged` first
+  writes the owner's `users` row (serializing that owner's charges), inserts, increments and
+  rolls back if the owner's total exceeds the quota. Space is freed only by GC (4c).
+- **ZIP**: streamed from a task through a 256 KiB pipe, files deflated with data descriptors
+  (ZIP64-capable), chunks prefetched 4 at a time and hash-verified, DOS mtimes (UTC, 2 s),
+  Unix modes 0644 / 0755, empty dirs as `dir/`; a failure aborts the body (no complete-looking
+  truncated archive).
+
 ### Data and state
 
 - **Database** (SeaORM 2, `DATABASE_URL`): SQLite `<DATA_DIR>/cloudit.db` by default (WAL,
@@ -572,7 +671,8 @@ approved, enabled account). The callback carries the code in
     `password_new_accounts` = `"auto" | "approval"` (missing = `approval`), `autolink_email`
     (bool, missing = false), `public_url` (string or null), `secret_key_check` (base64 of the
     encrypted check value), `retention_max_versions` (number, missing = 20),
-    `retention_max_per_day` (missing = 5), `trash_retention_days` (missing = 30);
+    `retention_max_per_day` (missing = 5), `trash_retention_days` (missing = 30),
+    `default_quota_bytes` (number or null, missing = unlimited);
   - `invites(id, token_hash UNIQUE, created_by → users, email?, created_at, expires_at, used_at?,
     used_by? → users, revoked_at?)`;
   - `password_resets(id, token_hash UNIQUE, user_id → users, created_by? → users (null = CLI),
@@ -600,10 +700,22 @@ approved, enabled account). The callback carries the code in
   - `scope_members(scope_id → scopes, user_id → users, role (`viewer` | `editor` | `admin`),
     added_by → users, created_at, updated_at)` (PK (scope_id, user_id), index on user_id;
     removing a member deletes the row);
-  - `folders(id, scope_id → scopes, name, name_key, active_key?, head_snapshot_id? (no FK
-    until the snapshots table of 4b), retention_max_versions?, retention_max_per_day?
-    (integer), created_by → users, created_at, updated_at, deleted_at?, deleted_by? → users)`
-    (UNIQUE (scope_id, active_key)).
+  - `folders(id, scope_id → scopes, name, name_key, active_key?, head_snapshot_id? (no FK:
+    SQLite can't add one to an existing table; only commits and restores set it),
+    retention_max_versions?, retention_max_per_day? (integer), created_by → users,
+    created_at, updated_at, deleted_at?, deleted_by? → users)` (UNIQUE (scope_id, active_key));
+  - `scopes.stored_bytes` (bigint, default 0: the usage counter) and `users.quota_bytes?`
+    (bigint; NULL = the server default);
+  - `chunks(scope_id → scopes, hash (hex text), size (int, uncompressed), stored_size
+    (bigint), created_at)` (PK (scope_id, hash));
+  - `manifests(scope_id → scopes, hash, stored_size, created_at)` (PK (scope_id, hash));
+  - `snapshots(id, folder_id → folders, scope_id, parent_id? (no FK), kind (`normal` |
+    `conflict` | `restore`), manifest_hash, file_count, logical_size (bigint), author_id →
+    users, device_id? → devices, created_at, pinned (default false), label?, restored_from?
+    (no FK), conflict_resolved_at?)` ((scope_id, manifest_hash) → manifests; indexes
+    (folder_id, id) and (scope_id, manifest_hash));
+  - `snapshot_chunks(snapshot_id → snapshots, scope_id, hash)` (PK (snapshot_id, hash);
+    (scope_id, hash) → chunks; index (scope_id, hash)): the distinct chunks of each snapshot.
 
   Expired sessions, codes, flows, pending signups and used tokens are not cleaned up yet (a GC
   job is planned).
@@ -616,7 +728,7 @@ approved, enabled account). The callback carries the code in
   expires_at < now`, success = 1 row affected; `renew` fails once expired. Holder = the random
   per-process `instance_id`. Instance clocks must be in sync. Redis is deliberately not used for
   leases (one mechanism, always available).
-- **Blobs** (`object_store` 0.14, `STORAGE`): `fs` = `LocalFileSystem` at `STORAGE_FS_DIR`
+- **Blobs** (`object_store` 0.14, `STORAGE`; key layout in "Sync protocol"): `fs` = `LocalFileSystem` at `STORAGE_FS_DIR`
   (atomic writes, fsync on); `s3` = `AmazonS3` (path-style by default, `http` endpoints
   allowed). Keys must be canonical object paths. Presigned URLs only with `S3_PRESIGN=true`;
   when `S3_PUBLIC_ENDPOINT` is set, a second signer-only `AmazonS3` built with it signs the
@@ -803,8 +915,8 @@ into the sections above as it gets built.
 Milestones: 1 scaffolding (done) · 2 core chunking/manifest (done) · 3a server infrastructure
 (DB, storage, Redis, readiness: done) · 3b password accounts, sessions, devices, admin API (done) ·
 3c identity providers (OIDC / OAuth2), onboarding, identity linking (done) ·
-4a scopes, folders, sharing, trash, retention settings (done) · 4b (next) sync protocol,
-quotas · 4c events and background jobs · 5 web UI (from mockups) · 6 desktop manual
+4a scopes, folders, sharing, trash, retention settings (done) · 4b sync protocol, quotas
+(done) · 4c (next) events and background jobs · 5 web UI (from mockups) · 6 desktop manual
 sync + conflicts · 7 desktop auto sync/tray/autostart/installers.
 
 Planned layout additions: `apps/desktop` (Tauri 2 + Svelte 5, milestone 6; OS code in a `platform/`
@@ -812,39 +924,29 @@ module).
 
 ### Storage and deployment
 
-Database, blob storage, Redis, the rate limiter and the HA compose are implemented (see "Data and
-state"). Still planned: Redis pub/sub for events across instances (fallback: polling); background
-jobs on top of `db::lease` (GC, retention); presigned or proxied blob transfer in the sync API.
+Database, blob storage, Redis, the rate limiter, the HA compose and the blob transfer of the
+sync API are implemented. Still planned: Redis pub/sub for events across instances (fallback:
+polling); background jobs on top of `db::lease` (GC, retention).
 
-### Data model
+### Desktop client
 
-- Scopes, folders, roles and the trash are implemented (see "Scopes, folders, sharing and the
-  trash"). Snapshots (4b): immutable versions of a folder; kinds `normal`, `conflict`,
-  `restore`. A restore creates a new head. Pinned snapshots are never deleted.
-
-### Sync protocol (4b)
-
-- Chunks (format: "Sync formats") are stored under `scopes/{scope_id}/chunks/{sha256}`: dedup
-  only within a scope, so an editor of a shared scope never writes into the namespace of the
-  owner's other scopes. Manifests are content-addressed by their `ManifestHash`. The server
-  validates every uploaded manifest with `cloudit-core` and verifies chunk hashes on upload.
-- Endpoints: chunk check / upload / download (presigned with `S3_PRESIGN`, else proxied; hash
-  verified), snapshot commit, history, manifest, restore, pin / label (editor), zip download
-  of a snapshot (viewer).
-- Commit = `UPDATE folders SET head_snapshot_id = new WHERE id = ? AND head_snapshot_id =
-  parent` → 201, or 409 conflict (adds the FK to `snapshots`).
-- On conflict the client uploads its local state as a `conflict` snapshot (not head); the user
-  chooses keep-server / keep-local / decide-later.
-- Storage usage and per-user quotas: a scope's stored size counts against the scope's
-  **owner** (also when editors upload); over quota → `quota_exceeded`.
-- Desktop triggers: manual, startup, quiet period, associated process exit, SSE events. Local state in
-  SQLite.
+- Sync flow: "Sync protocol". Triggers: manual, startup, quiet period, associated process
+  exit, SSE events. Local state in SQLite.
 
 ### Events and jobs (4c)
 
 - SSE events: in memory on a single instance, Valkey pub/sub across instances, `GET
   /sync/heads` polling as the fallback.
 - Lease-based jobs (`db::lease`): retention (semantics in "Scopes, folders, sharing and the
-  trash"), chunk GC with a 24 h grace period, trash purge after `trash_retention_days` plus a
-  manual permanent delete (scope: owner; folder: admin), cleanup of expired sessions, codes,
-  flows and pending signups.
+  trash"; never the head, pinned or unresolved conflicts; a deleted snapshot's
+  `snapshot_chunks` go first), chunk and manifest GC, trash purge after
+  `trash_retention_days` plus a manual permanent delete (scope: owner; folder: admin),
+  cleanup of expired sessions, codes, flows and pending signups.
+- GC contract (`sync` module docs): delete a `chunks` / `manifests` row only when no
+  `snapshot_chunks` / `snapshots` row references it (the foreign keys refuse otherwise) and it
+  is older than a 24 h grace period, decrementing `scopes.stored_bytes` by its `stored_size`
+  in the same transaction (count only rows actually deleted), then delete the object; list
+  `scopes/*/chunks/` and `scopes/*/manifests/` for orphan objects (no row: crashes between
+  object and row, presigned uploads never committed) older than the grace period. A commit
+  that races GC fails with `chunk_missing` and the client uploads again. `usage::recompute`
+  checks the counter.

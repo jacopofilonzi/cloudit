@@ -120,11 +120,20 @@ and align this project's copies with it:
 - The server is stateless: no correctness-relevant in-memory state. HA comes from the database plus
   object storage; any instance can serve any request.
 - A snapshot commit is the conditional head update
-  (`UPDATE folders SET head = new WHERE id = ? AND head = parent` → 201, or 409 on conflict), never a
-  read-modify-write.
+  (`UPDATE folders SET head_snapshot_id = new WHERE id = ? AND head_snapshot_id = parent` → 201,
+  or 409 `conflict`), in the transaction that inserts the snapshot; never a read-modify-write.
+  Restores do the same; `conflict` snapshots never move the head.
 - Chunks are content-addressed per scope namespace (`scopes/{scope_id}/chunks/{sha256}`): no
   cross-scope dedup, so an editor of a shared scope can never write into the namespace of the
   owner's other scopes. Storage quotas charge a scope's stored size to the scope's owner.
+- **A `chunks` / `manifests` row means a verified object**: every uploaded chunk and manifest
+  is decoded with `cloudit-core` (bounded, hash verified) before its row exists; the object is
+  stored first, the row second (an object without a row is an orphan for GC). Objects
+  uploaded through presigned URLs get their row only when a commit verifies them.
+- **The usage counter `scopes.stored_bytes` changes only in the transaction that inserts or
+  deletes the row** (`sync::usage::insert_charged`: `INSERT … ON CONFLICT DO NOTHING`, charge
+  only when a row was inserted; GC must decrement the same way). `usage::recompute` is the
+  reference; tests check the two agree.
 - Every request on a scope or folder resolves the caller's role through `scopes::access`
   (`ScopeAccess` / `FolderAccess`, then `require(role)`), never with ad-hoc queries in a
   handler: anything the caller can't see (not a member, in the trash, unknown id) is 404
@@ -206,6 +215,12 @@ and align this project's copies with it:
     `use_transaction()`; sqlx is reachable as `sea_orm::sqlx`.
   - **object_store 0.14** (`aws` feature): `put`/`get`/`head`/`delete` live in the
     `ObjectStoreExt` trait; presigning is `signer::Signer::signed_url`.
+  - **async_zip 0.0.19** (`tokio`, `deflate`): `ZipFileWriter::with_tokio`,
+    `write_entry_stream` (data descriptors, ZIP64 extra field always written) + `close()`;
+    custom extra fields can't be built (the header types are private); the in-memory reader
+    `base::read::mem` used by tests is deprecated in favour of `read1`. tokio has the
+    `io-util` feature (`duplex` pipe for streamed bodies). The server tests also use `zstd`
+    (dev-dependency) to build invalid stored manifests.
   - **redis 1.8** (not the 2.0 release candidates; features `tokio-comp`, `connection-manager`,
     no TLS): `ConnectionManager::new_lazy_with_config`. uuid 1 (`v4`, `v7`), chrono 0.4 (the
     only date/time crate: SeaORM and object_store use it), url 2.
@@ -319,6 +334,16 @@ and align this project's copies with it:
   (`db::testing::TestDb`). SQLite allows one writer: keep write transactions short, hash
   passwords before `begin()`, and make the first statement of a writing transaction a write (a
   transaction that read first fails with `SQLITE_BUSY` instead of waiting).
+- SQLite can't add a foreign key to an existing table (`folders.head_snapshot_id` has none;
+  only the commit / restore statements set it). New tables can carry composite foreign keys
+  (`snapshots → manifests`, `snapshot_chunks → chunks`).
+- Raw request bodies: set a per-route `DefaultBodyLimit` and take `Result<Bytes,
+  BytesRejection>` through `routes::extract::body_bytes`, so an oversized body answers JSON
+  413 `payload_too_large` (axum's own rejection is plain text). `ApiJson` maps it too.
+- A presigned PUT URL stays valid for `S3_PRESIGN_TTL` even after the chunk was verified: an
+  editor holding one could overwrite the object. Clients and the ZIP download decode every
+  chunk against its expected hash, so damage is detected, never taken as valid data; keep
+  the TTL short.
 - Unsafe API requests without a bearer token need `Origin` = the server's origin (or
   `Sec-Fetch-Site: same-origin`): curl and scripts must send `-H 'Origin: http://host:port'`
   (with `PUBLIC_URL` set, its origin). API route tests go through `routes::tests::support::TestApp`,

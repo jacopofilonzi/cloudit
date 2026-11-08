@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 /// The caller's role in a scope, from least to most powerful.
 ///
 /// - `viewer`: sees the scope, its folders, history and members; downloads.
-/// - `editor`: viewer + creates and renames folders, uploads versions (milestone 4b).
+/// - `editor`: viewer + creates and renames folders, uploads and commits versions,
+///   restores, pins and labels snapshots, resolves conflicts.
 /// - `admin`: editor + moves folders to the trash and restores them, changes a
 ///   folder's retention.
 /// - `owner`: everything, plus renaming the scope, moving it to the trash and

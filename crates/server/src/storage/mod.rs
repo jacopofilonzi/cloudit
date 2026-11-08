@@ -5,7 +5,7 @@
 //!   the database may reference a blob as soon as `put` returns.
 //! - `s3`: any S3-compatible service (AWS, MinIO, Garage…), path-style by default.
 //!
-//! Keys are `/`-separated object paths (`owners/{owner_id}/chunks/{sha256}`), validated
+//! Keys are `/`-separated object paths (`scopes/{scope_id}/chunks/{sha256}`, layout in `sync`), validated
 //! by [`object_store::path::Path::parse`]: no empty, `.` or `..` segments.
 //!
 //! # Presigned URLs

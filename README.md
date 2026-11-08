@@ -10,7 +10,9 @@ with other users.
 **Status: early development.** The server has its storage infrastructure (database, blob
 storage, optional Redis), the account API (setup, password accounts, invites, desktop device
 login, admin, sign-in with OIDC / GitHub / Discord), scopes, folders, sharing and the trash
-(API only), and serves a placeholder web page. Nothing syncs yet; don't use it for real data.
+(API only), the sync protocol (chunk upload and download, versioned snapshots with conflict
+detection, history, restore, ZIP download) with storage quotas, and serves a placeholder web
+page. There is no desktop client yet; don't use it for real data.
 
 ## Quick start (Docker)
 
@@ -103,6 +105,22 @@ restored (under another name if its old one was taken meanwhile) for `trash_rete
 last 20 versions and at most 5 per day (admin settings `retention_max_versions`,
 `retention_max_per_day`; `0` = unlimited), overridable per folder; the retention job comes
 later.
+
+## Sync, versions and quotas
+
+Each sync uploads only the content the scope doesn't have yet (files are split into
+content-defined chunks, deduplicated per scope) and records a **snapshot**: an immutable
+version of the folder. If two devices sync the same folder from the same version, the second
+gets a conflict instead of overwriting: it keeps its state as a conflict snapshot until the
+user keeps the server version or its own. Any snapshot can be restored (as a new version),
+pinned, labelled or downloaded as a ZIP.
+
+**Storage quotas** count the stored bytes of every scope a user owns (shared scopes count
+against their owner, also for members' uploads; scopes in the trash still count). Admins set
+a server default (`default_quota_bytes` in `PATCH /api/v1/admin/settings`, unlimited by
+default) and per-user quotas (`PATCH /api/v1/admin/users/{id}` `{"quota_bytes": …}`);
+`GET /api/v1/me/usage` shows a user's usage. Space is given back when old versions are
+cleaned up (the cleanup jobs come in a later release).
 
 ## Sign-in providers (OIDC, GitHub, Discord)
 
@@ -210,6 +228,13 @@ The server applies database migrations when it starts. With SQLite it backs up t
 first and refuses to start if the backup fails. With PostgreSQL take a backup yourself
 (`pg_dump`) before upgrading.
 
+- **Next release (sync protocol):** nothing required. New tables (`chunks`, `manifests`,
+  `snapshots`, `snapshot_chunks`) and columns (`scopes.stored_bytes`, `users.quota_bytes`)
+  are created at startup; quotas are unlimited until an admin sets one. Folder responses gain
+  `head` and `unresolved_conflicts`; admin user entries gain `used_bytes`, `quota_bytes`,
+  `effective_quota_bytes`; error bodies may carry `head_snapshot_id`, `hashes` or `detail`.
+  With `S3_PRESIGN=true` clients upload and download chunks directly with S3 (keep
+  `S3_PRESIGN_TTL` short).
 - **Next release (scopes and folders):** nothing required. New tables (`scopes`,
   `scope_members`, `folders`) are created at startup; `GET/PATCH /api/v1/admin/settings`
   gain `retention_max_versions`, `retention_max_per_day` and `trash_retention_days`.
