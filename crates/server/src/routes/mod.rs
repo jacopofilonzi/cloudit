@@ -165,6 +165,9 @@ pub fn router(state: AppState) -> Router {
         .route("/snapshots/{id}/restore", post(snapshots::restore))
         .route("/snapshots/{id}/resolve", post(snapshots::resolve))
         .route("/trash", get(trash::list))
+        .route("/trash/scopes/{id}", delete(trash::purge_scope))
+        .route("/trash/folders/{id}", delete(trash::purge_folder))
+        .route("/trash/empty", post(trash::empty))
         .route("/events", get(events::stream))
         .route("/sync/heads", get(events::heads))
         .layer(axum::middleware::from_fn_with_state(

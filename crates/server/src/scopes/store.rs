@@ -172,6 +172,7 @@ pub async fn restore(
         .col_expr(scopes::Column::UpdatedAt, Expr::value(crate::time::now()))
         .filter(scopes::Column::Id.eq(scope.id))
         .filter(scopes::Column::DeletedAt.is_not_null())
+        .filter(scopes::Column::PurgeRequestedAt.is_null())
         .exec(db)
         .await;
     match result {
@@ -190,6 +191,7 @@ pub async fn trashed_owned(
     scopes::Entity::find()
         .filter(scopes::Column::OwnerId.eq(user))
         .filter(scopes::Column::DeletedAt.is_not_null())
+        .filter(scopes::Column::PurgeRequestedAt.is_null())
         .all(db)
         .await
         .context("listing trashed scopes")
@@ -204,4 +206,21 @@ pub async fn managed(db: &impl ConnectionTrait, user: Uuid) -> anyhow::Result<Ve
         .filter(|(_, role)| *role >= ScopeRole::Admin)
         .map(|(scope, _)| scope)
         .collect())
+}
+
+/// Marks a trashed scope for deletion for good (the `trash_purge` job deletes it);
+/// `false` if it isn't in the trash or is already marked.
+pub async fn request_purge(db: &impl ConnectionTrait, id: Uuid) -> anyhow::Result<bool> {
+    let result = scopes::Entity::update_many()
+        .col_expr(
+            scopes::Column::PurgeRequestedAt,
+            Expr::value(crate::time::now()),
+        )
+        .filter(scopes::Column::Id.eq(id))
+        .filter(scopes::Column::DeletedAt.is_not_null())
+        .filter(scopes::Column::PurgeRequestedAt.is_null())
+        .exec(db)
+        .await
+        .context("marking a scope for purge")?;
+    Ok(result.rows_affected == 1)
 }

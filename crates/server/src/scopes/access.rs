@@ -52,7 +52,8 @@ impl ScopeAccess {
         Ok(Self { scope, role, user })
     }
 
-    /// A scope in the trash: visible to its owner only.
+    /// A scope in the trash (not marked for deletion for good): visible to its owner
+    /// only.
     pub async fn load_trashed(
         db: &impl ConnectionTrait,
         user: Uuid,
@@ -60,7 +61,9 @@ impl ScopeAccess {
     ) -> Result<Self, ApiError> {
         let scope = store::find(db, scope_id)
             .await?
-            .filter(|s| s.deleted_at.is_some() && s.owner_id == user)
+            .filter(|s| {
+                s.deleted_at.is_some() && s.purge_requested_at.is_none() && s.owner_id == user
+            })
             .ok_or(ApiError::NotFound)?;
         Ok(Self {
             scope,
@@ -110,7 +113,7 @@ impl FolderAccess {
     ) -> Result<Self, ApiError> {
         let folder = folders::find(db, folder_id)
             .await?
-            .filter(|f| f.deleted_at.is_some())
+            .filter(|f| f.deleted_at.is_some() && f.purge_requested_at.is_none())
             .ok_or(ApiError::NotFound)?;
         let scope = ScopeAccess::load(db, user, folder.scope_id).await?;
         if scope.role < ScopeRole::Admin {

@@ -23,6 +23,7 @@ mod setup;
 mod snapshots;
 mod support;
 mod sync_client;
+mod trash_purge;
 
 use std::path::{Path, PathBuf};
 

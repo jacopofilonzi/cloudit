@@ -143,6 +143,7 @@ pub async fn restore(
         .col_expr(folders::Column::UpdatedAt, Expr::value(crate::time::now()))
         .filter(folders::Column::Id.eq(folder.id))
         .filter(folders::Column::DeletedAt.is_not_null())
+        .filter(folders::Column::PurgeRequestedAt.is_null())
         .exec(db)
         .await;
     match result {
@@ -164,6 +165,7 @@ pub async fn trashed_in(
     folders::Entity::find()
         .filter(folders::Column::ScopeId.is_in(scopes.iter().copied()))
         .filter(folders::Column::DeletedAt.is_not_null())
+        .filter(folders::Column::PurgeRequestedAt.is_null())
         .all(db)
         .await
         .context("listing trashed folders")
@@ -172,4 +174,21 @@ pub async fn trashed_in(
 /// `NULL` for a timestamp column.
 pub fn null_timestamp() -> SimpleExpr {
     Expr::value(None::<DateTime<Utc>>)
+}
+
+/// Marks a trashed folder for deletion for good (the `trash_purge` job deletes it);
+/// `false` if it isn't in the trash or is already marked.
+pub async fn request_purge(db: &impl ConnectionTrait, id: Uuid) -> anyhow::Result<bool> {
+    let result = folders::Entity::update_many()
+        .col_expr(
+            folders::Column::PurgeRequestedAt,
+            Expr::value(crate::time::now()),
+        )
+        .filter(folders::Column::Id.eq(id))
+        .filter(folders::Column::DeletedAt.is_not_null())
+        .filter(folders::Column::PurgeRequestedAt.is_null())
+        .exec(db)
+        .await
+        .context("marking a folder for purge")?;
+    Ok(result.rows_affected == 1)
 }

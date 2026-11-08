@@ -29,6 +29,7 @@ pub mod orphans;
 pub mod retention;
 pub mod scheduler;
 pub mod store;
+pub mod trash_purge;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -105,8 +106,7 @@ pub async fn run_job(
         JobName::Retention => retention::run(state, ctx, counts).await,
         JobName::Gc => gc::run(state, ctx, counts).await,
         JobName::OrphanSweep => orphans::run(state, ctx, counts).await,
-        // Implemented in the following module.
-        JobName::TrashPurge => Ok(()),
+        JobName::TrashPurge => trash_purge::run(state, ctx, counts).await,
     }
 }
 

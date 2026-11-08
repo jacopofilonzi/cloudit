@@ -24,8 +24,9 @@
 //! **Trash**: moving a scope or folder to the trash sets `deleted_at` / `deleted_by`
 //! and clears `active_key` in one conditional UPDATE. A folder of a trashed scope
 //! keeps its own state but is unreachable until the scope is restored. Permanent
-//! deletion (after `trash_retention_days`, or on request) comes with the jobs of
-//! milestone 4c.
+//! deletion: the `trash_purge` job (`jobs::trash_purge`) deletes items trashed more
+//! than `trash_retention_days` ago, and those marked with `purge_requested_at` (the
+//! permanent delete endpoints); a marked item is no longer listed nor restorable.
 
 pub mod access;
 pub mod folders;
