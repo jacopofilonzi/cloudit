@@ -437,3 +437,10 @@ export const testProvider = (id: string) =>
   post<ProviderTestResult>(`/admin/providers/${seg(id)}/test`);
 export const listJobs = () => get<JobInfo[]>('/admin/jobs');
 export const runJob = (name: JobName) => post<JobInfo>(`/admin/jobs/${seg(name)}/run`);
+
+/**
+ * The redirect URI to register at an identity provider, as the server derives it
+ * from its public URL (shown before the provider exists, so the admin can register it).
+ */
+export const callbackUrl = (publicUrl: string, providerId: string) =>
+  `${publicUrl.replace(/\/+$/u, '')}${url(`/auth/oauth/${seg(providerId)}/callback`)}`;
