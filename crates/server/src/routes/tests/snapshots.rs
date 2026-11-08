@@ -56,7 +56,12 @@ async fn first_and_incremental_commits() {
     assert_eq!(folder.body["unresolved_conflicts"], 0);
     assert_eq!(folder.body["version_count"], 1);
     assert_eq!(folder.body["head"]["device_name"], "Gaming PC");
-    assert!(!folder.body["head"]["author_name"].as_str().unwrap().is_empty());
+    assert!(
+        !folder.body["head"]["author_name"]
+            .as_str()
+            .unwrap()
+            .is_empty()
+    );
     let list = app
         .get(&format!("/api/v1/scopes/{}/folders", t.scope), &t.viewer)
         .await;
