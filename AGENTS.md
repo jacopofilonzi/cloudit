@@ -11,6 +11,7 @@ See "Updating these guidelines" below to align them with the latest version.
 
 cloudit (provisional name): self-hosted client-server folder sync (e.g. game saves) with per-user
 scopes, versioned snapshots and a desktop client. Stack: Rust (axum, SeaORM, object_store) server;
+Rust sync engine for the desktop (`cloudit-client`: rusqlite, reqwest, keyring-core);
 Tauri 2 + SvelteKit/Svelte 5 + Tailwind 4 desktop and web; pnpm + Cargo workspaces. Targets: Linux
 server (Docker); desktop Windows + Linux (macOS later).
 
@@ -204,6 +205,18 @@ and align this project's copies with it:
 - Never trust an unverified email for account linking: auto-link needs the setting on, the
   provider's `email_verified` and the account's own `email_verified`. The outgoing provider
   HTTP client never follows redirects.
+- **The client never overwrites or deletes a local file whose current content isn't already
+  stored on the server** (`crates/client`, crate docs; no local backup copies). Every file a pull
+  replaces or deletes must have its chunk list in the `SafeSet` (the head, the base if
+  `GET /snapshots/{base}` still finds it, this device's conflict snapshot); otherwise the local
+  state is committed as a `conflict` snapshot first, and if that fails nothing is touched.
+  Right before each replacement the file is re-checked against the scan (size + mtime, hashes
+  when racy) and replaced by one rename of a fully staged temp file. Never add a code path that
+  writes or deletes in a synced folder without going through `sync::pull` / `sync::stage`.
+  Nothing but the synced files and `.cloudit-tmp-*` temp files is ever written inside a synced
+  folder; engine state lives in its data dir. The device token lives only in the OS keychain
+  or the 0600 fallback file (`Secret`: never in the state database or a log). The client's
+  SQLite migrations (`crates/client/src/state/migrations.rs`) are append-only like the server's.
 
 ## Code
 
@@ -239,6 +252,16 @@ and align this project's copies with it:
     `base::read::mem` used by tests is deprecated in favour of `read1`. tokio has the
     `io-util` feature (`duplex` pipe for streamed bodies). The server tests also use `zstd`
     (dev-dependency) to build invalid stored manifests.
+  - Client (`crates/client`): **rusqlite 0.39** (`bundled`; not 0.40+, whose `libsqlite3-sys`
+    clashes with sqlx 0.9's `links = "sqlite3"`: one SQLite for the workspace), walkdir 2.5,
+    globset 0.4 (`GlobBuilder::literal_separator`), tokio-util 0.7
+    (`CancellationToken::run_until_cancelled`), **keyring-core 1.0** with one store per OS (not
+    the `keyring` 4 meta-crate): windows-native-keyring-store 1.1 (no default features),
+    zbus-secret-service-keyring-store 1.0 (`crypto-rust`: pure Rust D-Bus),
+    apple-native-keyring-store 1.0 (`keychain`); `Store::new()?` then
+    `store.build(service, user, None)` gives an `Entry` (no global default store). std
+    `File::set_modified` sets mtimes. The client tests run the real server through the
+    `cloudit-server` dev-dependency.
   - **redis 1.8** (not the 2.0 release candidates; features `tokio-comp`, `connection-manager`,
     no TLS): `ConnectionManager::new_lazy_with_config`. uuid 1 (`v4`, `v7`), chrono 0.4 (the
     only date/time crate: SeaORM and object_store use it), url 2.
@@ -454,6 +477,14 @@ and align this project's copies with it:
   `csrf_failed`. E2E runs against the built app on :8080 don't catch this: try `make dev` too.
 - Popover menus are `position: fixed` (placed from the trigger's rectangle): tables sit in an
   `overflow-x-auto` wrapper that clips absolutely positioned children.
+- Client integration tests (`crates/client/tests/common`) serve the real router on
+  `127.0.0.1:0` with `PUBLIC_URL` = its URL and a fixed `SETUP_TOKEN`, and sign engines in
+  through the real `/devices/authorize` flow with an in-memory keychain: never touch the real
+  user keychain in tests. They run on SQLite only. Race tests hook the progress callback
+  (`Phase::Staging`, `Phase::Uploading`…) to change files or cancel mid-operation.
+- Windows file times have 100 ns precision (FAT: 2 s): mtimes from other devices read back
+  rounded. Mtimes never count as content (the three-way comparison is on chunks), and the
+  file index stores the mtime read back after writing.
 - The web app is an SPA (`ssr = false`, adapter-static `fallback: 'index.html'`); in production the
   Rust server serves `WEB_DIR` and falls back to `index.html`, while unknown `/api/*` paths answer a
   JSON `not_found`.

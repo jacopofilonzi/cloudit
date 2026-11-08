@@ -1,11 +1,12 @@
 # Project structure
 
 cloudit is a self-hosted folder sync service: a Rust HTTP server stores versioned snapshots of
-users' folders; a desktop client (planned) syncs local folders with it, and a web UI (served by the
+users' folders; a desktop client syncs local folders with it (its engine, `cloudit-client`, is
+built; the app is planned), and a web UI (served by the
 server as a static SPA) manages accounts, scopes and folders. The UIs talk to the server only
 through its JSON API under `/api/v1`, whose TypeScript types are generated from the Rust ones.
 
-Current state (milestone 5 done): the server has its infrastructure (database with migrations and
+Current state (milestone 6a done): the server has its infrastructure (database with migrations and
 leases, blob storage, optional Redis with a rate limiter, readiness checks), exposes health probes,
 serves the web SPA and has the account API: first-run setup, password accounts with web sessions,
 invites, admin approval of new accounts, password resets, desktop device login (loopback +
@@ -22,14 +23,17 @@ desktop device approval) and the signed-in app: scopes with folders, history, fi
 comparison, sharing, devices, trash, profile (theme and language), live updates, and the
 administration pages (users and approvals, invites, sign-in providers, settings, maintenance).
 `cloudit-core` implements the sync formats (chunking, chunk encoding, manifest, path rules, diff;
-see "Sync formats"); the server verifies every upload with it. Everything under "Planned
-design" is not implemented yet.
+see "Sync formats"); the server verifies every upload with it. `cloudit-client` is the
+desktop sync engine (milestone 6a, no UI): browser sign-in, OS keychain, linked folders,
+scanner with ignore rules, push, pull under the no-overwrite safety rule, conflicts, events
+(see "Client engine"). Everything under "Planned design" is not implemented yet.
 
 ```text
 repo/
 ├── crates/
 │   ├── core/             Rust lib `cloudit-core` — API types, chunking, chunk codec, manifest, diff (no I/O)
-│   └── server/           Rust bin `cloudit-server` — axum HTTP server
+│   ├── server/           Rust bin `cloudit-server` — axum HTTP server
+│   └── client/           Rust lib `cloudit-client` — desktop sync engine (state, scan, push, safe pull, conflicts)
 ├── apps/
 │   └── web/              SvelteKit 3 + Svelte 5 + Tailwind 4 SPA (adapter-static)
 ├── packages/
@@ -931,6 +935,171 @@ Read once at startup (`config/mod.rs`); empty values count as unset. Documented 
 | `TEST_DATABASE_URL`, `TEST_S3_*`, `TEST_REDIS_URL` | unset | Tests only (`make test-ha`, CI): run the server tests against PostgreSQL / S3 / Redis instead of SQLite and skipping |
 | `PUID` / `PGID` | `10001` | Docker only, read by the entrypoint (not the server): user/group the server runs as and owner of `DATA_DIR` |
 
+## Client engine (`crates/client/src`)
+
+`cloudit-client` (lib, no UI): the sync engine the desktop app (milestone 6b, Tauri) and a
+possible CLI drive through `Engine`. Its crate docs (`lib.rs`) and each module's top-level
+doc are the design reference.
+
+```text
+crates/client/src/
+├── lib.rs            crate docs: the safety rule, design, status model; re-exports
+├── error.rs          Error (thiserror) + ErrorKind (stable snake_case kinds for the UI),
+│                     LinkRefusal, LoginFailure
+├── secret.rs         Secret: token in memory, Debug prints `***`, no Display/Serialize
+├── progress.rs       OpContext (progress callback + CancellationToken), Phase, Progress
+├── platform/         the only OS-specific code: default data dir, os / device name, exec
+│   │                 bit, private files (0600), canonical paths, path keys, open_browser,
+│   │                 the OS keychain store
+│   ├── mod.rs        shared helpers (timestamps, path_key, case_insensitive_names)
+│   ├── unix.rs       Linux (+ macOS later): XDG data dir, chmod, Secret Service / Keychain
+│   └── windows.rs    %LOCALAPPDATA%, `\\?\` stripping, rundll32 opener, Credential Manager
+├── state/            local SQLite (rusqlite, bundled): Db, migrations (user_version)
+│   ├── mod.rs        open (WAL, foreign keys), migrate, meta
+│   ├── migrations.rs ordered SQL scripts (append-only)
+│   ├── account.rs    Account, TokenLocation (keyring | file)
+│   ├── folders.rs    LinkedFolder; base / pending conflict / head cache columns
+│   ├── index.rs      file index (path → size, mtime, executable, packed chunk list)
+│   └── activity.rs   bounded activity log (1000 rows)
+├── api/              HTTP client (reqwest, rustls, no redirects)
+│   ├── mod.rs        Api, RetryPolicy, parse_server_url, retries / Retry-After, error mapping
+│   └── endpoints.rs  typed calls (health, devices/token, me, scopes, folders, snapshots,
+│                     manifest, chunks check / download, commit, restore, resolve, heads,
+│                     events) and chunk transfers (proxy vs presigned)
+├── auth/
+│   ├── login.rs      PendingLogin: loopback listener + PKCE, `/device` URL, callback pages
+│   └── tokens.rs     TokenVault (keychain, then `<data>/token.json` 0600), SecretBackend,
+│                     KeyringBackend, MemoryBackend
+├── scan/
+│   ├── mod.rs        scan: walk, name checks, collisions, index reuse, streaming chunker,
+│   │                 racy files, empty dirs → Scan {manifest, files, problems, index}
+│   └── ignore.rs     IgnoreRules (gitignore-like subset, documented)
+├── sync/
+│   ├── mod.rs        Snap, FolderCtx (base, pending conflict, scan, remote head)
+│   ├── plan.rs       pure: compare (three-way), upload_manifest (ignored entries carried
+│   │                 over), plan_pull, SafeSet, unsafe_paths, needed_chunks
+│   ├── status.rs     SyncState, FolderStatus, state_of (precedence)
+│   ├── upload.rs     Uploader: chunks/check batches, 6 parallel uploads read back from files
+│   ├── push.rs       commit (normal or conflict; chunk_missing retries; own-commit 409)
+│   ├── pull.rs       apply_head: refuse unsafe plans, download to the chunk cache, stage +
+│   │                 apply, index, base
+│   └── stage.rs      temp files, ChunkSources, stage, recheck, apply (atomic renames)
+├── engine/
+│   ├── mod.rs        Engine, EngineConfig: open, login / logout, listings, activity, locks
+│   ├── linking.rs    link_folder, create_and_link, unlink, relocate, set_ignore, set_paused,
+│   │                 refresh_names, local path rules
+│   └── ops.rs        status, sync, keep_local, keep_server, decide_later; conflict flow
+└── events.rs         follow: SSE + `/sync/heads` (ETag) → RemoteEvent channel
+```
+
+Tests: unit tests next to the code; `crates/client/tests/` runs the **real server
+in-process** (`common/mod.rs`: `AppState` + `router` served on `127.0.0.1:0`, SQLite and fs
+blobs in a temp dir, `SETUP_TOKEN`, `PUBLIC_URL` = its URL; engines sign in through the real
+browser flow, a fake browser calling `/devices/authorize` and following the redirect; an
+in-memory keychain): `sync.rs` (pushes, pulls, deletions, empty dirs, a 24 MiB file, exec
+bit, temp files, ignore rules, relative transfer URLs, events), `conflicts.rs` (keep local /
+server, decide later, conflicts decided elsewhere, first links over existing content),
+`safety.rs` (file changed between scan and apply, failed conflict upload, base deleted by
+retention, cancellation mid-upload / download / apply, unreadable files, bad names),
+`account.rs` (token file fallback across restarts, revoked device, link rules, account
+switch). SQLite only (`make test-ha` runs the server crate).
+
+### Using the engine (desktop app)
+
+1. `Engine::open(EngineConfig::new(data_dir))` once (the app's data dir, never inside a
+   synced folder; `platform::default_data_dir()` for a CLI). Keep the `Engine` (cheap
+   `Clone`, `Send + Sync`) in the app state.
+2. Sign-in: `begin_login(server_url, device_name, ctx)` → open `PendingLogin::browser_url()`
+   with the opener plugin → `finish_login(pending, ctx)` (cancellable; 10 min timeout).
+   `Account::token_warning()` = the token is in the fallback file: show a warning. An
+   `unauthorized` error anywhere means "sign in again"; `logout` forgets the token.
+3. Linking: `scopes`, `server_folders`, `create_scope`, then `link_folder` (existing server
+   folder) or `create_and_link` (new one from the local content); `unlink`, `relocate`,
+   `set_ignore`, `set_paused`, `refresh_names`, `folders`.
+4. Sync: `status(id, ctx)` for display, `sync(id, ctx)` to act (progress through
+   `OpContext::with_progress`, cancel with its token). `SyncOutcome::NeedsDecision`,
+   `SyncState::Conflict` or `ServerConflict` → offer `keep_local`, `keep_server`,
+   `decide_later` (pauses: `sync` then answers `paused`). `activity` for the log.
+5. Live updates: `events::follow(&engine, cancel)` → `RemoteEvent::HeadChanged {folder}` →
+   `sync(folder)`; `FoldersChanged` → refresh lists; `SignedOut` → sign in again.
+6. Errors: map `Error::kind()` (stable names) through i18n; `ScanProblems` carries the
+   per-item list (`ScanProblem {path, kind, detail}`). Public data types are `Serialize`.
+
+### Safety rule and sync model
+
+- **The engine never overwrites or deletes a local file whose current content isn't
+  already stored on the server.** A pull's plan lists the local files it would replace or
+  delete; each one's chunk list must be in the `SafeSet`: files of the head, of the base
+  (only if `GET /snapshots/{base}` still finds it: retention may have deleted it) and of this
+  device's conflict snapshot. Otherwise the local state is first committed as a `conflict`
+  snapshot; if that fails nothing is touched. A safety copy made only because the base
+  vanished is resolved right after the pull (it stays in the history). `sync::pull` refuses
+  an unsafe plan regardless (defense in depth).
+- **Re-check before each replacement**: size + mtime against the scan (plus the chunk hashes
+  for "racy" files, modified within 2 s of the scan); a mismatch stops the apply
+  (`local_changed`) and leaves the file alone. Files are staged completely first, then
+  replaced by one rename each: a file is always its old or its new version.
+- **Temp files**: `.cloudit-tmp-<16 hex>` in the linked folder's root (same volume as the
+  targets; a cross-device rename copies next to the target first). Removed on failure or
+  cancellation; the scanner ignores the prefix and deletes leftovers older than an hour.
+  Nothing else is ever written in a synced folder.
+- **Three-way comparison** per path (content only: kind, size, chunks, executable; mtimes
+  ignored; ignored paths excluded): `L == H` converged; else only `L` changed vs the base
+  (local change), only `H` (remote), or both (conflicting). Folder `conflict` = any
+  conflicting path or changes on both sides (whole-folder decision: a save set is one
+  unit). Converged paths never count, so an interrupted pull resumes as a plain pull and
+  identical changes don't conflict. A push commits on top of the head it compared with; a
+  pull applies the head; `in_sync` with another head id only moves the base.
+- **States** (precedence): `missing_local_path`, `remote_missing`, `error` (scan problems),
+  `conflict` (also while this device's conflict snapshot is open and still the local
+  content), `local_changes`, `remote_changes`, `server_conflict` (unresolved conflicts from
+  any device), `in_sync`. `FolderStatus` lists the changed paths, problems, base / head,
+  unresolved count, the pending conflict and `paused`.
+- **Conflict flow**: `sync` stores the local state as `kind=conflict` (parent = base; once
+  per content) and answers `NeedsDecision`. `keep_local` = `POST /snapshots/{c}/restore
+  {expected_head}` then sync (base = the new head); `keep_server` = `POST
+  /snapshots/{c}/resolve` then a pull under the safety rule (local edits made since are
+  stored first as a new open conflict); `decide_later` pauses the folder. Decisions made
+  elsewhere (web UI, another device) are picked up by the next status.
+- **Ignore patterns** (`scan/ignore.rs`): `*.tmp`, `session.lock` (any depth), `saves/x*`,
+  `/config.ini` (anchored), `logs/` (directories only), `**`; no negation; case-insensitive
+  on Windows / macOS. Ignored paths are never uploaded, never written or deleted by a pull,
+  and the server's entries under them are carried over into this device's uploads.
+- **Scan problems** block push and pull (a partial manifest would delete files on the
+  server): `unreadable` (locked by a running game, permissions), `invalid_name` (core path
+  rules), `name_collision` (letter case), `not_utf8`. Symlinks and special files are skipped.
+- Executable bit: synced on Unix; on Windows a file keeps its base entry's flag.
+- **Resumable**: the base moves only after a whole push or pull; the file index records
+  every applied file; downloaded chunks stay in `<data dir>/chunk-cache/` (hash-verified on
+  use) until the pull that needed them completes.
+- One operation per folder at a time (per-folder async lock; a second call waits); folders
+  run in parallel. 6 chunk transfers at a time. Requests retry network errors and 429 /
+  502 / 503 / 504 with backoff and `Retry-After` (at most 60 s), never other 4xx; a 409 on
+  commit whose head has the same manifest counts as success.
+
+### Local state (`<data dir>/state.db`)
+
+SQLite (WAL, foreign keys); migrations are the ordered scripts of `state/migrations.rs` and
+`PRAGMA user_version` counts those applied (append-only; a newer database is refused).
+Tables: `meta(key, value)` (`last_account` = server + user the links belong to: signing in
+to another account unlinks every folder); `account(id = 1, server_url, user_id, email,
+display_name, device_id, device_name, token_location, token_expires_at?, signed_in_at)`;
+`folders(id, local_path UNIQUE (canonical), scope_id, folder_id UNIQUE, scope_name,
+folder_name, emoji?, ignore_patterns (one per line), paused, base_snapshot_id?,
+base_manifest? (stored zstd form), pending_conflict_id?, pending_conflict_manifest?,
+head_cache_id?, head_cache_manifest?, last_state?, last_error?, last_sync_at?, created_at)`;
+`file_index(folder_id → folders ON DELETE CASCADE, path, size, mtime_secs, mtime_nanos,
+executable, chunks BLOB (32-byte hash + u32 LE size each))` (PK (folder_id, path));
+`activity(id, at, folder_id?, folder_name?, action, outcome, files, bytes, snapshot_id?,
+error_kind?, error?)` (newest 1000 kept). Other files: `token.json` (fallback token, 0600),
+`chunk-cache/`. The token is never in the database or a log.
+
+**Tokens**: OS keychain through `keyring-core` (service `cloudit`, user
+`<server url>#<device id>`): Windows Credential Manager, the Secret Service on Linux (pure
+Rust D-Bus: at runtime it needs a session bus and a Secret Service provider such as GNOME
+Keyring or KWallet; nothing to build), the macOS Keychain. When the keychain fails, the
+token goes to `<data dir>/token.json` (0600) and `Account.token_location` is `file`.
+
 ## Frontend
 
 The design is the user-approved mockup "B2" (light theme, indigo accent `#5b5bd6`; dark values
@@ -1145,11 +1314,12 @@ Milestones: 1 scaffolding (done) · 2 core chunking/manifest (done) · 3a server
 4a scopes, folders, sharing, trash, retention settings (done) · 4b sync protocol, quotas
 (done) · 4c events and background jobs (done) · 5a web UI foundations and pages outside the
 app (done) · 5b the app pages (scopes, folders, history, sharing, devices, trash, profile, live
-updates: done) · 5c administration pages and the final end-to-end check (milestone 5 done) · 6 (next) desktop manual
-sync + conflicts · 7 desktop auto sync/tray/autostart/installers.
+updates: done) · 5c administration pages and the final end-to-end check (milestone 5 done) · 6a
+client sync engine `crates/client` (done) · 6b (next) desktop app: manual sync + conflicts over the
+engine · 7 desktop auto sync/tray/autostart/installers.
 
-Planned layout additions: `apps/desktop` (Tauri 2 + Svelte 5, milestone 6; OS code in a `platform/`
-module).
+Planned layout additions: `apps/desktop` (Tauri 2 + Svelte 5, milestone 6b, a thin UI over
+`cloudit-client` ("Using the engine"); OS code in a `platform/` module).
 
 ### Storage and deployment
 
@@ -1158,5 +1328,5 @@ transfer of the sync API and the lease-guarded background jobs are implemented.
 
 ### Desktop client
 
-- Sync flow: "Sync protocol". Triggers: manual, startup, quiet period, associated process
-  exit, SSE events. Local state in SQLite.
+- The engine is built ("Client engine"). Triggers (app side): manual, startup, quiet
+  period, associated process exit, SSE events (`events::follow`).
