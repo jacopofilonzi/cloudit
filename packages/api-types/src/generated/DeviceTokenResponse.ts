@@ -8,4 +8,8 @@ export type DeviceTokenResponse = {
 /**
  * `cld_…`, for `Authorization: Bearer`.
  */
-token: Sensitive, device_id: string, expires_at: string, };
+token: Sensitive, device_id: string, 
+/**
+ * `null` for a `forever` token.
+ */
+expires_at: string | null, };

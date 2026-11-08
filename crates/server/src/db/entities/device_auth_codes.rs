@@ -17,7 +17,8 @@ pub struct Model {
     pub redirect_uri: String,
     pub device_name: String,
     pub os: String,
-    pub token_ttl_secs: i64,
+    /// `None` = a token that never expires.
+    pub token_ttl_secs: Option<i64>,
     pub created_at: DateTimeUtc,
     pub expires_at: DateTimeUtc,
     pub used_at: Option<DateTimeUtc>,

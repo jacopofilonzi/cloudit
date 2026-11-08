@@ -337,3 +337,66 @@ async fn token_endpoint_is_rate_limited() {
         .await
         .assert_error(StatusCode::TOO_MANY_REQUESTS, "rate_limited");
 }
+
+#[tokio::test]
+async fn forever_tokens_never_expire_until_revoked_or_disabled() {
+    let app = TestApp::new().await;
+    let admin = app.setup_admin().await;
+    let user = app.user("user@example.com").await;
+    let code = authorize(&app, &user, authorize_body(Some("forever"))).await;
+    let resp = exchange(&app, &code, VERIFIER, REDIRECT).await;
+    resp.assert(StatusCode::OK);
+    assert!(resp.body["expires_at"].is_null());
+    let id = resp.body["device_id"].as_str().unwrap().to_owned();
+    let bearer = As::Bearer(resp.body["token"].as_str().unwrap().to_owned());
+
+    let stored = devices::Entity::find().one(&app.state.db).await.unwrap();
+    assert!(stored.unwrap().expires_at.is_none());
+    app.get("/api/v1/me", &bearer).await.assert(StatusCode::OK);
+    let resp = app.get("/api/v1/devices", &user).await;
+    assert!(resp.body[0]["expires_at"].is_null());
+
+    // Disabled accounts are still refused.
+    let user_id = app.user_id(&user).await;
+    let patch = |disabled: bool| {
+        app.call(
+            "PATCH",
+            &format!("/api/v1/admin/users/{user_id}"),
+            &admin,
+            Some(json!({ "disabled": disabled })),
+        )
+    };
+    patch(true).await.assert(StatusCode::OK);
+    app.get("/api/v1/me", &bearer)
+        .await
+        .assert_error(StatusCode::FORBIDDEN, "account_disabled");
+    patch(false).await.assert(StatusCode::OK);
+    app.get("/api/v1/me", &bearer).await.assert(StatusCode::OK);
+
+    // Revoking still works (disabling signed the web session out: sign in again).
+    let user = As::Cookie(
+        app.login("user@example.com", super::support::PASSWORD)
+            .await
+            .cookie()
+            .unwrap(),
+    );
+    app.call("DELETE", &format!("/api/v1/devices/{id}"), &user, None)
+        .await
+        .assert(StatusCode::NO_CONTENT);
+    app.get("/api/v1/me", &bearer)
+        .await
+        .assert_error(StatusCode::UNAUTHORIZED, "unauthorized");
+}
+
+#[tokio::test]
+async fn invites_refuse_the_forever_lifetime() {
+    let app = TestApp::new().await;
+    let admin = app.setup_admin().await;
+    app.post(
+        "/api/v1/admin/invites",
+        &admin,
+        json!({ "expires_in": "forever" }),
+    )
+    .await
+    .assert_error(StatusCode::UNPROCESSABLE_ENTITY, "validation_failed");
+}

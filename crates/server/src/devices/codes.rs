@@ -28,7 +28,8 @@ pub struct NewCode {
     pub redirect_uri: String,
     pub device_name: String,
     pub os: String,
-    pub token_ttl: Duration,
+    /// `None` = the token never expires.
+    pub token_ttl: Option<Duration>,
 }
 
 /// Stores a new code; returns it in plaintext.
@@ -43,7 +44,10 @@ pub async fn create(db: &impl ConnectionTrait, new: NewCode) -> anyhow::Result<S
         redirect_uri: Set(new.redirect_uri),
         device_name: Set(new.device_name),
         os: Set(new.os),
-        token_ttl_secs: Set(i64::try_from(new.token_ttl.as_secs()).context("token TTL")?),
+        token_ttl_secs: Set(new
+            .token_ttl
+            .map(|ttl| i64::try_from(ttl.as_secs()).context("token TTL"))
+            .transpose()?),
         created_at: Set(now),
         expires_at: Set(crate::time::add(now, TTL)?),
         used_at: Set(None),

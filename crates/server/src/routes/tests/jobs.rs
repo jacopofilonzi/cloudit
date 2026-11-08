@@ -234,7 +234,7 @@ async fn cleanup_deletes_what_can_never_be_used() {
         redirect_uri: Set("http://127.0.0.1:1/callback".to_owned()),
         device_name: Set("pc".to_owned()),
         os: Set("linux".to_owned()),
-        token_ttl_secs: Set(3600),
+        token_ttl_secs: Set(Some(3600)),
         created_at: Set(past),
         expires_at: Set(past),
         used_at: Set(None),

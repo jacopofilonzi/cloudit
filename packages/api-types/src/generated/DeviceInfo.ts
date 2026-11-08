@@ -7,4 +7,8 @@ export type DeviceInfo = { id: string, name: string, os: string, created_at: str
 /**
  * Last authenticated request, updated at most every few minutes.
  */
-last_seen_at: string | null, expires_at: string, revoked_at: string | null, };
+last_seen_at: string | null, 
+/**
+ * `null` = never expires.
+ */
+expires_at: string | null, revoked_at: string | null, };

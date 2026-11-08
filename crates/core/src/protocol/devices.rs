@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use super::Sensitive;
 
-/// Lifetime of a device token (fixed, not extended by use), also used for invites.
+/// Lifetime of a device token (fixed, not extended by use), also used for invites
+/// (which refuse `forever`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub enum TokenTtl {
@@ -25,19 +26,23 @@ pub enum TokenTtl {
     ThirtyDays,
     #[serde(rename = "1y")]
     OneYear,
+    /// Never expires: valid until revoked (or the account is disabled or rejected).
+    #[serde(rename = "forever")]
+    Forever,
 }
 
 impl TokenTtl {
-    /// The lifetime in seconds (a year is 365 days).
+    /// The lifetime in seconds (a year is 365 days); `None` = forever.
     #[must_use]
-    pub fn as_secs(self) -> u64 {
+    pub fn as_secs(self) -> Option<u64> {
         const DAY: u64 = 86_400;
         match self {
-            Self::OneHour => 3600,
-            Self::OneDay => DAY,
-            Self::SevenDays => 7 * DAY,
-            Self::ThirtyDays => 30 * DAY,
-            Self::OneYear => 365 * DAY,
+            Self::OneHour => Some(3600),
+            Self::OneDay => Some(DAY),
+            Self::SevenDays => Some(7 * DAY),
+            Self::ThirtyDays => Some(30 * DAY),
+            Self::OneYear => Some(365 * DAY),
+            Self::Forever => None,
         }
     }
 }
@@ -97,7 +102,8 @@ pub struct DeviceTokenResponse {
     /// `cld_…`, for `Authorization: Bearer`.
     pub token: Sensitive,
     pub device_id: String,
-    pub expires_at: String,
+    /// `null` for a `forever` token.
+    pub expires_at: Option<String>,
 }
 
 /// One device in `GET /api/v1/devices` (revoked and expired ones included).
@@ -110,7 +116,8 @@ pub struct DeviceInfo {
     pub created_at: String,
     /// Last authenticated request, updated at most every few minutes.
     pub last_seen_at: Option<String>,
-    pub expires_at: String,
+    /// `null` = never expires.
+    pub expires_at: Option<String>,
     pub revoked_at: Option<String>,
 }
 
@@ -133,8 +140,13 @@ mod tests {
             serde_json::json!("7d")
         );
         let ttl: TokenTtl = serde_json::from_value(serde_json::json!("1y")).unwrap();
-        assert_eq!(ttl.as_secs(), 365 * 86_400);
+        assert_eq!(ttl.as_secs(), Some(365 * 86_400));
         assert_eq!(TokenTtl::default(), TokenTtl::ThirtyDays);
+        assert_eq!(
+            serde_json::to_value(TokenTtl::Forever).unwrap(),
+            serde_json::json!("forever")
+        );
+        assert_eq!(TokenTtl::Forever.as_secs(), None);
         assert!(serde_json::from_value::<TokenTtl>(serde_json::json!("2d")).is_err());
         assert!(serde_json::from_value::<CodeChallengeMethod>(serde_json::json!("plain")).is_err());
     }

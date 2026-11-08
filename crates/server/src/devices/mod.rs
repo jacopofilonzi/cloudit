@@ -1,8 +1,8 @@
 //! Desktop devices: login through loopback redirect + PKCE ([`codes`], [`redirect`])
 //! and the `devices` table (bearer tokens `cld_…`).
 //!
-//! A device token expires at a fixed time chosen at login (not extended by use) and can
-//! be revoked (soft: `revoked_at`). `last_seen_at` is written at most every
+//! A device token expires at a fixed time chosen at login (not extended by use; `forever`
+//! = no expiry, `expires_at` NULL) and can be revoked (soft: `revoked_at`). `last_seen_at` is written at most every
 //! [`SEEN_EVERY`].
 
 pub mod codes;
@@ -27,13 +27,14 @@ use crate::db::entities::{devices, users as user_entity};
 /// Minimum interval between two writes of `last_seen_at`.
 pub const SEEN_EVERY: Duration = Duration::from_secs(5 * 60);
 
-/// Creates a device with a new token valid until `expires_at`; returns the token.
+/// Creates a device with a new token valid until `expires_at` (`None` = until revoked);
+/// returns the token.
 pub async fn create(
     db: &impl ConnectionTrait,
     user_id: Uuid,
     name: String,
     os: String,
-    expires_at: DateTime<Utc>,
+    expires_at: Option<DateTime<Utc>>,
 ) -> anyhow::Result<(Secret, devices::Model)> {
     let token = tokens::new_device_token()?;
     let model = devices::ActiveModel {
@@ -65,7 +66,11 @@ pub async fn authenticate(
     let device = devices::Entity::find()
         .filter(devices::Column::TokenHash.eq(tokens::hash_token(token)))
         .filter(devices::Column::RevokedAt.is_null())
-        .filter(devices::Column::ExpiresAt.gt(crate::time::now()))
+        .filter(
+            devices::Column::ExpiresAt
+                .is_null()
+                .or(devices::Column::ExpiresAt.gt(crate::time::now())),
+        )
         .one(db)
         .await
         .context("loading a device")?;

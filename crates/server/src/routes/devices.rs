@@ -79,7 +79,7 @@ pub async fn authorize(
             redirect_uri: body.redirect_uri,
             device_name,
             os,
-            token_ttl: Duration::from_secs(ttl.as_secs()),
+            token_ttl: ttl.as_secs().map(Duration::from_secs),
         },
     )
     .await?;
@@ -131,8 +131,13 @@ pub async fn token(
         return Err(err);
     }
 
-    let ttl = Duration::from_secs(u64::try_from(code.token_ttl_secs).unwrap_or(0));
-    let expires_at = crate::time::add(crate::time::now(), ttl)?;
+    let expires_at = code
+        .token_ttl_secs
+        .map(|secs| {
+            let ttl = Duration::from_secs(u64::try_from(secs).unwrap_or(0));
+            crate::time::add(crate::time::now(), ttl)
+        })
+        .transpose()?;
     let (token, device) =
         devices::create(&tx, code.user_id, code.device_name, code.os, expires_at).await?;
     tx.commit().await.map_err(anyhow::Error::from)?;
@@ -140,7 +145,7 @@ pub async fn token(
     Ok(Json(DeviceTokenResponse {
         token: Sensitive::new(token.expose()),
         device_id: device.id.to_string(),
-        expires_at: crate::time::rfc3339(device.expires_at),
+        expires_at: device.expires_at.map(crate::time::rfc3339),
     }))
 }
 

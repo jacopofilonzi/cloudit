@@ -66,7 +66,7 @@ crates/core/src/
 │   │                 AuthProvider, SetupStatus, SetupRequest, RegisterRequest, LoginRequest,
 │   │                 PasswordResetRequest
 │   ├── me.rs         UserProfile, UpdateMeRequest, ChangePasswordRequest, SessionInfo
-│   ├── devices.rs    TokenTtl (1h/1d/7d/30d/1y), CodeChallengeMethod, DeviceAuthorize*,
+│   ├── devices.rs    TokenTtl (1h/1d/7d/30d/1y/forever), CodeChallengeMethod, DeviceAuthorize*,
 │   │                 DeviceToken*, DeviceInfo, UpdateDeviceRequest
 │   ├── admin.rs      AdminUser, AdminUserList, AdminUserUpdate, PasswordResetLink,
 │   │                 CreateInviteRequest, InviteLink, InviteStatus, InviteInfo, ServerSettings,
@@ -360,7 +360,7 @@ Bearer cld_…`); **admin** (session of an effective admin); **onboarding** (the
 | `GET /admin/summary` | admin | `AdminSummary {pending_users}` |
 | `POST /admin/users/{id}/password-reset` | admin | → 201 `PasswordResetLink {token, path: "/reset-password/<token>", expires_at}`; older unused resets of the user stop working |
 | `GET /admin/invites` | admin | `InviteInfo[]` (newest first, no tokens) |
-| `POST /admin/invites` | admin | `CreateInviteRequest {email?, expires_in?}` (default 7d) → 201 `InviteLink {id, token, path: "/invite/<token>", expires_at}` |
+| `POST /admin/invites` | admin | `CreateInviteRequest {email?, expires_in?}` (default 7d; `forever` → 422) → 201 `InviteLink {id, token, path: "/invite/<token>", expires_at}` |
 | `DELETE /admin/invites/{id}` | admin | → 204 (revoke, soft) |
 | `GET /admin/settings` | admin | `ServerSettings {registration_mode, password_new_accounts, autolink_email, public_url, public_url_from_env, effective_public_url, retention_max_versions, retention_max_per_day, trash_retention_days, default_quota_bytes}` |
 | `PATCH /admin/settings` | admin | `UpdateSettingsRequest {registration_mode?, password_new_accounts?, autolink_email?, public_url? ("" clears), retention_max_versions? (0..=100000, 0 = unlimited), retention_max_per_day? (same), trash_retention_days? (1..=3650), default_quota_bytes? (null = unlimited)}` → `ServerSettings`; all fields validated before any is written |
@@ -465,9 +465,11 @@ request and 409 for head conflicts), `payload_too_large` 413. The callback carri
 - **Devices** (RFC 8252 loopback + PKCE S256): `authorize` (session) checks the challenge (43
   base64url characters), the redirect URI (`http://127.0.0.1:<port>/…` or `http://[::1]:<port>/…`,
   explicit port, no query, fragment or `localhost`), `state` (1..=512 characters), name, os and
-  `token_ttl` (1h, 1d, 7d, 30d default, 1y), and stores a 2-minute code. `token` consumes the code
+  `token_ttl` (1h, 1d, 7d, 30d default, 1y, forever), and stores a 2-minute code. `token` consumes the code
   first (conditional UPDATE), then checks the redirect URI (exact match) and SHA-256(verifier) in
-  constant time: any failure burns the code. The token `cld_<base64url>` has a fixed expiry;
+  constant time: any failure burns the code. The token `cld_<base64url>` has a fixed expiry, or none
+  for `forever` (`expires_at` NULL in the table and `null` in `DeviceInfo` / `DeviceTokenResponse`;
+  valid until revoked, and still refused while the account is disabled or rejected);
   revoking sets `revoked_at`; `last_seen_at` is written at most every 5 minutes.
 - **Disabled accounts**: disabling deletes the account's web sessions in the same transaction
   (re-enabling doesn't revive them); login (password or provider) is refused with
@@ -819,9 +821,9 @@ request and 409 for head conflicts), `payload_too_large` 413. The callback carri
   - `password_resets(id, token_hash UNIQUE, user_id → users, created_by? → users (null = CLI),
     created_at, expires_at (24 h), used_at?)`;
   - `devices(id, user_id → users, name, os, token_hash UNIQUE, created_at, last_seen_at?,
-    expires_at, revoked_at?)` (index on user_id);
+    expires_at? (NULL = forever), revoked_at?)` (index on user_id);
   - `device_auth_codes(id, code_hash UNIQUE, user_id → users, code_challenge, redirect_uri,
-    device_name, os, token_ttl_secs, created_at, expires_at (2 min), used_at?)`;
+    device_name, os, token_ttl_secs? (NULL = forever), created_at, expires_at (2 min), used_at?)`;
   - `auth_providers(id TEXT PK (slug), kind, display_name, icon, issuer_url?, tenant?,
     client_id, client_secret_enc BLOB, scopes, groups_claim?, admin_groups (JSON array),
     allowed_groups (JSON array), new_accounts (`auto` | `approval`, default `approval`), enabled,

@@ -13,6 +13,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse as _, Response};
 use cloudit_core::protocol::{HelloEvent, RealtimeMode, ServerEvent, SyncHead, SyncHeads};
+use sea_orm::sea_query::ExprTrait as _;
 use sea_orm::{ColumnTrait as _, EntityTrait as _, QueryFilter as _};
 use sha2::{Digest as _, Sha256};
 use tokio::sync::broadcast;
@@ -47,7 +48,11 @@ async fn still_valid(state: &AppState, user: Uuid, credential: Credential) -> an
             .is_some(),
         Credential::Device(id) => devices::Entity::find_by_id(id)
             .filter(devices::Column::RevokedAt.is_null())
-            .filter(devices::Column::ExpiresAt.gt(now))
+            .filter(
+                devices::Column::ExpiresAt
+                    .is_null()
+                    .or(devices::Column::ExpiresAt.gt(now)),
+            )
             .one(&state.db)
             .await?
             .is_some(),

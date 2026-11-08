@@ -15,7 +15,8 @@ pub struct Model {
     pub token_hash: String,
     pub created_at: DateTimeUtc,
     pub last_seen_at: Option<DateTimeUtc>,
-    pub expires_at: DateTimeUtc,
+    /// `None` = never expires.
+    pub expires_at: Option<DateTimeUtc>,
     pub revoked_at: Option<DateTimeUtc>,
 }
 

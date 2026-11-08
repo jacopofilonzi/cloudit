@@ -219,13 +219,11 @@ pub async fn create_invite(
         .map(|e| validate::email(e, "email"))
         .transpose()?;
     let ttl = body.expires_in.unwrap_or(TokenTtl::SevenDays);
-    let (token, invite) = invites::create(
-        &state.db,
-        me.user.id,
-        email,
-        Duration::from_secs(ttl.as_secs()),
-    )
-    .await?;
+    let secs = ttl
+        .as_secs()
+        .ok_or_else(|| ApiError::validation("expires_in", "invites always expire"))?;
+    let (token, invite) =
+        invites::create(&state.db, me.user.id, email, Duration::from_secs(secs)).await?;
     tracing::info!(admin_id = %me.user.id, invite_id = %invite.id, "invite created");
     Ok((
         StatusCode::CREATED,

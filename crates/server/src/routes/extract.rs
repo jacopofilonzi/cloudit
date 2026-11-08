@@ -117,7 +117,7 @@ pub fn device_info(device: &devices::Model) -> DeviceInfo {
         os: device.os.clone(),
         created_at: rfc3339(device.created_at),
         last_seen_at: rfc3339_opt(device.last_seen_at),
-        expires_at: rfc3339(device.expires_at),
+        expires_at: rfc3339_opt(device.expires_at),
         revoked_at: rfc3339_opt(device.revoked_at),
     }
 }

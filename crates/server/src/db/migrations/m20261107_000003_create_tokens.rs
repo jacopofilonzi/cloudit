@@ -183,7 +183,8 @@ impl MigrationTrait for Migration {
                     .col(hash(Devices::TokenHash))
                     .col(timestamp(Devices::CreatedAt))
                     .col(timestamp_null(Devices::LastSeenAt))
-                    .col(timestamp(Devices::ExpiresAt))
+                    // NULL = never expires.
+                    .col(timestamp_null(Devices::ExpiresAt))
                     .col(timestamp_null(Devices::RevokedAt))
                     .foreign_key(&mut user_fk(
                         "fk_devices_user",
@@ -225,9 +226,8 @@ impl MigrationTrait for Migration {
                     )
                     .col(ColumnDef::new(DeviceAuthCodes::Os).text().not_null())
                     .col(
-                        ColumnDef::new(DeviceAuthCodes::TokenTtlSecs)
-                            .big_integer()
-                            .not_null(),
+                        // NULL = a token that never expires.
+                        ColumnDef::new(DeviceAuthCodes::TokenTtlSecs).big_integer(),
                     )
                     .col(timestamp(DeviceAuthCodes::CreatedAt))
                     .col(timestamp(DeviceAuthCodes::ExpiresAt))
