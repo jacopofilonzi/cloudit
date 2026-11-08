@@ -180,6 +180,7 @@ type Query = Record<string, string | number | boolean | undefined>;
 interface Answer<T> {
   status: number;
   body: T;
+  headers: Headers;
 }
 
 function url(path: string, query?: Query): string {
@@ -197,10 +198,10 @@ const seg = encodeURIComponent;
 async function send<T>(
   method: Method,
   path: string,
-  options: { body?: unknown; query?: Query } = {}
+  options: { body?: unknown; query?: Query; headers?: Record<string, string> } = {}
 ): Promise<Answer<T>> {
   const target = url(path, options.query);
-  const headers: Record<string, string> = { Accept: 'application/json' };
+  const headers: Record<string, string> = { Accept: 'application/json', ...options.headers };
   let body: string | undefined;
   if (options.body !== undefined) {
     headers['Content-Type'] = 'application/json';
@@ -213,6 +214,9 @@ async function send<T>(
     throw new ApiError('network', `${method} ${target} failed: ${String(cause)}`);
   }
 
+  if (response.status === 304) {
+    return { status: 304, body: undefined as T, headers: response.headers };
+  }
   const text = await response.text().catch(() => '');
   let parsed: unknown = undefined;
   if (text) {
@@ -239,7 +243,7 @@ async function send<T>(
       status: response.status
     });
   }
-  return { status: response.status, body: parsed as T };
+  return { status: response.status, body: parsed as T, headers: response.headers };
 }
 
 async function call<T>(method: Method, path: string, body?: unknown, query?: Query): Promise<T> {
@@ -381,7 +385,23 @@ export const emptyTrash = () => post<TrashEmptyResponse>('/trash/empty');
 
 /** URL of the Server-Sent Events stream (`new EventSource(eventsUrl())`). */
 export const eventsUrl = () => url('/events');
-export const getSyncHeads = () => get<SyncHeads>('/sync/heads');
+/** The heads of every visible folder and the `ETag` to send next time. */
+export interface SyncHeadsAnswer {
+  etag: string | null;
+  heads: SyncHeads;
+}
+
+/**
+ * `GET /sync/heads`; with the `etag` of the previous answer, `null` means nothing
+ * changed (304).
+ */
+export async function getSyncHeads(etag?: string | null): Promise<SyncHeadsAnswer | null> {
+  const answer = await send<SyncHeads>('GET', '/sync/heads', {
+    headers: etag ? { 'If-None-Match': etag } : undefined
+  });
+  if (answer.status === 304) return null;
+  return { etag: answer.headers.get('ETag'), heads: answer.body };
+}
 
 // Administration
 
