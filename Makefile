@@ -3,7 +3,7 @@
 # Targets documented with `## ` show up in `make help`.
 
 .DEFAULT_GOAL := help
-.PHONY: help install dev dev-server dev-web types fmt fmt-check lint test check check-types build docker up down up-ha down-ha test-ha clean version
+.PHONY: help install dev dev-server dev-web seed types fmt fmt-check lint test check check-types build docker up down up-ha down-ha test-ha clean version
 
 IMAGE ?= cloudit:dev
 
@@ -21,6 +21,9 @@ dev-server: ## Run only the Rust server (http://localhost:8080)
 
 dev-web: ## Run only the Vite dev server (proxies /api to :8080)
 	pnpm --filter @cloudit/web dev
+
+seed: ## Fill a LOCAL running server with demo data (SEED_ARGS="--url … --db … --setup-token …")
+	cargo run --locked -p cloudit-server --example seed -- $(SEED_ARGS)
 
 types: ## Regenerate TS API types from Rust (ts-rs) into packages/api-types
 	node scripts/types.mjs
