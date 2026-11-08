@@ -179,15 +179,9 @@ async fn create_email_rules() {
 #[tokio::test]
 async fn create_honours_registration_mode_and_invites() {
     let env = Env::new().await;
-    // Closed: no account (linking stays possible).
-    env.app.set_mode(RegistrationMode::Closed).await;
-    let token = pending(&env, IdClaims::new("a").email("a@example.com", true)).await;
-    create(&env, &token, json!({ "display_name": "A" }))
-        .await
-        .assert_error(StatusCode::FORBIDDEN, "registration_closed");
-
     // Invite mode: an invite is required and consumed.
     env.app.set_mode(RegistrationMode::Invite).await;
+    let token = pending(&env, IdClaims::new("a").email("a@example.com", true)).await;
     let info = with_cookie(&env, "GET", "/api/v1/auth/onboarding", &token, None).await;
     assert_eq!(info.body["invite_required"], true);
     create(&env, &token, json!({ "display_name": "A" }))

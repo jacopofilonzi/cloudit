@@ -3,4 +3,4 @@
 /**
  * Who may create an account (`registration_mode` setting).
  */
-export type RegistrationMode = "open" | "invite" | "closed";
+export type RegistrationMode = "open" | "invite";

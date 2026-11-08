@@ -19,7 +19,6 @@ export const en = {
   'error.forbidden': 'You are not allowed to do this.',
   'error.invalid_credentials': 'Wrong email or password.',
   'error.account_disabled': 'This account has been disabled.',
-  'error.registration_closed': 'Registration is closed on this server.',
   'error.invite_invalid':
     'This invite is not valid: it may be used, expired or meant for another email.',
   'error.token_invalid': 'This link or code is not valid or has expired.',

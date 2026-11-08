@@ -419,7 +419,7 @@ Errors: JSON `ApiErrorBody {code, message, field?}`; `message` is English, for l
 names the request field with `validation_failed`. Codes (`ErrorCode`) and statuses: `bad_request`
 400 (malformed JSON, unknown fields, bad query), `not_found` 404, `unavailable` 503, `internal` 500
 (generic message), `unauthorized` 401, `forbidden` 403, `invalid_credentials` 401 (wrong email or
-password: same answer), `account_disabled` 403, `registration_closed` 403, `invite_invalid` 400,
+password: same answer), `account_disabled` 403, `invite_invalid` 400,
 `token_invalid` 400 (reset token, device code, PKCE verifier, redirect mismatch), `email_taken`
 409, `validation_failed` 422, `rate_limited` 429 (`Retry-After` in seconds), `csrf_failed` 403,
 `setup_required` 409, `setup_already_done` 409, `setup_token_invalid` 403, `last_admin` 409,
@@ -581,8 +581,8 @@ request and 409 for head conflicts), `payload_too_large` 413. The callback carri
   `last_admin`). Accounts created at onboarding get it from the pending signup's groups.
   Such an account is also approved at creation, whatever the provider's `new_accounts`.
 - **Onboarding** (cookie `cloudit_onboarding`): `create` honours the registration mode
-  (`closed` → `registration_closed`; `invite` → an invite from the body or carried from the
-  start, consumed atomically, a bound email must match); email = typed or the provider's
+  (`invite` → an invite from the body or carried from the
+  start, consumed atomically, a bound email must match; `open` → none needed); email = typed or the provider's
   (required if none); verified only when it is the provider's verified email or an invite bound
   to it; password optional (8..=1024); `email_taken` keeps the pending signup so the user can
   link instead. One transaction: consume pending signup (first statement), user, identity,
@@ -808,7 +808,7 @@ request and 409 for head conflicts), `payload_too_large` 413. The callback carri
     user_agent?)` (index on user_id; user agent truncated to 256 characters);
   - `setup_state(id = 1 PK, token?, created_at, completed_at?)`: one row, never deleted;
   - `settings(key PK, value (JSON text), updated_at, updated_by? → users)`; keys
-    `registration_mode` = `"open" | "invite" | "closed"` (missing = `invite`),
+    `registration_mode` = `"open" | "invite"` (missing = `invite`),
     `password_new_accounts` = `"auto" | "approval"` (missing = `approval`), `autolink_email`
     (bool, missing = false), `public_url` (string or null), `secret_key_check` (base64 of the
     encrypted check value), `retention_max_versions` (number, missing = 20),

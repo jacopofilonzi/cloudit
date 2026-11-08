@@ -12,7 +12,6 @@ const MESSAGE_KEYS: Record<ClientErrorCode, MessageKey> = {
   forbidden: 'error.forbidden',
   invalid_credentials: 'error.invalid_credentials',
   account_disabled: 'error.account_disabled',
-  registration_closed: 'error.registration_closed',
   invite_invalid: 'error.invite_invalid',
   token_invalid: 'error.token_invalid',
   email_taken: 'error.email_taken',

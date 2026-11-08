@@ -68,9 +68,6 @@ pub async fn register(
     )
     .await?;
     let mode = settings::registration_mode(&state.db).await?;
-    if mode == RegistrationMode::Closed {
-        return Err(ApiError::RegistrationClosed);
-    }
     let email = validate::email(&body.email, "email")?;
     let display_name = validate::display_name(&body.display_name)?;
     password::validate(body.password.expose(), "password")?;

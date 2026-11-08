@@ -35,8 +35,6 @@ pub enum ApiError {
     InvalidCredentials,
     #[error("account disabled")]
     AccountDisabled,
-    #[error("registration is closed")]
-    RegistrationClosed,
     #[error("invalid invite")]
     InviteInvalid,
     #[error("invalid or expired token")]
@@ -129,7 +127,6 @@ impl ApiError {
             Self::Forbidden => ErrorCode::Forbidden,
             Self::InvalidCredentials => ErrorCode::InvalidCredentials,
             Self::AccountDisabled => ErrorCode::AccountDisabled,
-            Self::RegistrationClosed => ErrorCode::RegistrationClosed,
             Self::InviteInvalid => ErrorCode::InviteInvalid,
             Self::TokenInvalid => ErrorCode::TokenInvalid,
             Self::EmailTaken => ErrorCode::EmailTaken,
@@ -182,7 +179,6 @@ impl ApiError {
             | Self::AccountDisabled
             | Self::AccountPending
             | Self::AccountRejected
-            | Self::RegistrationClosed
             | Self::CsrfFailed
             | Self::SetupTokenInvalid
             | Self::ProviderDisabled

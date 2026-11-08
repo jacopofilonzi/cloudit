@@ -152,8 +152,6 @@ pub enum ErrorCode {
     InvalidCredentials,
     /// The account is disabled by an admin (403).
     AccountDisabled,
-    /// Registration mode is `closed` (403).
-    RegistrationClosed,
     /// The invite is unknown, used, expired, revoked, missing (mode `invite`) or bound
     /// to another email (400).
     InviteInvalid,

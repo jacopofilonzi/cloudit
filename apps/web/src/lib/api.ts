@@ -38,7 +38,6 @@ const SERVER_CODES: Record<ErrorCode, true> = {
   forbidden: true,
   invalid_credentials: true,
   account_disabled: true,
-  registration_closed: true,
   invite_invalid: true,
   token_invalid: true,
   email_taken: true,

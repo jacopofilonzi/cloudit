@@ -136,9 +136,6 @@ pub async fn create(
     let pending = current(&state, &headers).await?;
     let provider = active_provider(&state, &pending.provider_id).await?;
     let mode = settings::registration_mode(&state.db).await?;
-    if mode == RegistrationMode::Closed {
-        return Err(ApiError::RegistrationClosed);
-    }
     let display_name = validate::display_name(&body.display_name)?;
     let email = match body.email.as_deref() {
         Some(raw) => validate::email(raw, "email")?,

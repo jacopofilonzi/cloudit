@@ -256,7 +256,7 @@ async fn settings_round_trip() {
             "/api/v1/admin/settings",
             &admin,
             Some(json!({
-                "registration_mode": "closed", "autolink_email": true,
+                "registration_mode": "open", "autolink_email": true,
                 "password_new_accounts": "auto", "public_url": "https://Sync.Example.com/"
             })),
         )
@@ -265,7 +265,7 @@ async fn settings_round_trip() {
     assert_eq!(
         resp.body,
         json!({
-            "registration_mode": "closed", "password_new_accounts": "auto",
+            "registration_mode": "open", "password_new_accounts": "auto",
             "autolink_email": true,
             "public_url": "https://sync.example.com", "public_url_from_env": false,
             "effective_public_url": "https://sync.example.com",
@@ -274,7 +274,7 @@ async fn settings_round_trip() {
         })
     );
     let resp = app.get("/api/v1/auth/config", &As::Anon).await;
-    assert_eq!(resp.body["registration_mode"], "closed");
+    assert_eq!(resp.body["registration_mode"], "open");
     assert_eq!(resp.body["password_requires_approval"], false);
     app.call(
         "PATCH",

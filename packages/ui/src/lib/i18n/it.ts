@@ -19,7 +19,6 @@ export const it: Dictionary = {
   'error.forbidden': 'Non hai i permessi per questa operazione.',
   'error.invalid_credentials': 'Email o password errata.',
   'error.account_disabled': 'Questo account è stato disattivato.',
-  'error.registration_closed': 'Le registrazioni sono chiuse su questo server.',
   'error.invite_invalid':
     "Questo invito non è valido: potrebbe essere già usato, scaduto o destinato a un'altra email.",
   'error.token_invalid': 'Questo link o codice non è valido o è scaduto.',

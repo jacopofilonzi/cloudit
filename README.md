@@ -53,7 +53,7 @@ change it later) and used for sign-in provider callback URLs and links. The `PUB
 environment variable, if set, wins over it.
 
 New accounts register with an invite from an admin by default (registration mode `invite`;
-`open` and `closed` are the alternatives, changed by admins at runtime).
+`open` is the alternative, changed by admins at runtime).
 
 ### Admin approval of new accounts
 

@@ -15,8 +15,6 @@ pub enum RegistrationMode {
     /// Only with a valid invite from an admin (default).
     #[default]
     Invite,
-    /// Nobody can register; existing accounts keep working.
-    Closed,
 }
 
 /// Whether accounts created through a sign-up path (password registration, or a sign-in
@@ -201,8 +199,8 @@ mod tests {
     fn registration_mode_is_snake_case_and_defaults_to_invite() {
         assert_eq!(RegistrationMode::default(), RegistrationMode::Invite);
         assert_eq!(
-            serde_json::to_value(RegistrationMode::Closed).unwrap(),
-            serde_json::json!("closed")
+            serde_json::to_value(RegistrationMode::Open).unwrap(),
+            serde_json::json!("open")
         );
     }
 

@@ -70,21 +70,6 @@ async fn register_in_open_mode() {
 }
 
 #[tokio::test]
-async fn register_in_closed_mode_is_refused() {
-    let app = TestApp::new().await;
-    let admin = app.setup_admin().await;
-    app.set_mode(RegistrationMode::Closed).await;
-    let token = invite(&app, &admin, None).await;
-    app.post(
-        "/api/v1/auth/register",
-        &As::Anon,
-        register_body("a@example.com", Some(&token)),
-    )
-    .await
-    .assert_error(StatusCode::FORBIDDEN, "registration_closed");
-}
-
-#[tokio::test]
 async fn register_in_invite_mode_needs_a_valid_invite() {
     let app = TestApp::new().await;
     let admin = app.setup_admin().await;
