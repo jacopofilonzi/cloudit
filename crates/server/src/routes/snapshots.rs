@@ -26,6 +26,7 @@ use crate::auth::extractors::AnyUser;
 use crate::db::entities::{folders as folder_entity, scopes, snapshots as snapshot_entity};
 use crate::errors::ApiError;
 use crate::events::notify;
+use crate::hooks::{self, Point};
 use crate::scopes::access::{FolderAccess, SnapshotAccess};
 use crate::state::AppState;
 use crate::sync::chunks::{self, Adopted};
@@ -207,7 +208,6 @@ pub async fn commit(
     let quota = usage::owner_quota(&state.db, scope).await?;
     let wanted = referenced(&manifest);
     ensure_chunks(&state, scope, quota, &wanted).await?;
-    manifests::store(&state, scope, quota, &hash, stored).await?;
 
     let new = NewSnapshot {
         folder: folder.id,
@@ -226,23 +226,34 @@ pub async fn commit(
         restored_from: None,
     };
     let hashes: Vec<ChunkHash> = wanted.keys().copied().collect();
-    let snapshot = match snapshots::commit(&state.db, &new, &hashes).await {
-        Ok(snapshot) => snapshot,
-        Err(ApiError::Internal(err)) => {
-            // A chunk row may have been garbage-collected meanwhile (its foreign key
-            // failed): report it like any missing chunk.
-            let present = chunks::sizes(&state.db, scope.id, &hashes).await?;
-            let mut gone: Vec<ChunkHash> = hashes
-                .into_iter()
-                .filter(|h| !present.contains_key(h))
-                .collect();
-            if gone.is_empty() {
+    let mut attempt = 0;
+    let snapshot = loop {
+        manifests::store(&state, scope, quota, &hash, stored.clone()).await?;
+        hooks::reached(Point::CommitReady, &scope.id.to_string()).await;
+        match snapshots::commit(&state.db, &new, &hashes).await {
+            Ok(snapshot) => break snapshot,
+            Err(ApiError::Internal(err)) => {
+                // A row may have been garbage-collected since it was checked (a
+                // foreign key failed): a chunk is reported missing like any other;
+                // the manifest (its bytes are here) is stored again, once.
+                let present = chunks::sizes(&state.db, scope.id, &hashes).await?;
+                let mut gone: Vec<ChunkHash> = hashes
+                    .iter()
+                    .copied()
+                    .filter(|h| !present.contains_key(h))
+                    .collect();
+                if !gone.is_empty() {
+                    gone.truncate(MAX_LISTED);
+                    return Err(ApiError::ChunkMissing(gone));
+                }
+                if attempt == 0 && !manifests::exists(&state.db, scope.id, &hash).await? {
+                    attempt += 1;
+                    continue;
+                }
                 return Err(ApiError::Internal(err));
             }
-            gone.truncate(MAX_LISTED);
-            return Err(ApiError::ChunkMissing(gone));
+            Err(other) => return Err(other),
         }
-        Err(other) => return Err(other),
     };
     tracing::info!(
         user_id = %me.user.id,

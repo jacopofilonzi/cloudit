@@ -3,31 +3,34 @@
 //! - **Counter**: `scopes.stored_bytes` = the `stored_size` of the scope's `chunks` and
 //!   `manifests` rows. [`insert_charged`] inserts a row and increments the counter in
 //!   one transaction, only when the row was actually inserted; the garbage collector
-//!   (4c) decrements it when it deletes rows. [`recompute`] rebuilds the value from the
-//!   rows (consistency checks).
+//!   (`jobs::gc`) decrements it in the transaction that deletes rows. [`recompute`]
+//!   rebuilds the value from the rows (consistency checks).
 //! - **Usage** of a user = the sum over the scopes it **owns**, trashed ones included:
 //!   uploads by the members of a shared scope count against its owner.
 //! - **Quota** = `users.quota_bytes`, else the `default_quota_bytes` setting, else
 //!   unlimited ([`effective_quota`]). Exceeding it gives `quota_exceeded`.
 //!
-//! Enforcement is exact: with a quota, [`insert_charged`] first writes the owner's
-//! `users` row (a lock: on PostgreSQL a row lock, on SQLite the write lock), so the
-//! charges of one owner are serialized, then inserts, increments and re-reads the
-//! owner's total, rolling back if it is over. The pre-checks ([`ensure_room`], before
-//! storing an object or handing out upload URLs) are estimates that fail early.
+//! Enforcement is exact: with a quota, [`insert_charged`] (after the scope lock of
+//! `sync::objects`, always taken first) writes the owner's `users` row (a lock: on
+//! PostgreSQL a row lock, on SQLite the write lock), so the charges of one owner are
+//! serialized, then inserts, increments and re-reads the owner's total, rolling back
+//! if it is over. The pre-checks ([`ensure_room`], before storing an object or handing
+//! out upload URLs) are estimates that fail early.
 
 use anyhow::Context as _;
 use cloudit_core::hash::{ChunkHash, ManifestHash};
 use sea_orm::sea_query::{Expr, ExprTrait as _, OnConflict};
 use sea_orm::{
-    ActiveValue::Set, ColumnTrait as _, ConnectionTrait, DatabaseConnection, EntityTrait as _,
-    QueryFilter as _, QuerySelect as _, TransactionTrait as _,
+    ActiveValue::Set, ColumnTrait as _, ConnectionTrait, EntityTrait as _, QueryFilter as _,
+    QuerySelect as _, TransactionTrait as _,
 };
 use uuid::Uuid;
 
 use crate::accounts::{settings, users};
 use crate::db::entities::{chunks, manifests, scopes, users as user_entity};
 use crate::errors::ApiError;
+use crate::state::AppState;
+use crate::sync::objects::{self, Kind, Stored};
 
 /// A row to insert with [`insert_charged`].
 #[derive(Debug, Clone, Copy)]
@@ -138,30 +141,58 @@ async fn lock_owner(db: &impl ConnectionTrait, owner: Uuid) -> anyhow::Result<()
     Ok(())
 }
 
+/// Outcome of [`insert_charged`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Charged {
+    /// The row was inserted and charged.
+    Inserted,
+    /// The row existed: nothing charged.
+    Existed,
+    /// The verified object is gone (adoption only): no row inserted.
+    Gone,
+}
+
 /// Inserts the row of a stored, verified object of `scope` (unless it exists) and
-/// charges `stored_size` to the scope, in one transaction. With a `quota` (the owner's
-/// effective one) the charge is refused with `quota_exceeded` if the owner's total
-/// would go over it. Returns whether the row was inserted (`false`: it existed, nothing
-/// charged).
+/// charges its stored size to the scope, in one transaction that first takes the
+/// scope lock and checks the object is in place (`sync::objects`: the garbage
+/// collector can't delete it meanwhile). With a `quota` (the owner's effective one)
+/// the charge is refused with `quota_exceeded` if the owner's total would go over it.
+/// `not_found` if the scope was purged meanwhile.
 pub async fn insert_charged(
-    db: &DatabaseConnection,
+    state: &AppState,
     scope: &scopes::Model,
     object: NewObject<'_>,
-    stored_size: u64,
+    stored: Stored<'_>,
     quota: Option<u64>,
-) -> Result<bool, ApiError> {
-    let stored = to_i64(stored_size)?;
+) -> Result<Charged, ApiError> {
+    let (kind, hash) = match object {
+        NewObject::Chunk { hash, .. } => (Kind::Chunk, hash.to_string()),
+        NewObject::Manifest { hash } => (Kind::Manifest, hash.to_string()),
+    };
+    let size = to_i64(stored.size())?;
     let now = crate::time::now();
-    let tx = db.begin().await.context("starting a transaction")?;
+    let tx = state.db.begin().await.context("starting a transaction")?;
+    if !objects::lock_scope(&tx, scope.id).await? {
+        tx.rollback().await.context("rolling back")?;
+        return Err(ApiError::NotFound);
+    }
+    if objects::row_exists(&tx, scope.id, kind, &hash).await? {
+        tx.commit().await.context("committing")?;
+        return Ok(Charged::Existed);
+    }
+    if !objects::ensure_present(&state.blobs, &kind.key(scope.id, &hash), stored).await? {
+        tx.rollback().await.context("rolling back")?;
+        return Ok(Charged::Gone);
+    }
     if quota.is_some() {
         lock_owner(&tx, scope.owner_id).await?;
     }
     let inserted = match object {
-        NewObject::Chunk { hash, size } => chunks::Entity::insert(chunks::ActiveModel {
+        NewObject::Chunk { size: raw, .. } => chunks::Entity::insert(chunks::ActiveModel {
             scope_id: Set(scope.id),
-            hash: Set(hash.to_string()),
-            size: Set(i32::try_from(size).context("chunk size out of range")?),
-            stored_size: Set(stored),
+            hash: Set(hash.clone()),
+            size: Set(i32::try_from(raw).context("chunk size out of range")?),
+            stored_size: Set(size),
             created_at: Set(now),
         })
         .on_conflict(
@@ -172,10 +203,10 @@ pub async fn insert_charged(
         .exec_without_returning(&tx)
         .await
         .context("inserting a chunk row")?,
-        NewObject::Manifest { hash } => manifests::Entity::insert(manifests::ActiveModel {
+        NewObject::Manifest { .. } => manifests::Entity::insert(manifests::ActiveModel {
             scope_id: Set(scope.id),
-            hash: Set(hash.to_string()),
-            stored_size: Set(stored),
+            hash: Set(hash.clone()),
+            stored_size: Set(size),
             created_at: Set(now),
         })
         .on_conflict(
@@ -189,12 +220,12 @@ pub async fn insert_charged(
     } == 1;
     if !inserted {
         tx.commit().await.context("committing")?;
-        return Ok(false);
+        return Ok(Charged::Existed);
     }
     scopes::Entity::update_many()
         .col_expr(
             scopes::Column::StoredBytes,
-            Expr::col(scopes::Column::StoredBytes).add(stored),
+            Expr::col(scopes::Column::StoredBytes).add(size),
         )
         .filter(scopes::Column::Id.eq(scope.id))
         .exec(&tx)
@@ -207,7 +238,7 @@ pub async fn insert_charged(
         return Err(ApiError::QuotaExceeded);
     }
     tx.commit().await.context("committing a charged row")?;
-    Ok(true)
+    Ok(Charged::Inserted)
 }
 
 /// The scope's stored bytes recomputed from its `chunks` and `manifests` rows: what

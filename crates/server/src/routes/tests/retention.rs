@@ -153,7 +153,12 @@ async fn keeps_head_pinned_and_conflicts_within_the_limits() {
     run_now(&app.state, JobName::Retention).await;
     assert_eq!(
         remaining(&app, &folder).await,
-        sorted(vec![ids[0].clone(), ids[4].clone(), ids[5].clone(), conflict])
+        sorted(vec![
+            ids[0].clone(),
+            ids[4].clone(),
+            ids[5].clone(),
+            conflict
+        ])
     );
 }
 

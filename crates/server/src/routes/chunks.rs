@@ -23,8 +23,10 @@ use futures::StreamExt as _;
 use super::extract::{ApiJson, body_bytes, parse_id};
 use crate::auth::extractors::AnyUser;
 use crate::errors::ApiError;
+use crate::hooks::{self, Point};
 use crate::scopes::access::FolderAccess;
 use crate::state::AppState;
+use crate::sync::objects::Stored;
 use crate::sync::transfer::Transfers;
 use crate::sync::usage::{self, NewObject};
 use crate::sync::{chunks, keys};
@@ -118,12 +120,16 @@ pub async fn upload(
     }
     let quota = usage::owner_quota(&state.db, scope).await?;
     usage::ensure_room(&state.db, scope, quota, stored_size).await?;
-    state.blobs.put(&keys::chunk(scope.id, &hash), body).await?;
+    state
+        .blobs
+        .put(&keys::chunk(scope.id, &hash), body.clone())
+        .await?;
+    hooks::reached(Point::UploadStored, &scope.id.to_string()).await;
     usage::insert_charged(
-        &state.db,
+        &state,
         scope,
         NewObject::Chunk { hash: &hash, size },
-        stored_size,
+        Stored::Bytes(&body),
         quota,
     )
     .await?;

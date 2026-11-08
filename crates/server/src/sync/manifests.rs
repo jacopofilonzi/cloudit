@@ -10,6 +10,7 @@ use sea_orm::{ConnectionTrait, EntityTrait as _};
 use uuid::Uuid;
 
 use super::keys;
+use super::objects::Stored;
 use super::usage::{self, NewObject};
 use crate::db::entities::{manifests, scopes};
 use crate::errors::ApiError;
@@ -52,9 +53,16 @@ pub async fn store(
     usage::ensure_room(&state.db, scope, quota, size).await?;
     state
         .blobs
-        .put(&keys::manifest(scope.id, hash), stored)
+        .put(&keys::manifest(scope.id, hash), stored.clone())
         .await?;
-    usage::insert_charged(&state.db, scope, NewObject::Manifest { hash }, size, quota).await?;
+    usage::insert_charged(
+        state,
+        scope,
+        NewObject::Manifest { hash },
+        Stored::Bytes(&stored),
+        quota,
+    )
+    .await?;
     Ok(())
 }
 

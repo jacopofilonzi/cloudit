@@ -28,26 +28,28 @@
 //! - Snapshots never change except `pinned`, `label` and `conflict_resolved_at`; a
 //!   restore inserts a copy.
 //!
-//! # For the garbage collector (milestone 4c)
+//! # Deleting (the jobs)
 //!
-//! - Deleting a `chunks` / `manifests` row must decrement `scopes.stored_bytes` by its
-//!   `stored_size` in the same transaction (one conditional `DELETE … WHERE NOT EXISTS
-//!   (reference)` + `UPDATE scopes`, counting only rows actually deleted), then delete
-//!   the object. [`usage::recompute`] gives the expected value for checks.
+//! - Writers and collectors follow the scope-lock protocol of [`objects`]: a row is
+//!   inserted only under the scope lock after checking its object is in place, and an
+//!   object is deleted only under the same lock after checking it has no row.
+//! - The garbage collector (`jobs::gc`) deletes unreferenced rows older than
+//!   `GC_GRACE` (default 24 h), decrementing `scopes.stored_bytes` in the same
+//!   transaction, then their objects; [`usage::recompute`] gives the expected value.
 //! - A chunk is referenced by `snapshot_chunks (scope_id, hash)` (foreign key: deleting
-//!   a referenced row fails), a manifest by `snapshots (scope_id, manifest_hash)`.
-//! - Rows and objects get a grace period (24 h): a client may have been told a chunk
-//!   exists (`check`) and commit a little later; if GC removed the row meanwhile the
-//!   commit fails with `chunk_missing` and the client uploads again.
-//! - Orphan objects (no row) under `scopes/*/chunks/` and `scopes/*/manifests/`
-//!   older than the grace period are deleted by listing.
-//! - Retention never deletes the head, pinned snapshots or unresolved conflicts;
-//!   deleting a snapshot deletes its `snapshot_chunks` first.
+//!   a referenced row fails), a manifest by `snapshots (scope_id, manifest_hash)`. A
+//!   commit that loses a row to GC answers `chunk_missing` and the client uploads
+//!   again.
+//! - The orphan sweep (`jobs::orphans`) deletes objects without row older than the
+//!   grace period; retention (`jobs::retention`) never deletes the head, pinned
+//!   snapshots or unresolved conflicts, and deletes a snapshot's `snapshot_chunks`
+//!   first.
 
 pub mod archive;
 pub mod chunks;
 pub mod keys;
 pub mod manifests;
+pub mod objects;
 pub mod snapshots;
 pub mod transfer;
 pub mod usage;

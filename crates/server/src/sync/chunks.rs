@@ -9,13 +9,17 @@ use cloudit_core::chunk::codec::decode_chunk;
 use cloudit_core::error::ChunkError;
 use cloudit_core::hash::ChunkHash;
 use cloudit_core::protocol::MAX_STORED_CHUNK_BYTES;
-use sea_orm::{ColumnTrait as _, ConnectionTrait, EntityTrait as _, QueryFilter as _};
+use sea_orm::{
+    ColumnTrait as _, ConnectionTrait, EntityTrait as _, QueryFilter as _, TransactionTrait as _,
+};
 use uuid::Uuid;
 
 use super::keys;
-use super::usage::{self, NewObject};
+use super::objects::{self, Kind, Stored};
+use super::usage::{self, Charged, NewObject};
 use crate::db::entities::{chunks, scopes};
 use crate::errors::ApiError;
+use crate::hooks::{self, Point};
 use crate::state::AppState;
 
 /// Values per `IN (…)` list: well below SQLite's and PostgreSQL's bind limits.
@@ -99,30 +103,34 @@ pub async fn adopt(
     } else {
         match state.blobs.get_bytes(&key).await? {
             None => return Ok(Adopted::Missing),
-            Some(stored) => {
-                let stored_size = stored.len() as u64;
-                decode(stored, *hash)
-                    .await?
-                    .ok()
-                    .map(|size| (size, stored_size))
-            }
+            Some(stored) if stored.len() as u64 == meta.size => decode(stored, *hash).await?.ok(),
+            // Replaced between HEAD and GET: missing for now, the client uploads again.
+            Some(_) => return Ok(Adopted::Missing),
         }
     };
     match valid {
-        Some((size, stored_size)) => {
-            usage::insert_charged(
-                &state.db,
+        Some(size) => {
+            hooks::reached(Point::AdoptVerified, &scope.id.to_string()).await;
+            match usage::insert_charged(
+                state,
                 scope,
                 NewObject::Chunk { hash, size },
-                stored_size,
+                Stored::Verified(&meta),
                 quota,
             )
-            .await?;
-            Ok(Adopted::Present(size))
+            .await?
+            {
+                Charged::Gone => Ok(Adopted::Missing),
+                Charged::Inserted | Charged::Existed => Ok(Adopted::Present(size)),
+            }
         }
         None => {
-            if exists(&state.db, scope.id, hash).await? {
-                // Verified by someone else meanwhile: the object is theirs now.
+            // Deleted under the scope lock (`sync::objects`), unless a verified upload
+            // of the same chunk inserted its row meanwhile: the object is theirs now.
+            let tx = state.db.begin().await.context("starting a transaction")?;
+            let locked = objects::lock_scope(&tx, scope.id).await?;
+            if locked && objects::row_exists(&tx, scope.id, Kind::Chunk, &hash.to_string()).await? {
+                tx.commit().await.context("committing")?;
                 return Ok(Adopted::Present(
                     sizes(&state.db, scope.id, std::slice::from_ref(hash))
                         .await?
@@ -132,6 +140,7 @@ pub async fn adopt(
                 ));
             }
             state.blobs.delete(&key).await?;
+            tx.commit().await.context("committing")?;
             tracing::warn!(scope_id = %scope.id, chunk = %hash, "deleted an invalid uploaded chunk");
             Ok(Adopted::Invalid)
         }

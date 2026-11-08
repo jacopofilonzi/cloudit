@@ -7,6 +7,7 @@ mod devices;
 mod events;
 mod fake_idp;
 mod folders;
+mod gc;
 mod history;
 mod jobs;
 mod me;
