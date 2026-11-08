@@ -283,6 +283,11 @@ and align this project's copies with it:
     (`#[sea_orm::model]` + `DeriveEntityModel`, no relations).
   - TLS is rustls everywhere (no OpenSSL): sqlx uses the `ring` provider, object_store/reqwest
     `aws-lc-rs` (its C build needs a C compiler; it builds on Windows and in the Docker image).
+  - **Tauri 2** (not the 3 alphas; desktop app `apps/desktop`): tauri 2.12, tauri-build 2.7,
+    tauri-plugin-dialog 2.8, tauri-plugin-opener 2.7, tauri-plugin-single-instance 2.5
+    (registered first: one app instance only), tracing-appender 0.2; JS `@tauri-apps/api` and
+    `@tauri-apps/cli` 2.12. The Tauri CLI writes `features = []` into the desktop
+    `Cargo.toml` on build: keep that form committed so builds don't dirty the tree.
   - **SvelteKit 3** (not 2): no `svelte.config.js` (options go to `sveltekit({...})` in
     `vite.config.ts`); `$lib` is replaced by `#lib` (package.json `imports`, explicit extensions:
     `#lib/api.ts`); `$app/environment` → `$app/env`; `$app/stores` is gone (use `$app/state`);
