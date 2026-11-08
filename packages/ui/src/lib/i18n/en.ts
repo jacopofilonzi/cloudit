@@ -1,5 +1,7 @@
 // English dictionary: the reference set of keys. Every other language is typed
 // against these keys (see `Dictionary`), so a missing or extra key fails the type check.
+import { desktopEn } from './desktop.en';
+
 export const en = {
   'app.name': 'cloudit',
   'app.tagline': 'Your folders, versioned and in sync on all your computers.',
@@ -693,7 +695,10 @@ export const en = {
   'admin.count_folders': 'folders checked',
   'admin.count_snapshots_deleted': 'versions deleted',
   'admin.count_scopes_deleted': 'scopes deleted',
-  'admin.count_folders_deleted': 'folders deleted'
+  'admin.count_folders_deleted': 'folders deleted',
+
+  // Desktop app
+  ...desktopEn
 } as const;
 
 export type MessageKey = keyof typeof en;

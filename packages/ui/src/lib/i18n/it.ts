@@ -1,3 +1,4 @@
+import { desktopIt } from './desktop.it';
 import type { Dictionary } from './en';
 
 export const it: Dictionary = {
@@ -706,5 +707,8 @@ export const it: Dictionary = {
   'admin.count_folders': 'cartelle controllate',
   'admin.count_snapshots_deleted': 'versioni eliminate',
   'admin.count_scopes_deleted': 'raccolte eliminate',
-  'admin.count_folders_deleted': 'cartelle eliminate'
+  'admin.count_folders_deleted': 'cartelle eliminate',
+
+  // Desktop app
+  ...desktopIt
 };
