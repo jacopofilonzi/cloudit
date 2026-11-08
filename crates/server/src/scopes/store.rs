@@ -34,6 +34,7 @@ pub async fn create(
         updated_at: Set(now),
         deleted_at: Set(None),
         deleted_by: Set(None),
+        purge_requested_at: Set(None),
         stored_bytes: Set(0),
     };
     match scopes::Entity::insert(model).exec_with_returning(db).await {

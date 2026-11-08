@@ -25,6 +25,8 @@ pub struct Model {
     /// Set while in the trash.
     pub deleted_at: Option<DateTimeUtc>,
     pub deleted_by: Option<Uuid>,
+    /// Set when an admin of its scope asked to delete it for good (while in the trash).
+    pub purge_requested_at: Option<DateTimeUtc>,
 }
 
 impl ActiveModelBehavior for ActiveModel {}

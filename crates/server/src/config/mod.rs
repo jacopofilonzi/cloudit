@@ -10,6 +10,7 @@ mod storage;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
+use std::time::Duration;
 
 pub use secret::Secret;
 pub use storage::{S3Config, StorageConfig};
@@ -61,10 +62,19 @@ pub struct Config {
     /// `TRUST_PROXY_HEADERS`, default `false`: trust `X-Forwarded-For/-Proto/-Host` from
     /// a reverse proxy (client IP, https detection, CSRF origin).
     pub trust_proxy_headers: bool,
+    /// `JOBS_ENABLED`, default `true`: run the background jobs scheduler on this
+    /// instance (each job is still lease-guarded: one instance at a time).
+    pub jobs_enabled: bool,
+    /// `GC_GRACE`, default 24 h (at least 1 h): age before an unreferenced chunk or
+    /// manifest row, or an object without row, may be garbage-collected.
+    pub gc_grace: Duration,
 }
 
 /// Minimum length of `SETUP_TOKEN`.
 const MIN_SETUP_TOKEN_LEN: usize = 16;
+/// Default and minimum of `GC_GRACE`.
+pub const DEFAULT_GC_GRACE: Duration = Duration::from_secs(24 * 3600);
+const MIN_GC_GRACE: Duration = Duration::from_secs(3600);
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -177,6 +187,15 @@ impl Config {
             }
         };
         let trust_proxy_headers = env.bool_or("TRUST_PROXY_HEADERS", false)?;
+        let jobs_enabled = env.bool_or("JOBS_ENABLED", true)?;
+        let gc_grace = env.duration_or("GC_GRACE", DEFAULT_GC_GRACE)?;
+        if gc_grace < MIN_GC_GRACE {
+            return Err(invalid(
+                "GC_GRACE",
+                &format!("{}s", gc_grace.as_secs()),
+                "must be at least 1h",
+            ));
+        }
         let secret_key = match get("SECRET_KEY") {
             None => None,
             // Never echo the value.
@@ -201,6 +220,8 @@ impl Config {
             setup_token,
             secret_key,
             trust_proxy_headers,
+            jobs_enabled,
+            gc_grace,
         })
     }
 
@@ -385,6 +406,19 @@ mod tests {
         assert!(s3(("S3_PRESIGN_TTL", "0")).is_err());
         assert!(s3(("S3_FORCE_PATH_STYLE", "maybe")).is_err());
         assert!(s3(("S3_REGION", "eu-west-1")).is_ok());
+    }
+
+    #[test]
+    fn reads_job_values() {
+        let config = parse(&[]).unwrap();
+        assert!(config.jobs_enabled);
+        assert_eq!(config.gc_grace, DEFAULT_GC_GRACE);
+        let config = parse(&[("JOBS_ENABLED", "false"), ("GC_GRACE", "2d")]).unwrap();
+        assert!(!config.jobs_enabled);
+        assert_eq!(config.gc_grace, Duration::from_secs(2 * 86_400));
+        assert!(parse(&[("GC_GRACE", "59m")]).is_err());
+        assert!(parse(&[("GC_GRACE", "soon")]).is_err());
+        assert!(parse(&[("JOBS_ENABLED", "sometimes")]).is_err());
     }
 
     #[test]

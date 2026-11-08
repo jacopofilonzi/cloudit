@@ -22,6 +22,7 @@ mod events;
 mod extract;
 mod folders;
 mod health;
+mod jobs;
 mod me;
 mod oauth;
 mod onboarding;
@@ -87,6 +88,8 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/users/{id}/approve", post(admin::approve_user))
         .route("/admin/users/{id}/reject", post(admin::reject_user))
         .route("/admin/summary", get(admin::summary))
+        .route("/admin/jobs", get(jobs::list))
+        .route("/admin/jobs/{name}/run", post(jobs::run))
         .route(
             "/admin/users/{id}/password-reset",
             post(admin::create_password_reset),

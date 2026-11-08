@@ -8,6 +8,7 @@ mod events;
 mod fake_idp;
 mod folders;
 mod history;
+mod jobs;
 mod me;
 mod oauth;
 mod onboarding;

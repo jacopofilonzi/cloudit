@@ -18,6 +18,8 @@
 //! - [`scopes`]: scopes, members, folders, the trash and the access checks.
 //! - [`sync`]: chunks, manifests, snapshots (commit, conflicts, restore), zip archives,
 //!   storage usage and quotas.
+//! - [`jobs`]: background jobs (scheduler, leases, retention, GC, orphan sweep, trash
+//!   purge, cleanup); [`hooks`]: pause points for race tests.
 //! - [`cli`]: `cloudit-server` subcommands (`setup-token`, `admin reset-password`).
 //! - [`validate`], [`time`]: input validation and timestamp helpers.
 //! - [`errors`]: [`errors::ApiError`] and its JSON shape with stable error codes.
@@ -39,7 +41,9 @@ pub mod devices;
 pub mod errors;
 pub mod events;
 pub mod healthcheck;
+pub mod hooks;
 pub mod idp;
+pub mod jobs;
 pub mod logging;
 pub mod oauth;
 pub mod platform;

@@ -23,6 +23,8 @@ pub struct Model {
     /// Stored bytes of the scope's chunks and manifests (rows of `chunks` and
     /// `manifests`), maintained in the transactions that insert or delete them.
     pub stored_bytes: i64,
+    /// Set when its owner asked to delete it for good (while in the trash).
+    pub purge_requested_at: Option<DateTimeUtc>,
 }
 
 impl ActiveModelBehavior for ActiveModel {}

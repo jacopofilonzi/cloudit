@@ -54,6 +54,8 @@ pub struct AppState {
     pub idp: Idp,
     /// Real-time events: publisher and local fan-out (Redis pub/sub when configured).
     pub events: Events,
+    /// Wakes this instance's job scheduler (an immediate run was requested).
+    pub job_wakeup: Arc<tokio::sync::Notify>,
 }
 
 impl AppState {
@@ -135,6 +137,7 @@ impl AppState {
             secrets,
             idp: Idp::new()?,
             events,
+            job_wakeup: Arc::default(),
         })
     }
 }

@@ -8,7 +8,7 @@ use cloudit_server::cli::{self, Command};
 use cloudit_server::config::Config;
 use cloudit_server::routes::router;
 use cloudit_server::state::AppState;
-use cloudit_server::{healthcheck, logging, shutdown};
+use cloudit_server::{healthcheck, jobs, logging, shutdown};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -46,6 +46,11 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     let addr = config.socket_addr();
     let state = AppState::init(config).await?;
     tracing::info!(instance_id = %state.instance_id, "ready to serve");
+    if state.config.jobs_enabled {
+        jobs::scheduler::start(state.clone());
+    } else {
+        tracing::info!("background jobs disabled on this instance (JOBS_ENABLED=false)");
+    }
     let app = router(state);
 
     let listener = tokio::net::TcpListener::bind(addr)
