@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/server"]
+members = ["crates/core", "crates/server", "crates/client"]
 
 [workspace.package]
 version = "0.1.0"
@@ -50,6 +50,16 @@ openidconnect = { version = "4.1.0", default-features = false, features = ["acce
 chacha20poly1305 = { version = "0.11.0", default-features = false, features = ["alloc"] }
 # ZIP download of a snapshot: streaming writer (data descriptors, ZIP64) over tokio.
 async_zip = { version = "0.0.19", default-features = false, features = ["tokio", "deflate"] }
+# Desktop client engine (crates/client): local state, folder scanning, cancellation, OS
+# keychains (keyring-core with one store per platform; no system libraries to build).
+rusqlite = { version = "0.39.0", features = ["bundled"] }
+walkdir = "2.5.0"
+globset = "0.4.21"
+tokio-util = "0.7.20"
+keyring-core = "1.0.1"
+windows-native-keyring-store = { version = "1.1.0", default-features = false }
+zbus-secret-service-keyring-store = { version = "1.0.1", features = ["crypto-rust"] }
+apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
