@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
 import tailwindcss from '@tailwindcss/vite';
@@ -27,5 +28,11 @@ export default defineConfig({
       '/health': apiTarget,
       '/ready': apiTarget
     }
+  },
+  test: {
+    // Unit tests of the plain TS modules in `src/lib` (no DOM).
+    environment: 'node',
+    include: ['src/**/*.test.ts'],
+    expect: { requireAssertions: true }
   }
 });
