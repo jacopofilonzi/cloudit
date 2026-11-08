@@ -438,6 +438,14 @@ and align this project's copies with it:
   `<dialog>`s: Playwright's `dialog[open]` also matches a confirm opened above another dialog
   (take `.last()`); toasts are `[aria-live=polite] p`. Browsers log expected API errors (409
   `name_taken`, 404 `user_not_found`) as console errors: they are not bugs.
+- Admin pages: the browser language decides the UI language, so Playwright contexts need `locale:
+  'en-US'` for English labels. `Segmented` / `RadioCards` are `sr-only` radios: click their `label`. A
+  provider form in create mode closes with Back, not Cancel, and ignores Escape while the request runs
+  (wait for the error banner, not for text that also appears in a hint). On Windows the server and
+  `seed` take `C:/…` paths (`WEB_DIR`, `--db`; Git Bash `/c/…` paths are not understood by the exe,
+  and an absolute `--db` can fail: use a relative one). After changing sign-in providers or the
+  registration mode call `session.refreshConfig()`: the login page reads `session.config`, loaded
+  once. The API has no per-account "unlimited" quota (`null` = server default).
 - `make seed` (`crates/server/examples/seed/`) needs a local server with `S3_PRESIGN=false`; for
   back-dated history pass the server's SQLite file with `--db`.
 - The web app is an SPA (`ssr = false`, adapter-static `fallback: 'index.html'`); in production the

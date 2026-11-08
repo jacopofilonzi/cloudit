@@ -5,7 +5,7 @@ users' folders; a desktop client (planned) syncs local folders with it, and a we
 server as a static SPA) manages accounts, scopes and folders. The UIs talk to the server only
 through its JSON API under `/api/v1`, whose TypeScript types are generated from the Rust ones.
 
-Current state (milestone 5b done): the server has its infrastructure (database with migrations and
+Current state (milestone 5 done): the server has its infrastructure (database with migrations and
 leases, blob storage, optional Redis with a rate limiter, readiness checks), exposes health probes,
 serves the web SPA and has the account API: first-run setup, password accounts with web sessions,
 invites, admin approval of new accounts, password resets, desktop device login (loopback +
@@ -19,8 +19,8 @@ garbage collection, orphan sweep, trash purge with permanent delete, cleanup). T
 follows the approved mockup B2: design system, API module, session and route guard, and the
 pages outside the app (login, register, setup, invite, password reset, onboarding, pending,
 desktop device approval) and the signed-in app: scopes with folders, history, files and conflict
-comparison, sharing, devices, trash, profile (theme and language), live updates; the
-administration pages come with 5c.
+comparison, sharing, devices, trash, profile (theme and language), live updates, and the
+administration pages (users and approvals, invites, sign-in providers, settings, maintenance).
 `cloudit-core` implements the sync formats (chunking, chunk encoding, manifest, path rules, diff;
 see "Sync formats"); the server verifies every upload with it. Everything under "Planned
 design" is not implemented yet.
@@ -967,20 +967,26 @@ server proxies `/api`, `/health`, `/ready` to `http://localhost:8080`. `#lib/*` 
 | `routes/(app)/devices` | desktop devices (rename, revoke; "never expires", revoked / expired status) and web sessions (current marked, sign out others) |
 | `routes/(app)/trash` | trash: restore (a `name_taken` opens a rename prompt), delete now, empty trash (confirms), who deleted (members of the scope), the space note |
 | `routes/(app)/profile` | name / email (current password when the email changes), language + theme (`Segmented`, function bindings), password (set / change), linked identities (unlink, `last_login_method` shown; link buttons start `purpose: link` with `return_to` = the profile), storage per owned scope |
-| `routes/(app)/admin` | placeholder until 5c |
+| `routes/(app)/admin/+layout.svelte`, `+page.ts` | administration: admins only (anyone else is sent to `/`), title + `Tabs` as navigation (Users with the pending badge, Invites, Sign-in providers, Settings, Maintenance); `/admin` redirects to `/admin/users` |
+| `routes/(app)/admin/users` | filter All / Pending (n) / Rejected (`Segmented` with a function binding), 25 per page; pending view: sign-up source (provider icon, "email and password", "invite") + requested time, Approve / Reject (confirm); full view: role (admin from groups), status, used / effective quota, linked providers, Reject (ban), ⋯ menu (make / remove admin, quota, password-reset link, disable / enable); rejected: "Revoke ban" (= approve). Refreshes the sidebar badge after each decision; no admin rights / disable / reject on one's own row |
+| `routes/(app)/admin/invites` | invites (for, created by, expires, status), "New invite" (optional email, duration 1h–1y) → `LinkModal` with the full link, revoke (confirm) |
+| `routes/(app)/admin/providers` | providers in position order, up / down (PATCH `position` of the providers whose index changes), Test (inline result), Edit, Delete (confirm; identities kept, id not reusable), "no public URL" banner, `ProviderModal` (preset grid, then the preset's fields; groups only when `supports_groups`; callback URL computed from the effective public URL while creating) |
+| `routes/(app)/admin/settings` | registration (invite / open), approval of email sign-ups, auto-link by email, public URL (read-only when `public_url_from_env`), default quota, retention defaults, trash days; client-side checks plus per-field server errors; refreshes `session.config` (login page) |
+| `routes/(app)/admin/maintenance` | the jobs with description, interval, last run (outcome, counts, error), "Run now"; polls `GET /admin/jobs` every 3 s while a run is requested or running |
 | `lib/api.ts` | the only API module: `APP_ROOT`/`API_BASE` from `resolve('')`, one typed function per endpoint, `credentials: 'same-origin'`, `ApiError` (`code`, `status`, `field`, `headSnapshotId`, `hashes`, `detail`, `retryAfter`), `SignupResult` (201 signed in / 202 pending), `archiveUrl`, `eventsUrl` |
 | `lib/errors.ts` | exhaustive map code → i18n key; `codeMessageKey` (codes from URLs), `errorText` (rate limits with the wait), `formError` (`validation_failed` + `field` under the input, the rest to the form banner) |
-| `lib/session.svelte.ts` | `session`: `status`, `config` (`AuthConfig`), `user` (`GET /me`; 401 / `setup_required` / `account_*` = signed out), `load`, `signedInAs`, `signedOut` |
+| `lib/session.svelte.ts` | `session`: `status`, `config` (`AuthConfig`), `user` (`GET /me`; 401 / `setup_required` / `account_*` = signed out), `load`, `refreshConfig` (login configuration only; after admin changes and sign-out), `signedInAs`, `signedOut` |
 | `lib/guard.ts` | pure route guard (tested): setup pending → `/setup`; guest pages (`/login`, `/register`, `/invite/…`) send a signed-in user to a safe `return_to` or `/`; open pages (`/reset-password/…`, `/onboarding`, `/pending`) never redirect; everything else (app, `/device`) needs a session → `/login?return_to=<path+query>`; `safeReturnTo` |
 | `lib/device.ts` | `/device` query parsing and checks (as the server), `cancelUrl` (tested) |
 | `lib/fields.ts` | `inviteToken` (token or full link), `osName`, `isEmail`, `browserLabel` (user agent → "Chrome · Windows") (tested) |
 | `lib/app.svelte.ts` | `app`: scopes, usage, pending users shared by the pages; `load*` for direct use after a change, `schedule*` (coalesced) for live events |
 | `lib/live.svelte.ts` | `live` + `onLive(listener)`: one `EventSource` on `/events` while signed in; on every (re)connect fetches `/sync/heads` (ETag) and emits `resync` (not the first time); with `realtime: local` polls every 5 min and emits `folder_head` / `history_changed` / `folder_changed` for what changed; toasts a new conflict; a closed stream re-checks the session |
+| `lib/admin.ts` | pure helpers of the admin pages: quota units (`toBytes`, `splitBytes`, decimal MB / GB / TB), `absoluteUrl` (links from the effective public URL, else `location.origin`), provider id rules and `slugify`, `parseList` / `formatList`, `parseIntIn` (tested) |
 | `lib/coalesce.ts` | `coalesced(run, delay)`: bursts of refreshes become few runs, never stale (tested) |
 | `lib/manifest.ts` | `diffManifests` (added / removed / modified / unchanged by chunk hashes, the conflict "Compare"), `filterEntries`, `splitPath`, `mtimeOf` (tested) |
 | `lib/roles.ts`, `lib/plural.ts`, `lib/scope-text.ts` | `atLeast(role, min)`; `tn('base', count)` over `base_one` / `base_other` keys; `joinNames` (`Intl.ListFormat`) |
 | `lib/lang.ts` | initial language (localStorage, else browser) and persisted switching |
-| `lib/components/` | `AuthCard` (centred card: logo or custom header, title, subtitle), `ProviderButtons` ("Continue with …", busy state), `LanguageSwitch`, `AppShell` (250px sidebar: brand, `nav` snippet, storage meter, user; main column; a drawer opened from a top bar below `md`), `ShellNavItem`, `ShellNavLabel`; app: `ScopeCreateModal`, `PromptModal` (one text field: rename, label, restore under a new name; errors stay in the dialog), `FolderCard`, `FolderCreateModal` (name + emoji), `FolderPanel` (details grid + tabs; `tab` and `inspect` are bound by the page so "Compare" can open Files on a snapshot) with `HistoryTab` (UTC-day groups, hover / focus / touch actions: restore with `expected_head`, ZIP link, pin, label, files; "older" by cursor; keeps the loaded length on refresh), `FilesTab` (manifest list with filter, or the diff of a conflict snapshot against the head) and `FolderSettingsTab` (rename + emoji: editor; retention + trash: admin; read-only below), `ConflictBanner` (Compare / Keep server = `resolve` / Keep <device> = `restore` with `expected_head`; `conflict` → refresh and tell the user), `ShareModal` (owner: add by email + role, role selects, remove, role explanations) |
+| `lib/components/` | `AuthCard` (centred card: logo or custom header, title, subtitle), `ProviderButtons` ("Continue with …", busy state), `LanguageSwitch`, `AppShell` (250px sidebar: brand, `nav` snippet, storage meter, user; main column; a drawer opened from a top bar below `md`), `ShellNavItem`, `ShellNavLabel`; app: `ScopeCreateModal`, `PromptModal` (one text field: rename, label, restore under a new name; errors stay in the dialog), `FolderCard`, `FolderCreateModal` (name + emoji), `FolderPanel` (details grid + tabs; `tab` and `inspect` are bound by the page so "Compare" can open Files on a snapshot) with `HistoryTab` (UTC-day groups, hover / focus / touch actions: restore with `expected_head`, ZIP link, pin, label, files; "older" by cursor; keeps the loaded length on refresh), `FilesTab` (manifest list with filter, or the diff of a conflict snapshot against the head) and `FolderSettingsTab` (rename + emoji: editor; retention + trash: admin; read-only below), `ConflictBanner` (Compare / Keep server = `resolve` / Keep <device> = `restore` with `expected_head`; `conflict` → refresh and tell the user), `ShareModal` (owner: add by email + role, role selects, remove, role explanations); admin: `CopyField` (read-only text + copy button), `LinkModal` (one-time link to copy: invites, resets), `QuotaModal` (server default or custom size; the API has no per-account "unlimited"), `InviteCreateModal`, `ProviderModal` |
 
 **`/device` query contract** (desktop client, milestone 6): the app opens
 `<server>/device?code_challenge=<43 base64url chars>&code_challenge_method=S256&redirect_uri=http://127.0.0.1:<port>/<path>&state=<1..512 chars>&device_name=<name>&os=<windows|linux|macos>`
@@ -1139,7 +1145,7 @@ Milestones: 1 scaffolding (done) · 2 core chunking/manifest (done) · 3a server
 4a scopes, folders, sharing, trash, retention settings (done) · 4b sync protocol, quotas
 (done) · 4c events and background jobs (done) · 5a web UI foundations and pages outside the
 app (done) · 5b the app pages (scopes, folders, history, sharing, devices, trash, profile, live
-updates: done) · 5c (next) the administration pages · 6 desktop manual
+updates: done) · 5c administration pages and the final end-to-end check (milestone 5 done) · 6 (next) desktop manual
 sync + conflicts · 7 desktop auto sync/tray/autostart/installers.
 
 Planned layout additions: `apps/desktop` (Tauri 2 + Svelte 5, milestone 6; OS code in a `platform/`
