@@ -21,12 +21,16 @@
 //! - [`folders`]: folders and their retention overrides;
 //! - [`sync`]: chunk check, upload and download;
 //! - [`snapshots`]: commits, history, conflicts, restore, pin and label;
-//! - [`usage`]: storage usage and quotas.
+//! - [`usage`]: storage usage and quotas;
+//! - [`events`]: real-time events (SSE) and the sync heads polling fallback;
+//! - [`jobs`]: background maintenance jobs (admin view).
 
 mod admin;
 mod auth;
 mod devices;
+mod events;
 mod folders;
+mod jobs;
 mod me;
 mod oauth;
 mod onboarding;
@@ -40,7 +44,9 @@ mod usage;
 pub use admin::*;
 pub use auth::*;
 pub use devices::*;
+pub use events::*;
 pub use folders::*;
+pub use jobs::*;
 pub use me::*;
 pub use oauth::*;
 pub use onboarding::*;

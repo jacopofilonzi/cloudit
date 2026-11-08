@@ -199,6 +199,15 @@ pub struct TrashItem {
     pub purge_at: String,
 }
 
+/// `POST /api/v1/trash/empty` (202): how many items were marked for deletion for
+/// good (the `trash_purge` job deletes them shortly after).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct TrashEmptyResponse {
+    pub scopes: u64,
+    pub folders: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
