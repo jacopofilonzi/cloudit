@@ -41,6 +41,9 @@ export function reportOutcome(link: LinkedFolder, report: SyncReport): void {
       toast.info(t('desktop.result.needs_decision', { name }));
       void showConflict(link.id);
       break;
+    case 'deferred':
+      toast.info(t('desktop.result.deferred', { name }));
+      break;
   }
 }
 

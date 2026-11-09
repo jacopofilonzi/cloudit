@@ -4,6 +4,9 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   ActivityEntry,
   AppInfo,
+  AppSettings,
+  AutoFolderState,
+  AutoSyncSettings,
   CommandError as CommandErrorBody,
   ErrorDetails,
   ErrorKind,
@@ -110,3 +113,12 @@ export const activity = (folder: number | null, limit: number) =>
 export const openFolder = (folder: number) => call<void>('open_folder', { folder });
 export const openHistory = (folder: number) => call<void>('open_history', { folder });
 export const openLogDir = () => call<void>('open_log_dir');
+
+// Automatic sync
+export const appSettings = () => call<AppSettings>('app_settings');
+export const setAppSettings = (settings: AppSettings) =>
+  call<AppSettings>('set_app_settings', { settings });
+export const setAutoSync = (folder: number, settings: AutoSyncSettings) =>
+  call<LinkedFolder>('set_auto_sync', { folder, settings });
+export const runningProcesses = () => call<string[]>('running_processes');
+export const autoStates = () => call<AutoFolderState[]>('auto_states');

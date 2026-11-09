@@ -1,6 +1,7 @@
 // Events pushed by the Rust backend (names mirror `src-tauri/src/events.rs`).
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
+  AutoFolderState,
   FolderOpEvent,
   FolderStatusEvent,
   LoginEvent,
@@ -13,7 +14,8 @@ export const EVENTS = {
   status: 'folder-status',
   op: 'folder-op',
   remote: 'remote',
-  login: 'login-finished'
+  login: 'login-finished',
+  auto: 'auto-state'
 } as const;
 
 export interface Handlers {
@@ -22,6 +24,7 @@ export interface Handlers {
   op: (event: FolderOpEvent) => void;
   remote: (event: RemoteEvent) => void;
   login: (event: LoginEvent) => void;
+  auto: (states: AutoFolderState[]) => void;
 }
 
 /** Subscribes to every backend event; the returned function unsubscribes all. */
@@ -31,7 +34,8 @@ export async function subscribe(handlers: Handlers): Promise<() => void> {
     listen<FolderStatusEvent>(EVENTS.status, (e) => handlers.status(e.payload)),
     listen<FolderOpEvent>(EVENTS.op, (e) => handlers.op(e.payload)),
     listen<RemoteEvent>(EVENTS.remote, (e) => handlers.remote(e.payload)),
-    listen<LoginEvent>(EVENTS.login, (e) => handlers.login(e.payload))
+    listen<LoginEvent>(EVENTS.login, (e) => handlers.login(e.payload)),
+    listen<AutoFolderState[]>(EVENTS.auto, (e) => handlers.auto(e.payload))
   ]);
   return () => stops.forEach((stop) => stop());
 }

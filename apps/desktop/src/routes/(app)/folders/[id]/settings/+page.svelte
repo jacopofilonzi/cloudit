@@ -1,9 +1,11 @@
 <script lang="ts">
   // One linked folder's settings: where it is on this computer, what is ignored,
-  // pause, and unlinking (the files stay on the computer and on the server).
+  // pause, automatic sync (quiet period, associated program), and unlinking (the files
+  // stay on the computer and on the server).
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
   import { page } from '$app/state';
-  import { Banner, Button, Input, Toggle, confirmAction, toast } from '@cloudit/ui';
+  import type { AutoSyncSettings } from '@cloudit/api-types';
+  import { Banner, Button, Input, Segmented, Toggle, confirmAction, toast } from '@cloudit/ui';
   import { t } from '@cloudit/ui/i18n';
   import { reportError, showFolders } from '#lib/actions.ts';
   import * as api from '#lib/api.ts';
@@ -54,6 +56,70 @@
     } catch (error) {
       reportError(error);
     }
+  }
+
+  /** The quiet periods offered (plus the current one if it is another value). */
+  const QUIET_CHOICES = [10, 30, 60, 120, 300];
+  const quietLabel = (secs: number) =>
+    secs < 60 || secs % 60 !== 0
+      ? t('desktop.fs.seconds', { count: secs })
+      : t('desktop.fs.minutes', { count: secs / 60 });
+  const quietOptions = $derived(
+    [...new Set([...QUIET_CHOICES, link?.quiet_secs ?? 30])]
+      .sort((a, b) => a - b)
+      .map((secs) => ({ value: String(secs), label: quietLabel(secs) }))
+  );
+
+  // Edited locally; back to the saved name whenever it changes.
+  let processDraft = $derived(link?.process_name ?? '');
+  let picking = $state(false);
+  let processes = $state<string[] | null>(null);
+  let filter = $state('');
+  const shown = $derived(
+    (processes ?? []).filter((name) => name.toLowerCase().includes(filter.trim().toLowerCase()))
+  );
+
+  async function saveAuto(patch: Partial<AutoSyncSettings>, done?: string) {
+    if (!link) return;
+    saving = true;
+    try {
+      await api.setAutoSync(id, {
+        enabled: link.auto_sync,
+        quiet_secs: link.quiet_secs,
+        process_name: link.process_name,
+        ...patch
+      });
+      await app.loadFolders();
+      if (done) toast.success(done);
+    } catch (error) {
+      reportError(error);
+    } finally {
+      saving = false;
+    }
+  }
+
+  function saveProcess(name: string) {
+    const trimmed = name.trim();
+    return saveAuto({ process_name: trimmed === '' ? null : trimmed }, t('desktop.fs.auto_saved'));
+  }
+
+  async function togglePicker() {
+    picking = !picking;
+    if (!picking) return;
+    filter = '';
+    processes = null;
+    try {
+      processes = await api.runningProcesses();
+    } catch (error) {
+      picking = false;
+      reportError(error);
+    }
+  }
+
+  async function pickProcess(name: string) {
+    picking = false;
+    processDraft = name;
+    await saveProcess(name);
   }
 
   async function unlink() {
@@ -122,11 +188,93 @@
       </div>
       <div class="mt-3 border-t border-border pt-3">
         <Toggle
-          checked={false}
-          disabled
+          checked={link.auto_sync}
+          disabled={saving}
           label={t('desktop.fs.auto')}
-          description={`${t('desktop.fs.coming_soon')} — ${t('desktop.fs.auto_hint')}`}
+          description={t('desktop.fs.auto_hint')}
+          onchange={(enabled) => saveAuto({ enabled })}
         />
+        {#if link.auto_sync && !app.autoSync}
+          <Banner variant="warning">{t('desktop.fs.auto_global_off')}</Banner>
+        {/if}
+        {#if link.auto_sync}
+          <div class="mt-2">
+            <span class="field-label">{t('desktop.fs.quiet')}</span>
+            <Segmented
+              name="quiet"
+              variant="chips"
+              bind:value={
+                () => String(link?.quiet_secs ?? 30),
+                (v) => void saveAuto({ quiet_secs: Number(v) })
+              }
+              options={quietOptions}
+            />
+            <p class="hint">{t('desktop.fs.quiet_hint')}</p>
+          </div>
+
+          <div class="mt-4">
+            <label class="field-label" for="process-name">{t('desktop.fs.process')}</label>
+            <div class="flex gap-1.5">
+              <Input
+                id="process-name"
+                bind:value={processDraft}
+                placeholder={t('desktop.fs.process_placeholder')}
+                class="font-mono text-[12px]"
+                onkeydown={(e) => {
+                  if (e.key === 'Enter') void saveProcess(processDraft);
+                }}
+              />
+              <Button
+                disabled={saving || processDraft.trim() === (link.process_name ?? '')}
+                onclick={() => saveProcess(processDraft)}
+              >
+                {t('desktop.fs.process_save')}
+              </Button>
+              {#if link.process_name}
+                <Button variant="ghost" disabled={saving} onclick={() => saveProcess('')}>
+                  {t('desktop.fs.process_clear')}
+                </Button>
+              {/if}
+            </div>
+            <p class="hint">{t('desktop.fs.process_hint')}</p>
+            <button
+              type="button"
+              class="mt-1 text-xs text-primary-fg hover:underline"
+              aria-expanded={picking}
+              onclick={togglePicker}
+            >
+              {picking ? t('desktop.fs.process_close') : t('desktop.fs.process_pick')}
+            </button>
+            {#if picking}
+              <div class="mt-2 rounded-lg border border-border p-2">
+                <Input
+                  bind:value={filter}
+                  placeholder={t('desktop.fs.process_filter')}
+                  aria-label={t('desktop.fs.process_filter')}
+                />
+                {#if processes === null}
+                  <p class="mt-2 text-xs text-muted">{t('desktop.fs.process_loading')}</p>
+                {:else if shown.length === 0}
+                  <p class="mt-2 text-xs text-muted">{t('desktop.fs.process_empty')}</p>
+                {:else}
+                  <ul class="mt-1.5 max-h-44 overflow-auto">
+                    {#each shown as name (name)}
+                      <li>
+                        <button
+                          type="button"
+                          class="w-full rounded-md px-2 py-1 text-left font-mono text-[12px] hover:bg-surface-alt"
+                          onclick={() => pickProcess(name)}
+                        >
+                          {name}
+                        </button>
+                      </li>
+                    {/each}
+                  </ul>
+                {/if}
+              </div>
+            {/if}
+          </div>
+        {/if}
       </div>
 
       <div class="mt-4 flex items-center gap-3 border-t border-border pt-3.5">

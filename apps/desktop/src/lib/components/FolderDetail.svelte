@@ -3,6 +3,7 @@
   // state, live progress with cancel, and links to the folder and its history.
   import FolderOpen from '@lucide/svelte/icons/folder-open';
   import History from '@lucide/svelte/icons/history';
+  import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import Settings from '@lucide/svelte/icons/settings';
   import type { LinkedFolder } from '@cloudit/api-types';
   import { Banner, Button, formatRelative, formatNumber } from '@cloudit/ui';
@@ -30,6 +31,7 @@
   const action = $derived(primaryAction(folderState));
   const running = $derived(app.busy[link.id]);
   const error = $derived(app.errors[link.id]);
+  const auto = $derived(app.auto[link.id]);
   let cancelling = $state(false);
 
   $effect(() => {
@@ -95,6 +97,19 @@
   </div>
 
   <p class="text-xs text-muted">{t(STATE_HINT[folderState])}</p>
+
+  {#if app.isAuto(link) && !link.paused}
+    <div class="flex items-center gap-1.5 text-xs text-muted">
+      <RefreshCw size={13} aria-hidden="true" />
+      <span>{t('desktop.detail.auto')}</span>
+    </div>
+    {#if auto?.process_running && link.process_name}
+      <Banner variant="info">{t('desktop.detail.auto_waiting', { name: link.process_name })}</Banner
+      >
+    {:else if auto && auto.failures > 0}
+      <p class="text-xs text-muted">{t('desktop.detail.auto_retrying')}</p>
+    {/if}
+  {/if}
 
   {#if error}
     <Banner variant="danger" title={t('desktop.detail.last_error')}>

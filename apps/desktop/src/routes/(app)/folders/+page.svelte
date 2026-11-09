@@ -87,6 +87,8 @@
         {/key}
       {/if}
     </div>
-    <p class="text-xs text-muted">{t('desktop.folders.manual_note')}</p>
+    {#if !app.autoSync}
+      <p class="text-xs text-muted">{t('desktop.folders.auto_off_note')}</p>
+    {/if}
   {/if}
 </div>

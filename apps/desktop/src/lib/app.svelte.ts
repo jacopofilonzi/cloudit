@@ -1,6 +1,7 @@
 // The app's shared state, fed by the backend's commands and events: who is signed in,
 // the linked folders, their statuses, running operations and progress, the connection.
 import type {
+  AutoFolderState,
   Account,
   FolderOpEvent,
   FolderStatus,
@@ -17,6 +18,16 @@ import { CommandError } from './api';
 import { needsSignIn } from './errors';
 import { subscribe } from './events';
 import { displayState, needsAttention } from './status';
+
+/** Only unreadable (locked) files stopped the operation. */
+function lockedOnly(error: CommandError): boolean {
+  const details = error.details;
+  return (
+    details?.type === 'scan_problems' &&
+    details.problems.length > 0 &&
+    details.problems.every((p) => p.kind === 'unreadable')
+  );
+}
 
 class AppStore {
   /** The first session / folder load is done. */
@@ -43,6 +54,10 @@ class AppStore {
   errors = $state<Record<number, CommandError>>({});
   /** The last browser sign-in outcome, for the welcome page. */
   login = $state<LoginEvent | null>(null);
+  /** The device-wide automatic sync switch. */
+  autoSync = $state(true);
+  /** What automatic sync shows of each automatic folder (absent: not automatic now). */
+  auto = $state<Record<number, AutoFolderState>>({});
 
   #stop: (() => void) | null = null;
 
@@ -64,7 +79,8 @@ class AppStore {
         status: (e) => this.#onStatus(e),
         op: (e) => this.#onOp(e),
         remote: (e) => this.#onRemote(e),
-        login: (e) => void this.#onLogin(e)
+        login: (e) => void this.#onLogin(e),
+        auto: (states) => this.#onAuto(states)
       });
       const info = await api.appInfo();
       this.appVersion = info.version;
@@ -89,6 +105,7 @@ class AppStore {
       await this.loadFolders();
       void api.refreshAll();
       void this.#loadServerVersion();
+      void this.#loadAuto();
     } else if (session.account) {
       // Signed in before, but the token is gone: sign in again.
       this.sessionEnded = true;
@@ -101,6 +118,31 @@ class AppStore {
     } catch (error) {
       this.noteError(error);
     }
+  }
+
+  async #loadAuto(): Promise<void> {
+    try {
+      const [settings, states] = await Promise.all([api.appSettings(), api.autoStates()]);
+      this.autoSync = settings.auto_sync;
+      this.#onAuto(states);
+    } catch (error) {
+      this.noteError(error);
+    }
+  }
+
+  /** Turns automatic sync on or off for this computer. */
+  async setAutoSync(on: boolean): Promise<void> {
+    const settings = await api.setAppSettings({ auto_sync: on });
+    this.autoSync = settings.auto_sync;
+  }
+
+  /** Whether the folder is synced automatically now (its setting and the switch). */
+  isAuto(link: LinkedFolder): boolean {
+    return this.autoSync && link.auto_sync;
+  }
+
+  #onAuto(states: AutoFolderState[]): void {
+    this.auto = Object.fromEntries(states.map((s) => [s.folder, s]));
   }
 
   async #loadServerVersion(): Promise<void> {
@@ -132,6 +174,7 @@ class AppStore {
     this.progress = {};
     this.errors = {};
     this.serverVersion = null;
+    this.auto = {};
   }
 
   #onStatus(event: FolderStatusEvent): void {
@@ -149,7 +192,9 @@ class AppStore {
     delete this.progress[folder];
     if (event.error) {
       const error = new CommandError(event.error);
-      if (error.kind !== 'cancelled') this.errors[folder] = error;
+      // Automatic runs stopped by files a running game keeps locked just try again.
+      const quiet = error.kind === 'cancelled' || (event.auto && lockedOnly(error));
+      if (!quiet) this.errors[folder] = error;
       this.noteError(error);
     }
     void this.loadFolders();

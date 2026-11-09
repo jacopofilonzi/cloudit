@@ -85,8 +85,9 @@ export const desktopEn = {
   'desktop.folders.banner_one': '{name}: this computer and the server both have a new version.',
   'desktop.folders.banner_many': '{count} folders have a conflict to resolve.',
   'desktop.folders.banner_action': 'Resolve…',
-  'desktop.folders.manual_note':
-    'Syncing is manual for now: automatic sync arrives in a later version.',
+  'desktop.folders.auto_off_note':
+    'Automatic sync is turned off on this computer: folders sync only when you ask (Settings).',
+  'desktop.folders.auto_tag': 'Auto',
   'desktop.folders.token_warning': 'The sign-in key is kept in a file, not in the system keychain.',
 
   // Folder detail
@@ -105,6 +106,9 @@ export const desktopEn = {
   'desktop.detail.problems': 'Files that cannot be synced',
   'desktop.detail.last_error': 'Last error',
   'desktop.detail.recheck': 'Check again',
+  'desktop.detail.auto': 'Synced automatically',
+  'desktop.detail.auto_waiting': '{name} is running: downloads wait until it closes.',
+  'desktop.detail.auto_retrying': 'Automatic sync failed: it will try again shortly.',
 
   // Progress
   'desktop.phase.scanning': 'Reading the folder · {files} files',
@@ -120,6 +124,7 @@ export const desktopEn = {
   'desktop.result.pulled_other': '{name}: {count} files updated from the server.',
   'desktop.result.needs_decision': '{name}: both sides changed, choose which version to keep.',
   'desktop.result.cancelled': 'Cancelled.',
+  'desktop.result.deferred': '{name}: downloads wait until its program closes.',
 
   // Link wizard
   'desktop.link.title': 'Link a folder',
@@ -218,14 +223,33 @@ export const desktopEn = {
   'desktop.fs.pause': 'Pause this folder',
   'desktop.fs.pause_hint': 'A paused folder is skipped by "Sync all".',
   'desktop.fs.auto': 'Sync automatically',
-  'desktop.fs.auto_hint': 'When the folder stays still, at startup or when a game closes.',
+  'desktop.fs.auto_hint':
+    'When the folder stays still for a while, at startup, when the server has a new version or when its program closes. Conflicts are always left to you.',
+  'desktop.fs.auto_global_off': 'Automatic sync is turned off for this computer in Settings.',
+  'desktop.fs.auto_saved': 'Automatic sync settings saved.',
+  'desktop.fs.quiet': 'Wait after the last change',
+  'desktop.fs.quiet_hint':
+    'A game may save several files in a row: sync once the folder has been still this long.',
+  'desktop.fs.seconds': '{count} s',
+  'desktop.fs.minutes': '{count} min',
+  'desktop.fs.process': 'Program that uses this folder',
+  'desktop.fs.process_hint':
+    'While it runs, nothing is downloaded into the folder; when it closes, the folder is synced.',
+  'desktop.fs.process_none': 'None',
+  'desktop.fs.process_pick': 'Choose a running program',
+  'desktop.fs.process_filter': 'Filter programs',
+  'desktop.fs.process_placeholder': 'Executable name, e.g. game.exe',
+  'desktop.fs.process_save': 'Save',
+  'desktop.fs.process_clear': 'Remove',
+  'desktop.fs.process_loading': 'Listing the running programs…',
+  'desktop.fs.process_empty': 'No running program matches.',
+  'desktop.fs.process_close': 'Close the list',
   'desktop.fs.unlink': 'Unlink from this computer',
   'desktop.fs.unlink_note': 'The files stay on this computer and on the server.',
   'desktop.fs.unlink_title': 'Unlink {name}?',
   'desktop.fs.unlink_body':
     'This computer stops syncing the folder. The files stay here and on the server.',
   'desktop.fs.unlink_confirm': 'Unlink',
-  'desktop.fs.coming_soon': 'Coming soon',
 
   // Activity
   'desktop.activity.title': 'Activity',
@@ -276,7 +300,8 @@ export const desktopEn = {
   'desktop.settings.autostart': 'Start with the system',
   'desktop.settings.autostart_hint': 'Coming soon.',
   'desktop.settings.auto_sync': 'Automatic sync',
-  'desktop.settings.auto_sync_hint': 'Coming soon.',
+  'desktop.settings.auto_sync_hint':
+    'Sync the folders that have it on by themselves. When off, folders sync only when you ask.',
   'desktop.settings.about': 'About',
   'desktop.settings.versions': 'cloudit {app} · server {server}',
   'desktop.settings.server_unknown': 'server unavailable',

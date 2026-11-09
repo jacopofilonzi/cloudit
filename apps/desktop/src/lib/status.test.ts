@@ -25,6 +25,9 @@ const link = (over: Partial<LinkedFolder> = {}): LinkedFolder => ({
   last_error: null,
   last_sync_at: null,
   created_at: '2026-01-01T00:00:00Z',
+  auto_sync: false,
+  quiet_secs: 30,
+  process_name: null,
   ...over
 });
 

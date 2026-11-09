@@ -89,8 +89,9 @@ export const desktopIt: { readonly [K in DesktopKey]: string } = {
   'desktop.folders.banner_one': '{name}: sia questo PC sia il server hanno una versione nuova.',
   'desktop.folders.banner_many': '{count} cartelle hanno un conflitto da risolvere.',
   'desktop.folders.banner_action': 'Risolvi…',
-  'desktop.folders.manual_note':
-    'Per ora la sincronizzazione è manuale: quella automatica arriverà in una versione futura.',
+  'desktop.folders.auto_off_note':
+    'La sincronizzazione automatica è disattivata su questo PC: le cartelle si sincronizzano solo quando lo chiedi (Impostazioni).',
+  'desktop.folders.auto_tag': 'Auto',
   'desktop.folders.token_warning':
     'La chiave di accesso è salvata in un file, non nel portachiavi del sistema.',
 
@@ -110,6 +111,10 @@ export const desktopIt: { readonly [K in DesktopKey]: string } = {
   'desktop.detail.problems': 'File che non si possono sincronizzare',
   'desktop.detail.last_error': 'Ultimo errore',
   'desktop.detail.recheck': 'Ricontrolla',
+  'desktop.detail.auto': 'Sincronizzata automaticamente',
+  'desktop.detail.auto_waiting': '{name} è in esecuzione: i download aspettano che si chiuda.',
+  'desktop.detail.auto_retrying':
+    'La sincronizzazione automatica non è riuscita: riproverà a breve.',
 
   // Progress
   'desktop.phase.scanning': 'Lettura della cartella · {files} file',
@@ -126,6 +131,7 @@ export const desktopIt: { readonly [K in DesktopKey]: string } = {
   'desktop.result.needs_decision':
     '{name}: sono cambiati entrambi i lati, scegli quale versione tenere.',
   'desktop.result.cancelled': 'Annullato.',
+  'desktop.result.deferred': '{name}: i download aspettano che il suo programma si chiuda.',
 
   // Link wizard
   'desktop.link.title': 'Collega una cartella',
@@ -223,14 +229,34 @@ export const desktopIt: { readonly [K in DesktopKey]: string } = {
   'desktop.fs.pause': 'Metti in pausa questa cartella',
   'desktop.fs.pause_hint': 'Una cartella in pausa viene saltata da «Sincronizza tutto».',
   'desktop.fs.auto': 'Sincronizza automaticamente',
-  'desktop.fs.auto_hint': "Quando la cartella resta ferma, all'avvio o alla chiusura di un gioco.",
+  'desktop.fs.auto_hint':
+    "Quando la cartella resta ferma per un po', all'avvio, quando il server ha una nuova versione o quando il suo programma si chiude. I conflitti li decidi sempre tu.",
+  'desktop.fs.auto_global_off':
+    'La sincronizzazione automatica è disattivata per questo PC nelle Impostazioni.',
+  'desktop.fs.auto_saved': 'Impostazioni della sincronizzazione automatica salvate.',
+  'desktop.fs.quiet': "Attesa dopo l'ultima modifica",
+  'desktop.fs.quiet_hint':
+    'Un gioco può salvare più file di fila: sincronizza quando la cartella è rimasta ferma così a lungo.',
+  'desktop.fs.seconds': '{count} s',
+  'desktop.fs.minutes': '{count} min',
+  'desktop.fs.process': 'Programma che usa questa cartella',
+  'desktop.fs.process_hint':
+    'Mentre è in esecuzione non viene scaricato nulla nella cartella; quando si chiude, la cartella viene sincronizzata.',
+  'desktop.fs.process_none': 'Nessuno',
+  'desktop.fs.process_pick': 'Scegli un programma in esecuzione',
+  'desktop.fs.process_filter': 'Filtra i programmi',
+  'desktop.fs.process_placeholder': "Nome dell'eseguibile, es. game.exe",
+  'desktop.fs.process_save': 'Salva',
+  'desktop.fs.process_clear': 'Rimuovi',
+  'desktop.fs.process_loading': 'Elenco dei programmi in esecuzione…',
+  'desktop.fs.process_empty': 'Nessun programma in esecuzione corrisponde.',
+  'desktop.fs.process_close': "Chiudi l'elenco",
   'desktop.fs.unlink': 'Scollega da questo PC',
   'desktop.fs.unlink_note': 'I file restano su questo PC e sul server.',
   'desktop.fs.unlink_title': 'Scollegare {name}?',
   'desktop.fs.unlink_body':
     'Questo PC smette di sincronizzare la cartella. I file restano qui e sul server.',
   'desktop.fs.unlink_confirm': 'Scollega',
-  'desktop.fs.coming_soon': 'In arrivo',
 
   // Activity
   'desktop.activity.title': 'Attività',
@@ -281,7 +307,8 @@ export const desktopIt: { readonly [K in DesktopKey]: string } = {
   'desktop.settings.autostart': 'Avvia con il sistema',
   'desktop.settings.autostart_hint': 'In arrivo.',
   'desktop.settings.auto_sync': 'Sincronizzazione automatica',
-  'desktop.settings.auto_sync_hint': 'In arrivo.',
+  'desktop.settings.auto_sync_hint':
+    'Sincronizza da sole le cartelle che la hanno attiva. Se è disattivata, le cartelle si sincronizzano solo quando lo chiedi.',
   'desktop.settings.about': 'Informazioni',
   'desktop.settings.versions': 'cloudit {app} · server {server}',
   'desktop.settings.server_unknown': 'server non disponibile',

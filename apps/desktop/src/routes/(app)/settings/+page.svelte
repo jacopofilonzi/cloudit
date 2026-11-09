@@ -113,10 +113,10 @@
       </div>
       <div class="py-3">
         <Toggle
-          checked={false}
-          disabled
+          checked={app.autoSync}
           label={t('desktop.settings.auto_sync')}
           description={t('desktop.settings.auto_sync_hint')}
+          onchange={(on) => app.setAutoSync(on).catch(reportError)}
         />
       </div>
     </div>

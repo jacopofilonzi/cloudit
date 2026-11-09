@@ -1,7 +1,7 @@
 <script lang="ts">
   // One linked folder in the list: icon, name, collection and last sync, status tag.
   import type { LinkedFolder } from '@cloudit/api-types';
-  import { Spinner, formatRelative } from '@cloudit/ui';
+  import { Spinner, Tag, formatRelative } from '@cloudit/ui';
   import { getLang, t } from '@cloudit/ui/i18n';
   import { app } from '#lib/app.svelte.ts';
   import { displayState } from '#lib/status.ts';
@@ -39,6 +39,9 @@
   </span>
   {#if busy}
     <Spinner size={14} />
+  {/if}
+  {#if app.isAuto(link)}
+    <Tag variant="neutral">{t('desktop.folders.auto_tag')}</Tag>
   {/if}
   <StatusTag state={folderState} />
 </button>
