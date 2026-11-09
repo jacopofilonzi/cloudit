@@ -37,4 +37,9 @@ pub const COMMANDS: &[&str] = &[
     "open_history",
     "open_log_dir",
     "server_version",
+    "app_settings",
+    "set_app_settings",
+    "set_auto_sync",
+    "running_processes",
+    "auto_states",
 ];

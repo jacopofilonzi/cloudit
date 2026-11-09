@@ -7,6 +7,7 @@ use futures::StreamExt as _;
 use tauri::{AppHandle, State};
 use tokio::sync::Semaphore;
 
+use crate::auto::Input;
 use crate::error::CommandError;
 use crate::events::OpAction;
 use crate::ops;
@@ -134,7 +135,9 @@ pub async fn keep_server(
 /// "Decide later": pauses the folder.
 #[tauri::command]
 pub fn decide_later(state: State<'_, AppState>, folder: i64) -> Result<LinkedFolder, CommandError> {
-    Ok(state.engine.decide_later(folder)?)
+    let link = state.engine.decide_later(folder)?;
+    state.auto.send(Input::FoldersChanged);
+    Ok(link)
 }
 
 /// Cancels what is running on a folder; whether anything was.

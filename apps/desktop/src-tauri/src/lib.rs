@@ -4,6 +4,8 @@
 //! - `ops`: runs one engine operation with cancellation, throttled progress and the
 //!   started / finished / status events;
 //! - `follower`: forwards the server's events while signed in;
+//! - `auto`: the automatic sync scheduler (file watchers, associated programs, server
+//!   events, retries) over `ops`;
 //! - `events`: event names and payloads (TypeScript twins in `src/lib/events.ts`);
 //! - `error`: the serializable error (`kind` is the engine's stable `ErrorKind`).
 //!
@@ -12,6 +14,7 @@
 //! view needs no plugin permissions: its capability only allows the app's own commands
 //! and listening to events.
 
+mod auto;
 mod commands;
 mod error;
 mod events;
@@ -74,7 +77,9 @@ pub fn run() {
                 }
             };
             let signed_in = engine.signed_in();
-            app.manage(AppState::new(engine, data_dir, log_dir, guard));
+            let (auto_handle, auto_inputs) = auto::channel();
+            app.manage(AppState::new(engine, data_dir, log_dir, guard, auto_handle));
+            auto::start(app.handle(), auto_inputs);
             if signed_in {
                 follower::start(app.handle());
             }
@@ -114,6 +119,11 @@ pub fn run() {
             commands::misc::open_history,
             commands::misc::open_log_dir,
             commands::misc::server_version,
+            commands::auto::app_settings,
+            commands::auto::set_app_settings,
+            commands::auto::set_auto_sync,
+            commands::auto::running_processes,
+            commands::auto::auto_states,
         ])
         .build(tauri::generate_context!());
     let app = match app {

@@ -9,6 +9,7 @@ use tauri_plugin_opener::OpenerExt as _;
 use crate::error::CommandError;
 
 pub mod account;
+pub mod auto;
 pub mod folders;
 pub mod linking;
 pub mod misc;

@@ -5,6 +5,7 @@ use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use super::open_url;
+use crate::auto::Input;
 use crate::error::CommandError;
 use crate::events::{LOGIN_FINISHED, LoginEvent, emit};
 use crate::follower;
@@ -124,6 +125,7 @@ pub async fn start_login(
                 Ok(account) => {
                     tracing::info!(device = %account.device_name, "signed in");
                     follower::start(&app);
+                    state.auto.send(Input::Session(true));
                     emit(&app, LOGIN_FINISHED, &LoginEvent::Signed { account });
                 }
                 Err(error) => {
@@ -162,6 +164,7 @@ pub fn cancel_login(state: State<'_, AppState>) -> bool {
 /// sign-in to the same account.
 #[tauri::command]
 pub async fn sign_out(state: State<'_, AppState>) -> Result<(), CommandError> {
+    state.auto.send(Input::Session(false));
     state.cancel_all();
     state.engine.logout().await?;
     Ok(())

@@ -32,4 +32,17 @@ base_snapshot_id: string | null,
 /**
  * A conflict snapshot uploaded by this device, waiting for a decision.
  */
-pending_conflict_id: string | null, last_state: SyncState | null, last_error: string | null, last_sync_at: string | null, created_at: string, };
+pending_conflict_id: string | null, last_state: SyncState | null, last_error: string | null, last_sync_at: string | null, created_at: string, 
+/**
+ * Synced automatically by the desktop app (see [`crate::AutoSyncSettings`]).
+ */
+auto_sync: boolean, 
+/**
+ * Seconds without file changes before an automatic sync starts.
+ */
+quiet_secs: number, 
+/**
+ * The program whose files these are (an executable name): while it runs nothing is
+ * pulled into the folder, and the folder is synced when it exits.
+ */
+process_name: string | null, };

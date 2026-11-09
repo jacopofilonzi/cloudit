@@ -1,14 +1,16 @@
 //! Running engine operations for the UI: registration (cancellation), throttled
-//! progress events, and the started / finished / status events every operation emits.
+//! progress events, the started / finished / status events every operation emits, and
+//! the end of each operation reported to the automatic sync scheduler.
 
 use std::future::Future;
 use std::mem::Discriminant;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use cloudit_client::{FolderStatus, OpContext, Phase, Progress, SyncReport};
+use cloudit_client::{FolderStatus, OpContext, Phase, Progress, SyncOptions, SyncReport};
 use tauri::{AppHandle, Manager};
 
+use crate::auto;
 use crate::error::CommandError;
 use crate::events::{
     FOLDER_OP, FOLDER_PROGRESS, FOLDER_STATUS, FolderOpEvent, FolderStatusEvent, OpAction, OpStage,
@@ -70,11 +72,42 @@ fn progress_context(app: &AppHandle) -> OpContext {
     })
 }
 
-/// Runs `operation` on `folder` with progress, cancellation (`cancel_op`) and events.
+/// Runs `operation` on `folder` (started by the user) with progress, cancellation
+/// (`cancel_op`) and events.
 pub async fn run<T, F, Fut>(
     app: &AppHandle,
     folder: i64,
     action: OpAction,
+    operation: F,
+) -> Result<T, CommandError>
+where
+    T: Outcome,
+    F: FnOnce(OpContext) -> Fut,
+    Fut: Future<Output = cloudit_client::Result<T>>,
+{
+    run_as(app, folder, action, false, operation).await
+}
+
+/// An automatic sync run (`allow_pull`: false while the folder's program runs).
+pub async fn run_auto(
+    app: &AppHandle,
+    folder: i64,
+    allow_pull: bool,
+) -> Result<SyncReport, CommandError> {
+    let engine = app.state::<AppState>().engine.clone();
+    run_as(app, folder, OpAction::Sync, true, |ctx| async move {
+        engine
+            .sync_with(folder, SyncOptions { allow_pull }, &ctx)
+            .await
+    })
+    .await
+}
+
+async fn run_as<T, F, Fut>(
+    app: &AppHandle,
+    folder: i64,
+    action: OpAction,
+    auto: bool,
     operation: F,
 ) -> Result<T, CommandError>
 where
@@ -91,11 +124,17 @@ where
         &FolderOpEvent {
             folder,
             action,
+            auto,
             stage: OpStage::Started,
         },
     );
     let result = operation(ctx).await.map_err(CommandError::from);
     drop(guard);
+    state.auto.send(auto::Input::OpFinished {
+        folder,
+        auto,
+        ended: auto::ended_of(&result),
+    });
     match &result {
         Ok(outcome) => {
             emit(
@@ -113,6 +152,7 @@ where
                 &FolderOpEvent {
                     folder,
                     action,
+                    auto,
                     stage: OpStage::Finished {
                         report: outcome.report().map(Box::new),
                         error: None,
@@ -121,7 +161,12 @@ where
             );
         }
         Err(error) => {
-            tracing::warn!(folder, ?action, kind = ?error.kind, message = %error.message, "operation failed");
+            if auto {
+                // The scheduler logs once per failure streak.
+                tracing::debug!(folder, kind = ?error.kind, message = %error.message, "automatic sync failed");
+            } else {
+                tracing::warn!(folder, ?action, kind = ?error.kind, message = %error.message, "operation failed");
+            }
             if action == OpAction::Status {
                 emit(
                     app,
@@ -139,6 +184,7 @@ where
                 &FolderOpEvent {
                     folder,
                     action,
+                    auto,
                     stage: OpStage::Finished {
                         report: None,
                         error: Some(error.clone()),

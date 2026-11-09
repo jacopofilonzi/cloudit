@@ -1,11 +1,12 @@
-//! Follows the server's events while signed in and forwards them to the UI. A head or
-//! conflict change also refreshes that folder's status (this milestone syncs by hand:
-//! it only shows the news).
+//! Follows the server's events while signed in, forwards them to the UI and to the
+//! automatic sync scheduler. A head or conflict change of a folder that isn't synced
+//! automatically refreshes its status (the scheduler syncs the automatic ones).
 
 use cloudit_client::CancellationToken;
 use cloudit_client::events::{self, RemoteEvent};
 use tauri::{AppHandle, Manager};
 
+use crate::auto::Input;
 use crate::events::{OpAction, REMOTE, emit};
 use crate::ops;
 use crate::state::{AppState, Connection};
@@ -23,16 +24,16 @@ pub fn start(app: &AppHandle) {
         let mut rx = events::follow(&engine, cancel);
         while let Some(event) = rx.recv().await {
             emit(&app, REMOTE, &event);
+            let state = app.state::<AppState>();
+            state.auto.send(Input::Remote(event.clone()));
             match &event {
-                RemoteEvent::Connected { .. } => {
-                    app.state::<AppState>().set_connection(Connection::Online)
-                }
-                RemoteEvent::Disconnected { .. } => {
-                    app.state::<AppState>().set_connection(Connection::Offline);
-                }
+                RemoteEvent::Connected { .. } => state.set_connection(Connection::Online),
+                RemoteEvent::Disconnected { .. } => state.set_connection(Connection::Offline),
                 RemoteEvent::HeadChanged { folder, .. }
                 | RemoteEvent::ConflictCreated { folder, .. } => {
-                    refresh(&app, *folder);
+                    if !state.is_auto(*folder) {
+                        refresh(&app, *folder);
+                    }
                 }
                 RemoteEvent::SignedOut { error_kind } => {
                     tracing::warn!(?error_kind, "the server refused the token");

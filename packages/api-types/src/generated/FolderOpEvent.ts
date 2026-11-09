@@ -6,7 +6,11 @@ import type { SyncReport } from "./SyncReport";
 /**
  * `folder-op` payload.
  */
-export type FolderOpEvent = { folder: number, action: OpAction, } & ({ "stage": "started" } | { "stage": "finished", 
+export type FolderOpEvent = { folder: number, action: OpAction, 
+/**
+ * Started by automatic sync (not by the user).
+ */
+auto: boolean, } & ({ "stage": "started" } | { "stage": "finished", 
 /**
  * Present for sync and the conflict decisions when they succeeded.
  */

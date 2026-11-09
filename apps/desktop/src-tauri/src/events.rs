@@ -15,6 +15,8 @@ pub const FOLDER_STATUS: &str = "folder-status";
 pub const FOLDER_OP: &str = "folder-op";
 /// A `RemoteEvent` from the server follower.
 pub const REMOTE: &str = "remote";
+/// What automatic sync shows of each automatic folder (`AutoFolderState[]`).
+pub const AUTO_STATE: &str = "auto-state";
 /// The browser sign-in ended (`LoginEvent`).
 pub const LOGIN_FINISHED: &str = "login-finished";
 
@@ -49,6 +51,8 @@ pub enum OpStage {
 pub struct FolderOpEvent {
     pub folder: i64,
     pub action: OpAction,
+    /// Started by automatic sync (not by the user).
+    pub auto: bool,
     #[serde(flatten)]
     pub stage: OpStage,
 }

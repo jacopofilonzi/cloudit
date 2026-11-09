@@ -38,6 +38,11 @@
     "allow-open-folder",
     "allow-open-history",
     "allow-open-log-dir",
-    "allow-server-version"
+    "allow-server-version",
+    "allow-app-settings",
+    "allow-set-app-settings",
+    "allow-set-auto-sync",
+    "allow-running-processes",
+    "allow-auto-states"
   ]
 }

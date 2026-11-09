@@ -3,4 +3,4 @@
 /**
  * What [`Engine::sync`] did.
  */
-export type SyncOutcome = { "outcome": "up_to_date" } | { "outcome": "pushed", snapshot_id: string, uploaded_chunks: number, uploaded_bytes: number, } | { "outcome": "pulled", snapshot_id: string, changes: number, downloaded_bytes: number, } | { "outcome": "needs_decision", conflict_id: string, };
+export type SyncOutcome = { "outcome": "up_to_date" } | { "outcome": "pushed", snapshot_id: string, uploaded_chunks: number, uploaded_bytes: number, } | { "outcome": "pulled", snapshot_id: string, changes: number, downloaded_bytes: number, } | { "outcome": "needs_decision", conflict_id: string, } | { "outcome": "deferred" };

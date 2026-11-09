@@ -7,6 +7,7 @@ use cloudit_core::protocol::{FolderInfo, ScopeInfo};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt as _;
 
+use crate::auto::Input;
 use crate::error::CommandError;
 use crate::state::AppState;
 
@@ -69,7 +70,7 @@ pub async fn link_folder(
     local_path: String,
     ignore: Vec<String>,
 ) -> Result<LinkedFolder, CommandError> {
-    Ok(state
+    let result = state
         .engine
         .link_folder(
             &folder_id,
@@ -77,7 +78,8 @@ pub async fn link_folder(
             &ignore,
             &OpContext::new(),
         )
-        .await?)
+        .await;
+    changed(&state, result)
 }
 
 #[tauri::command]
@@ -89,7 +91,7 @@ pub async fn create_and_link(
     local_path: String,
     ignore: Vec<String>,
 ) -> Result<LinkedFolder, CommandError> {
-    Ok(state
+    let result = state
         .engine
         .create_and_link(
             &scope_id,
@@ -99,13 +101,15 @@ pub async fn create_and_link(
             &ignore,
             &OpContext::new(),
         )
-        .await?)
+        .await;
+    changed(&state, result)
 }
 
 #[tauri::command]
 pub async fn unlink(state: State<'_, AppState>, folder: i64) -> Result<(), CommandError> {
     state.cancel_folder(folder);
-    Ok(state.engine.unlink(folder).await?)
+    let result = state.engine.unlink(folder).await;
+    changed(&state, result)
 }
 
 #[tauri::command]
@@ -114,10 +118,11 @@ pub async fn relocate(
     folder: i64,
     local_path: String,
 ) -> Result<LinkedFolder, CommandError> {
-    Ok(state
+    let result = state
         .engine
         .relocate(folder, &PathBuf::from(local_path))
-        .await?)
+        .await;
+    changed(&state, result)
 }
 
 #[tauri::command]
@@ -126,7 +131,8 @@ pub async fn set_ignore(
     folder: i64,
     patterns: Vec<String>,
 ) -> Result<LinkedFolder, CommandError> {
-    Ok(state.engine.set_ignore(folder, &patterns).await?)
+    let result = state.engine.set_ignore(folder, &patterns).await;
+    changed(&state, result)
 }
 
 #[tauri::command]
@@ -135,11 +141,19 @@ pub fn set_paused(
     folder: i64,
     paused: bool,
 ) -> Result<LinkedFolder, CommandError> {
-    Ok(state.engine.set_paused(folder, paused)?)
+    changed(&state, state.engine.set_paused(folder, paused))
 }
 
 /// Refreshes the cached scope / folder names from the server.
 #[tauri::command]
 pub async fn refresh_names(state: State<'_, AppState>) -> Result<Vec<LinkedFolder>, CommandError> {
     Ok(state.engine.refresh_names(&OpContext::new()).await?)
+}
+
+/// A command that changed the folder list or a folder's settings: tells the automatic
+/// sync scheduler when it succeeded.
+fn changed<T>(state: &AppState, result: cloudit_client::Result<T>) -> Result<T, CommandError> {
+    let value = result?;
+    state.auto.send(Input::FoldersChanged);
+    Ok(value)
 }

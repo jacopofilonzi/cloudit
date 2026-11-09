@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-auto-states"
+description = "Enables the auto_states command without any pre-configured scope."
+commands.allow = ["auto_states"]
+
+[[permission]]
+identifier = "deny-auto-states"
+description = "Denies the auto_states command without any pre-configured scope."
+commands.deny = ["auto_states"]

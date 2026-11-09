@@ -1,13 +1,17 @@
-//! The app state (managed by Tauri): the engine and the registries of what is running,
-//! so the UI can cancel it and sign-out can stop everything.
+//! The app state (managed by Tauri): the engine, the automatic sync scheduler handle and
+//! the registries of what is running, so the UI can cancel it and sign-out can stop
+//! everything.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::time::{Duration, Instant};
 
 use cloudit_client::{CancellationToken, Engine};
 use tracing_appender::non_blocking::WorkerGuard;
+
+use crate::auto::{self, AutoFolderState};
 
 /// Whether the stream of server events is up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -31,6 +35,8 @@ struct Registry {
     next_id: u64,
     /// Running operations by linked folder (a second one waits for the engine lock).
     ops: HashMap<i64, Vec<(u64, CancellationToken)>>,
+    /// When the last operation on each folder ended (its file events are its own).
+    ended: HashMap<i64, Instant>,
     login: Option<LoginSession>,
     follower: Option<CancellationToken>,
 }
@@ -40,6 +46,10 @@ pub struct AppState {
     pub engine: Engine,
     pub data_dir: PathBuf,
     pub log_dir: PathBuf,
+    /// The automatic sync scheduler.
+    pub auto: auto::Handle,
+    /// Its last view for the UI (`auto_states`).
+    auto_view: Mutex<Vec<AutoFolderState>>,
     registry: Mutex<Registry>,
     /// The server stream: `Connection` as a number (the UI may load after the event).
     connection: AtomicU8,
@@ -53,11 +63,14 @@ impl AppState {
         data_dir: PathBuf,
         log_dir: PathBuf,
         log_guard: Option<WorkerGuard>,
+        auto: auto::Handle,
     ) -> Self {
         Self {
             engine,
             data_dir,
             log_dir,
+            auto,
+            auto_view: Mutex::new(Vec::new()),
             registry: Mutex::new(Registry::default()),
             connection: AtomicU8::new(0),
             _log_guard: log_guard,
@@ -102,6 +115,37 @@ impl AppState {
             id,
             token,
         }
+    }
+
+    /// Whether an operation runs on `folder` or ended less than `grace` ago.
+    pub fn folder_busy(&self, folder: i64, grace: Duration) -> bool {
+        let registry = self.registry();
+        registry.ops.contains_key(&folder)
+            || registry
+                .ended
+                .get(&folder)
+                .is_some_and(|at| at.elapsed() < grace)
+    }
+
+    /// Records the scheduler's view for the UI.
+    pub fn set_auto_view(&self, view: Vec<AutoFolderState>) {
+        *self
+            .auto_view
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = view;
+    }
+
+    /// What automatic sync shows of each automatic folder.
+    pub fn auto_view(&self) -> Vec<AutoFolderState> {
+        self.auto_view
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Whether automatic sync currently handles `folder` (it syncs on server events).
+    pub fn is_auto(&self, folder: i64) -> bool {
+        self.auto_view().iter().any(|f| f.folder == folder)
     }
 
     /// Cancels every running operation of a folder; whether any was running.
@@ -200,5 +244,6 @@ impl Drop for OpGuard<'_> {
                 registry.ops.remove(&self.folder);
             }
         }
+        registry.ended.insert(self.folder, Instant::now());
     }
 }
