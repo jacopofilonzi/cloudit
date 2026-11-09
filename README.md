@@ -9,11 +9,14 @@ with other users.
 
 **Status: early development.** The server has its storage infrastructure (database, blob
 storage, optional Redis), the account API (setup, password accounts, invites, desktop device
-login, admin, sign-in with OIDC / GitHub / Discord), scopes, folders, sharing and the trash
-(API only), the sync protocol (chunk upload and download, versioned snapshots with conflict
+login, admin, sign-in with OIDC / GitHub / Discord), scopes, folders, sharing and the trash,
+the sync protocol (chunk upload and download, versioned snapshots with conflict
 detection, history, restore, ZIP download) with storage quotas. The web UI has its sign-in
-pages (setup, login, registration, invites, password reset, provider onboarding, desktop app
-approval); the pages to manage scopes, folders and the server come next. There is no desktop client yet; don't use it for real data.
+pages and the app pages (scopes, folders, history, sharing, devices, trash, profile,
+administration). The desktop app (Windows, Linux) links local folders and syncs them by hand
+or automatically (after the folder stays still, at startup, on server changes, when the
+game using it closes; conflicts are always left to you); tray, autostart and installers come
+next. Don't use it for real data yet.
 
 ## Quick start (Docker)
 
@@ -134,7 +137,8 @@ Clients (desktop, web) open `GET /api/v1/events`, a Server-Sent Events stream an
 versions, conflicts, history, folder, scope and membership changes to the users who can see
 them, and fetch `GET /api/v1/sync/heads` on every (re)connect. With several instances,
 events cross instances through Redis/Valkey pub/sub; without it (or while it is down) each
-instance only delivers its own events and clients fall back to polling `/sync/heads`.
+instance only delivers its own events and clients fall back to polling `/sync/heads` (the
+desktop client also polls it every 5 minutes as a safety net).
 
 Background jobs run on any instance, one at a time per job (a lease in the database):
 **retention** (every 15 minutes), **gc** (unreferenced chunks and manifests, hourly),

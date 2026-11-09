@@ -288,6 +288,14 @@ and align this project's copies with it:
     (registered first: one app instance only), tracing-appender 0.2; JS `@tauri-apps/api` and
     `@tauri-apps/cli` 2.12. The Tauri CLI writes `features = []` into the desktop
     `Cargo.toml` on build: keep that form committed so builds don't dirty the tree.
+  - Desktop automatic sync: **notify 8.2** (not the 9 release candidates; plain watcher,
+    no debouncer crate: `notify::recommended_watcher(|res: notify::Result<Event>| …)` then
+    `watcher.watch(path, RecursiveMode::Recursive)`; `Event::need_rescan()`) and **sysinfo
+    0.40** (`default-features = false, features = ["system"]`): `System::new()` returns a
+    `Result`; `refresh_processes_specifics(ProcessesToUpdate::All, true,
+    ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet).without_tasks())`;
+    `Process::name()` is an `&OsStr`. The desktop tests use tokio's `test-util` feature
+    (`#[tokio::test(start_paused = true)]`, `tokio::time::advance`).
   - **SvelteKit 3** (not 2): no `svelte.config.js` (options go to `sveltekit({...})` in
     `vite.config.ts`); `$lib` is replaced by `#lib` (package.json `imports`, explicit extensions:
     `#lib/api.ts`); `$app/environment` → `$app/env`; `$app/stores` is gone (use `$app/state`);
@@ -392,6 +400,11 @@ and align this project's copies with it:
   + `capabilities/default.json`, checked by a test). A plain `cargo build` of `cloudit-desktop` loads the dev
   server; use `--features custom-protocol` or `make build-desktop` to embed the UI. Linux CI needs
   `libwebkit2gtk-4.1-dev librsvg2-dev libsoup-3.0-dev libgtk-3-dev`.
+- Desktop automatic sync: every automatic run goes through `ops::run_auto` →
+  `Engine::sync_with`; never sync from the scheduler any other way, and keep its decisions
+  in the pure `auto::plan::Planner` (tests on paused time). The process name matching lives
+  in `auto/processes_windows.rs` / `processes_unix.rs` (chosen with `#[path]`): the one not
+  for this OS is not compiled locally, so check it on CI (ubuntu runs it).
 - Git Bash heredocs and double-quoted `node -e` strings mangle backslashes and run backticks: write files
   with the editor tools.
 

@@ -1,12 +1,12 @@
 # Project structure
 
 cloudit is a self-hosted folder sync service: a Rust HTTP server stores versioned snapshots of
-users' folders; a desktop client syncs local folders with it (its engine, `cloudit-client`, is
-built; the app is planned), and a web UI (served by the
+users' folders; a desktop client syncs local folders with it (the Tauri app `apps/desktop` over
+the engine `cloudit-client`), and a web UI (served by the
 server as a static SPA) manages accounts, scopes and folders. The UIs talk to the server only
 through its JSON API under `/api/v1`, whose TypeScript types are generated from the Rust ones.
 
-Current state (milestone 6 done: engine and desktop app): the server has its infrastructure (database with migrations and
+Current state (milestone 7a done: desktop app with automatic sync): the server has its infrastructure (database with migrations and
 leases, blob storage, optional Redis with a rate limiter, readiness checks), exposes health probes,
 serves the web SPA and has the account API: first-run setup, password accounts with web sessions,
 invites, admin approval of new accounts, password resets, desktop device login (loopback +
@@ -26,7 +26,8 @@ administration pages (users and approvals, invites, sign-in providers, settings,
 see "Sync formats"); the server verifies every upload with it. `cloudit-client` is the
 desktop sync engine (milestone 6a, no UI): browser sign-in, OS keychain, linked folders,
 scanner with ignore rules, push, pull under the no-overwrite safety rule, conflicts, events
-(see "Client engine"). Everything under "Planned design" is not implemented yet.
+(see "Client engine"); the desktop app syncs by hand or automatically and decides conflicts
+with the user (see "Desktop app"). Everything under "Planned design" is not implemented yet.
 
 ```text
 repo/
@@ -752,8 +753,9 @@ request and 409 for head conflicts), `payload_too_large` 413. The callback carri
   expired) or device (not revoked, not expired) and the user (enabled, approved), and
   ends otherwise. At most 20 streams per user and instance (in memory) → 429.
 - **Client contract**: on every (re)connect fetch `GET /sync/heads`, then apply events;
-  with `realtime: local` also poll `/sync/heads` (e.g. every 5 minutes, `If-None-Match`);
-  a stream that ends means reconnect and resync.
+  also poll `/sync/heads` (e.g. every 5 minutes, `If-None-Match`): with `realtime: local`
+  it is the only way to see other instances' commits, with `shared` it catches an event a
+  failed Redis publish dropped; a stream that ends means reconnect and resync.
 
 ### Background jobs
 
@@ -988,9 +990,12 @@ crates/client/src/
 ├── engine/
 │   ├── mod.rs        Engine, EngineConfig: open, login / logout, listings, activity, locks
 │   ├── linking.rs    link_folder, create_and_link, unlink, relocate, set_ignore, set_paused,
-│   │                 refresh_names, local path rules
-│   └── ops.rs        status, sync, keep_local, keep_server, decide_later; conflict flow
-└── events.rs         follow: SSE + `/sync/heads` (ETag) → RemoteEvent channel
+│   │                 set_auto_sync (AutoSyncSettings), auto_sync_enabled / set_auto_sync_enabled
+│   │                 (meta switch), refresh_names, local path rules
+│   └── ops.rs        status, sync / sync_with (SyncOptions), keep_local, keep_server,
+│                     decide_later; conflict flow
+└── events.rs         follow: SSE + `/sync/heads` (ETag, polled in both real-time modes)
+                      → RemoteEvent channel
 ```
 
 Tests: unit tests next to the code; `crates/client/tests/` runs the **real server
@@ -1003,7 +1008,9 @@ server, decide later, conflicts decided elsewhere, first links over existing con
 `safety.rs` (file changed between scan and apply, failed conflict upload, base deleted by
 retention, cancellation mid-upload / download / apply, unreadable files, bad names),
 `account.rs` (token file fallback across restarts, revoked device, link rules, account
-switch). SQLite only (`make test-ha` runs the server crate).
+switch), `auto.rs` (automatic sync settings and switch, `sync_with` without pulls: push
+allowed, remote changes and conflicts deferred untouched). SQLite only (`make test-ha` runs
+the server crate).
 
 ### Using the engine (desktop app)
 
@@ -1021,6 +1028,14 @@ switch). SQLite only (`make test-ha` runs the server crate).
    `OpContext::with_progress`, cancel with its token). `SyncOutcome::NeedsDecision`,
    `SyncState::Conflict` or `ServerConflict` → offer `keep_local`, `keep_server`,
    `decide_later` (pauses: `sync` then answers `paused`). `activity` for the log.
+   `sync_with(id, SyncOptions { allow_pull: false }, ctx)` (the folder's program runs):
+   pushes as usual, but a run that would pull (`remote_changes`) or ask for a decision
+   (`conflict`) touches nothing, locally or on the server, and answers
+   `SyncOutcome::Deferred` (the status says which). Automatic sync settings:
+   `set_auto_sync(id, AutoSyncSettings {enabled, quiet_secs (5..=3600), process_name?
+   (executable name, ≤ 255 characters, no path separators)})`, and the device-wide
+   switch `auto_sync_enabled` / `set_auto_sync_enabled` (`meta` key `auto_sync`, default
+   on); the engine stores them, the app schedules.
 5. Live updates: `events::follow(&engine, cancel)` → `RemoteEvent::HeadChanged {folder}` →
    `sync(folder)`; `FoldersChanged` → refresh lists; `SignedOut` → sign in again.
 6. Errors: map `Error::kind()` (stable names) through i18n; `ScanProblems` carries the
@@ -1083,12 +1098,14 @@ switch). SQLite only (`make test-ha` runs the server crate).
 SQLite (WAL, foreign keys); migrations are the ordered scripts of `state/migrations.rs` and
 `PRAGMA user_version` counts those applied (append-only; a newer database is refused).
 Tables: `meta(key, value)` (`last_account` = server + user the links belong to: signing in
-to another account unlinks every folder); `account(id = 1, server_url, user_id, email,
+to another account unlinks every folder; `auto_sync` = `on` / `off`, the device-wide
+automatic sync switch, missing = on); `account(id = 1, server_url, user_id, email,
 display_name, device_id, device_name, token_location, token_expires_at?, signed_in_at)`;
 `folders(id, local_path UNIQUE (canonical), scope_id, folder_id UNIQUE, scope_name,
 folder_name, emoji?, ignore_patterns (one per line), paused, base_snapshot_id?,
 base_manifest? (stored zstd form), pending_conflict_id?, pending_conflict_manifest?,
-head_cache_id?, head_cache_manifest?, last_state?, last_error?, last_sync_at?, created_at)`;
+head_cache_id?, head_cache_manifest?, last_state?, last_error?, last_sync_at?, created_at,
+auto_sync (default 0), quiet_secs (default 30), process_name?)` (the last three: v2);
 `file_index(folder_id → folders ON DELETE CASCADE, path, size, mtime_secs, mtime_nanos,
 executable, chunks BLOB (32-byte hash + u32 LE size each))` (PK (folder_id, path));
 `activity(id, at, folder_id?, folder_name?, action, outcome, files, bytes, snapshot_id?,
@@ -1208,18 +1225,49 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
   database, the token store and the server follower are opened by the first process only. No env var
   bypasses it. Verified on Windows with the built binary (two launches: one process, window restored).
 - `src-tauri/src`: `lib.rs` (builder, plugins dialog / opener / single-instance, setup: data dir = Tauri
-  `app_local_data_dir` or `CLOUDIT_DESKTOP_DATA_DIR`, logging, `Engine::open`), `commands/` (account,
-  folders, linking, misc: one thin command per engine call), `command_names.rs` (list shared with
+  `app_local_data_dir` or `CLOUDIT_DESKTOP_DATA_DIR`, logging, `Engine::open`, the automatic sync
+  scheduler), `commands/` (account, folders, linking, auto, misc: one thin command per engine call;
+  those that change the folder list or settings notify the scheduler), `command_names.rs` (list shared with
   `build.rs`, which generates an `allow-<command>` permission each; a test checks that
   `capabilities/default.json` grants exactly these plus event listening: the web view has no plugin
   permissions, dialogs / browser / file manager are opened by the backend), `ops.rs` (runs an operation
-  with cancellation, progress throttled to 120 ms, started / finished / status events), `follower.rs`
-  (`events::follow` while signed in; a head or conflict change refreshes that folder's status),
-  `state.rs`, `events.rs`, `error.rs` (`CommandError {kind: ErrorKind, message, details?}`: the UI
-  translates `kind`), `logging.rs` (daily rolling file in `<data>/logs`, 7 kept).
+  with cancellation, progress throttled to 120 ms, started / finished / status events; `run_auto` for
+  the scheduler's runs; every end is reported to the scheduler), `follower.rs` (`events::follow` while
+  signed in; events go to the UI and the scheduler; a head or conflict change of a folder not synced
+  automatically refreshes its status), `auto/` (below), `state.rs` (also the scheduler handle, its UI
+  view, when each folder's last operation ended), `events.rs`, `error.rs` (`CommandError {kind:
+  ErrorKind, message, details?}`: the UI translates `kind`), `logging.rs` (daily rolling file in
+  `<data>/logs`, 7 kept).
+- **Automatic sync** (`src-tauri/src/auto/`; opt-in per folder, `Engine::sync_with` only, so the safety
+  rule holds and conflicts are never decided automatically): `mod.rs` is one scheduler task for the app's
+  lifetime (inputs through `auto::Handle`: folder changes, session, the switch, file events, server
+  events, ends of operations), `plan.rs` the pure rules (`Planner`, tested on paused tokio time),
+  `watcher.rs` one recursive `notify` watcher per automatic folder (drops reads, `.cloudit-tmp-*` and
+  ignored paths; errors / rescans count as changes), `processes.rs` the `sysinfo` process table with the
+  OS-specific name matching in `processes_windows.rs` (image name, case-insensitive, `.exe` optional) and
+  `processes_unix.rs` (exe file name, else first argument, else the 15-byte `comm`). A run happens only
+  while signed in, the device-wide switch is on (`Planner::active`: the one check point, where a future
+  "paused until" goes), the folder has `auto_sync` and isn't paused, and no run is going on for it.
+  Triggers: app start / sign-in / folder turned automatic / watcher (re)started → at once; file changes →
+  after `quiet_secs` without events (debounce; events during an operation on the folder or within 2 s of
+  its end are the engine's own and dropped; ignored while this device's conflict decision is open);
+  `HeadChanged` / `ConflictCreated` → at once, a reconnect → every folder; the associated process going
+  from running to not running (polled every 5 s, only while some automatic folder has one) → after 3 s.
+  While the process runs the run uses `allow_pull: false` (a folder waits for the first poll before its
+  first run); `Deferred` is shown and the exit runs it again. Failures retry after 1, 2, 5, 15, then
+  every 15 min (and on any trigger), logged at warn once per streak; locked (`unreadable`-only) files
+  retry quietly after 1 min, or at the process exit; `unauthorized` / blocked / signed out stops
+  everything until the next sign-in; a run ending in `NeedsDecision` is not retried. Folders whose path
+  is missing get no watcher (status `missing_local_path`); watchers are retried every minute and on
+  folder changes. A run that pushed or pulled and ends with `local_changes` / `remote_changes` runs again.
 - **Events** (Tauri): `folder-progress` (`Progress`), `folder-status`, `folder-op` (started / finished with
-  report or error), `remote` (`RemoteEvent`), `login-finished`. `session` also returns the server stream
-  state, because the UI may load after the `connected` event.
+  report or error; `auto` marks the scheduler's runs), `remote` (`RemoteEvent`), `login-finished`,
+  `auto-state` (`AutoFolderState[] {folder, process_running, deferred, failures}` of the folders synced
+  automatically now). `session` also returns the server stream state, and `auto_states` the last
+  `auto-state`, because the UI may load after the events.
+- **Commands of automatic sync** (`commands/auto.rs`): `app_settings` / `set_app_settings`
+  (`AppSettings {auto_sync}`, stored by the engine), `set_auto_sync(folder, AutoSyncSettings)`,
+  `running_processes` (executable names, sorted, for the picker), `auto_states`.
 - **Types**: client and desktop types derive ts-rs (client: cargo feature `ts`, enabled by the desktop
   crate's dev-dependency; `PathChange.change` is `PathChangeKind`) and `make types` exports them into
   `@cloudit/api-types` next to the server types.
@@ -1229,7 +1277,11 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
   (list + detail), `link` (3-step wizard), `folders/[id]/conflict` (first stores this computer's version as
   a conflict snapshot through `sync`, then keep this computer / keep the server / decide later),
   `folders/[id]/settings`, `activity`, `settings`. A conflict left on the server by another device points
-  to the history on the web. Automatic sync and autostart are shown disabled (milestone 7).
+  to the history on the web. Folder settings: automatic sync toggle, quiet period (10 s – 5 min chips),
+  associated program (free input or a filtered picker of the running ones, clear); the app settings hold
+  the device-wide switch (autostart stays disabled: 7b). The folder list tags automatic folders ("Auto"),
+  the detail says when downloads wait for the program to close or a run is retrying; automatic runs
+  stopped only by locked files show no error.
 - **Run**: `make dev-desktop` (tauri dev), `make build-desktop` (release binary
   `target/release/cloudit-desktop`, no installer). Env: `CLOUDIT_DESKTOP_DATA_DIR` (scratch state),
   `CLOUDIT_DESKTOP_NO_OPEN` (only log the URLs to open; automated runs), `RUST_LOG`. A plain `cargo build`
@@ -1358,9 +1410,11 @@ Milestones: 1 scaffolding (done) · 2 core chunking/manifest (done) · 3a server
 app (done) · 5b the app pages (scopes, folders, history, sharing, devices, trash, profile, live
 updates: done) · 5c administration pages and the final end-to-end check (milestone 5 done) · 6a
 client sync engine `crates/client` (done) · 6b desktop app `apps/desktop`: manual sync + conflicts
-over the engine (done) · 7 (next) desktop auto sync/tray/autostart/installers.
+over the engine (done) · 7a desktop automatic sync (done) · 7b/7c (next) notifications,
+tray (with "pause for 1 hour"), autostart, installers.
 
-Planned for milestone 7 in `apps/desktop`: tray, autostart, automatic sync triggers, installers.
+Planned for milestone 7b/7c in `apps/desktop`: notifications, tray, a global "paused until" (plugs into
+`Planner::active`), autostart, installers.
 
 ### Storage and deployment
 
@@ -1369,5 +1423,5 @@ transfer of the sync API and the lease-guarded background jobs are implemented.
 
 ### Desktop client
 
-- The engine is built ("Client engine"). Triggers (app side): manual, startup, quiet
-  period, associated process exit, SSE events (`events::follow`).
+- The engine and automatic sync are built ("Client engine", "Desktop app"). Next: notifications,
+  tray, autostart, installers.
