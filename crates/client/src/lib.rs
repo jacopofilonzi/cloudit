@@ -66,7 +66,7 @@ pub mod sync;
 
 pub use auth::login::PendingLogin;
 pub use auth::tokens::{KeyringBackend, MemoryBackend, SecretBackend, TokenVault};
-pub use engine::{Engine, EngineConfig, SyncOutcome, SyncReport};
+pub use engine::{AutoSyncSettings, Engine, EngineConfig, SyncOptions, SyncOutcome, SyncReport};
 pub use error::{Error, ErrorKind, LinkRefusal, LoginFailure, Result};
 pub use progress::{CancellationToken, OpContext, Phase, Progress};
 pub use secret::Secret;

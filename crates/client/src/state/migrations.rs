@@ -1,6 +1,6 @@
 //! Ordered, append-only migration scripts (see the module docs of [`super`]).
 
-pub const MIGRATIONS: &[&str] = &[V1];
+pub const MIGRATIONS: &[&str] = &[V1, V2];
 
 const V1: &str = "
 CREATE TABLE meta (
@@ -67,4 +67,11 @@ CREATE TABLE activity (
     error_kind  TEXT,
     error       TEXT
 );
+";
+
+/// Automatic sync settings per folder (desktop app).
+const V2: &str = "
+ALTER TABLE folders ADD COLUMN auto_sync INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE folders ADD COLUMN quiet_secs INTEGER NOT NULL DEFAULT 30;
+ALTER TABLE folders ADD COLUMN process_name TEXT;
 ";

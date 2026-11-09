@@ -35,6 +35,13 @@ pub struct LinkedFolder {
     pub last_error: Option<String>,
     pub last_sync_at: Option<String>,
     pub created_at: String,
+    /// Synced automatically by the desktop app (see [`crate::AutoSyncSettings`]).
+    pub auto_sync: bool,
+    /// Seconds without file changes before an automatic sync starts.
+    pub quiet_secs: u32,
+    /// The program whose files these are (an executable name): while it runs nothing is
+    /// pulled into the folder, and the folder is synced when it exits.
+    pub process_name: Option<String>,
 }
 
 /// What [`Db::insert_folder`] needs.
@@ -51,7 +58,7 @@ pub struct NewFolder<'a> {
 
 const COLUMNS: &str = "id, local_path, scope_id, folder_id, scope_name, folder_name, emoji,
     ignore_patterns, paused, base_snapshot_id, pending_conflict_id, last_state, last_error,
-    last_sync_at, created_at";
+    last_sync_at, created_at, auto_sync, quiet_secs, process_name";
 
 fn from_row(r: &Row<'_>) -> rusqlite::Result<LinkedFolder> {
     let path: String = r.get(1)?;
@@ -73,6 +80,9 @@ fn from_row(r: &Row<'_>) -> rusqlite::Result<LinkedFolder> {
         last_error: r.get(12)?,
         last_sync_at: r.get(13)?,
         created_at: r.get(14)?,
+        auto_sync: r.get(15)?,
+        quiet_secs: r.get(16)?,
+        process_name: r.get(17)?,
     })
 }
 
@@ -177,6 +187,24 @@ impl Db {
             c.execute(
                 "UPDATE folders SET paused = ?2 WHERE id = ?1",
                 params![id, paused],
+            )
+            .map(drop)
+        })
+    }
+
+    /// Stores the automatic sync settings (validated by the engine).
+    pub fn set_auto_sync(
+        &self,
+        id: i64,
+        enabled: bool,
+        quiet_secs: u32,
+        process_name: Option<&str>,
+    ) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE folders SET auto_sync = ?2, quiet_secs = ?3, process_name = ?4
+                 WHERE id = ?1",
+                params![id, enabled, quiet_secs, process_name],
             )
             .map(drop)
         })

@@ -8,8 +8,15 @@
 //! server folder receives the local content, identical content is simply in sync, and
 //! different content on both sides is a conflict (the local state is uploaded as a
 //! conflict snapshot and the user decides).
+//!
+//! Also the link's settings: ignore patterns, pause, and the automatic sync settings
+//! ([`AutoSyncSettings`], plus the device-wide switch in `meta`), which the engine only
+//! stores and validates.
 
+use std::ops::RangeInclusive;
 use std::path::Path;
+
+use serde::{Deserialize, Serialize};
 
 use super::Engine;
 use crate::error::{Error, LinkRefusal, Result};
@@ -18,6 +25,49 @@ use crate::progress::OpContext;
 use crate::scan::IgnoreRules;
 use crate::state::activity::NewActivity;
 use crate::state::folders::{LinkedFolder, NewFolder};
+
+/// `meta` key of the global automatic sync switch (`on` / `off`; missing = on).
+const AUTO_SYNC_KEY: &str = "auto_sync";
+/// Allowed quiet periods, in seconds.
+pub const QUIET_SECS: RangeInclusive<u32> = 5..=3600;
+/// Longest associated process name, in characters.
+pub const MAX_PROCESS_NAME: usize = 255;
+
+/// A folder's automatic sync settings. The engine only stores them: the desktop app
+/// schedules the runs (always through [`Engine::sync_with`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+pub struct AutoSyncSettings {
+    pub enabled: bool,
+    /// Seconds without file changes before a run ([`QUIET_SECS`]).
+    pub quiet_secs: u32,
+    /// The executable name of the program that uses the folder (e.g. `game.exe`):
+    /// trimmed, 1..=255 characters, no path separators or control characters. Empty or
+    /// `None` clears it.
+    pub process_name: Option<String>,
+}
+
+impl AutoSyncSettings {
+    /// The process name to store (`None` when cleared).
+    fn validated_process(&self) -> Result<Option<String>> {
+        let Some(name) = self.process_name.as_deref().map(str::trim) else {
+            return Ok(None);
+        };
+        if name.is_empty() {
+            return Ok(None);
+        }
+        if name.chars().count() > MAX_PROCESS_NAME
+            || name.contains(['/', '\\'])
+            || name.chars().any(char::is_control)
+        {
+            return Err(Error::InvalidInput(format!(
+                "process name {name:?}: an executable name, at most {MAX_PROCESS_NAME} \
+                 characters, without path separators"
+            )));
+        }
+        Ok(Some(name.to_owned()))
+    }
+}
 
 impl Engine {
     /// Every linked folder.
@@ -130,6 +180,38 @@ impl Engine {
         self.folder(id)?;
         self.db().set_paused(id, paused)?;
         self.folder(id)
+    }
+
+    /// Changes a folder's automatic sync settings (validated: see [`AutoSyncSettings`]).
+    pub fn set_auto_sync(&self, id: i64, settings: &AutoSyncSettings) -> Result<LinkedFolder> {
+        let process = settings.validated_process()?;
+        if !QUIET_SECS.contains(&settings.quiet_secs) {
+            return Err(Error::InvalidInput(format!(
+                "quiet period {} s: allowed {}..={} s",
+                settings.quiet_secs,
+                QUIET_SECS.start(),
+                QUIET_SECS.end()
+            )));
+        }
+        self.folder(id)?;
+        self.db().set_auto_sync(
+            id,
+            settings.enabled,
+            settings.quiet_secs,
+            process.as_deref(),
+        )?;
+        self.folder(id)
+    }
+
+    /// Whether automatic sync is on for this device (the global switch; default on).
+    pub fn auto_sync_enabled(&self) -> Result<bool> {
+        Ok(self.db().meta(AUTO_SYNC_KEY)?.as_deref() != Some("off"))
+    }
+
+    /// Turns automatic sync on or off for every folder of this device.
+    pub fn set_auto_sync_enabled(&self, enabled: bool) -> Result<()> {
+        self.db()
+            .set_meta(AUTO_SYNC_KEY, if enabled { "on" } else { "off" })
     }
 
     /// Refreshes the cached scope and folder names (and emoji) from the server.

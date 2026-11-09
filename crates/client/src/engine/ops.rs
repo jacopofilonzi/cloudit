@@ -12,6 +12,13 @@
 //!   [`Engine::keep_server`] or [`Engine::decide_later`]. Conflicts made by other
 //!   devices (`server_conflict`) can be decided with the same two calls.
 //!
+//! [`Engine::sync_with`] takes [`SyncOptions`]: with `allow_pull: false` (the desktop
+//! app, while the program using the folder runs) a run that would apply the head
+//! (`remote_changes`) or ask for a decision (`conflict`) stops before touching anything,
+//! locally or on the server, and answers [`SyncOutcome::Deferred`]; pushes still happen.
+//! The choice is made under the folder lock on the same examination that would act, so
+//! nothing slips in between.
+//!
 //! **The safety rule** is enforced where files are replaced: before a pull, every local
 //! file it would overwrite or delete must have content stored on the server (in the
 //! head, in the base if that snapshot still exists, or in this device's pending
@@ -55,6 +62,22 @@ pub enum SyncOutcome {
     /// Both sides changed: the local state is stored as this conflict snapshot; the
     /// user decides.
     NeedsDecision { conflict_id: String },
+    /// [`SyncOptions::allow_pull`] was off and the folder needs a pull or a conflict
+    /// decision: nothing was done (the status tells which).
+    Deferred,
+}
+
+/// How [`Engine::sync_with`] may act.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SyncOptions {
+    /// May apply the head locally and start a conflict decision (default: yes).
+    pub allow_pull: bool,
+}
+
+impl Default for SyncOptions {
+    fn default() -> Self {
+        Self { allow_pull: true }
+    }
 }
 
 /// The outcome of an operation and the folder's status after it.
@@ -192,12 +215,26 @@ impl Engine {
 
     /// Brings a folder in sync (see the module docs). Refused while paused.
     pub async fn sync(&self, id: i64, ctx: &OpContext) -> Result<SyncReport> {
+        self.sync_with(id, SyncOptions::default(), ctx).await
+    }
+
+    /// [`Engine::sync`] with options (see the module docs). Refused while paused.
+    pub async fn sync_with(
+        &self,
+        id: i64,
+        options: SyncOptions,
+        ctx: &OpContext,
+    ) -> Result<SyncReport> {
         let _guard = self.lock(id).await?;
         let link = self.folder(id)?;
         if link.paused {
             return Err(Error::Paused);
         }
-        self.recorded(&link, "sync", self.sync_locked(&link, ctx, true).await)
+        self.recorded(
+            &link,
+            "sync",
+            self.sync_locked(&link, options, ctx, true).await,
+        )
     }
 
     /// "Keep this device's version": makes the conflict snapshot (default: this
@@ -223,7 +260,8 @@ impl Engine {
             }
             self.db().set_paused(link.id, false)?;
             let link = self.folder(id)?;
-            self.sync_locked(&link, ctx, true).await
+            self.sync_locked(&link, SyncOptions::default(), ctx, true)
+                .await
         }
         .await;
         self.recorded(&link, "keep_local", result)
@@ -301,6 +339,7 @@ impl Engine {
     async fn sync_locked(
         &self,
         link: &LinkedFolder,
+        options: SyncOptions,
         ctx: &OpContext,
         retry: bool,
     ) -> Result<SyncReport> {
@@ -315,6 +354,20 @@ impl Engine {
                 });
             }
         };
+        if !options.allow_pull
+            && matches!(
+                examined.status.state,
+                SyncState::RemoteChanges | SyncState::Conflict
+            )
+        {
+            // Nothing touched: the caller runs again when pulling is allowed.
+            self.db()
+                .set_last_state(link.id, examined.status.state, None)?;
+            return Ok(SyncReport {
+                outcome: SyncOutcome::Deferred,
+                status: examined.status,
+            });
+        }
         let outcome = match examined.status.state {
             SyncState::Error => {
                 return Err(Error::ScanProblems(examined.status.problems.clone()));
@@ -334,7 +387,7 @@ impl Engine {
             SyncState::LocalChanges => match self.push(&f, &examined).await {
                 Err(e) if retry && e.kind() == ErrorKind::Conflict => {
                     // The head moved meanwhile: look again (now a conflict, or a pull).
-                    return Box::pin(self.sync_locked(link, ctx, false)).await;
+                    return Box::pin(self.sync_locked(link, options, ctx, false)).await;
                 }
                 other => other?,
             },
@@ -368,7 +421,7 @@ impl Engine {
         match &result {
             Ok(report) => {
                 let (files, bytes, snapshot) = match &report.outcome {
-                    SyncOutcome::UpToDate => (0, 0, None),
+                    SyncOutcome::UpToDate | SyncOutcome::Deferred => (0, 0, None),
                     SyncOutcome::Pushed {
                         snapshot_id,
                         uploaded_chunks,
@@ -391,7 +444,7 @@ impl Engine {
                     (SyncOutcome::Pushed { .. }, "sync") => "push",
                     (SyncOutcome::Pulled { .. }, "sync") => "pull",
                     (SyncOutcome::NeedsDecision { .. }, "sync") => "conflict",
-                    (SyncOutcome::UpToDate, "sync") => return result,
+                    (SyncOutcome::UpToDate | SyncOutcome::Deferred, "sync") => return result,
                     _ => action,
                 };
                 self.log(&NewActivity {
@@ -407,7 +460,8 @@ impl Engine {
             }
             Err(error) => {
                 let message = error.to_string();
-                tracing::warn!(folder = link.id, action, %message, "sync operation failed");
+                // Callers log failures (an automatic retry loop logs once per streak).
+                tracing::debug!(folder = link.id, action, %message, "sync operation failed");
                 if let Error::LocalChanged { path } = error {
                     // Its cached chunks may be stale (rewritten with the same size and
                     // mtime): hash it again at the next scan.

@@ -7,7 +7,7 @@
 //! a released one); a database with a higher version than this build knows (a
 //! downgrade) is refused.
 //!
-//! Tables (v1):
+//! Tables (v1, plus the columns of v2):
 //!
 //! - `account`: the one signed-in account (`id = 1`): server URL, user, device, where
 //!   the token is stored (`keyring` | `file`) and when it expires. The token itself is
@@ -15,12 +15,14 @@
 //! - `folders`: linked folders: local path, server scope / folder ids and cached names,
 //!   ignore patterns (one per line), paused flag, the **base** (last synced snapshot id
 //!   and its stored manifest), the pending conflict snapshot this device uploaded (id and
-//!   manifest), a cache of the last downloaded head manifest, and the last status.
+//!   manifest), a cache of the last downloaded head manifest, and the last status;
+//!   v2 adds the automatic sync settings (`auto_sync`, `quiet_secs`, `process_name`).
 //! - `file_index`: per folder, relative path → size, mtime, executable, chunk list: lets
 //!   the scanner skip hashing files whose size and mtime didn't change. A cache only:
 //!   deleting it costs a re-hash.
 //! - `activity`: a bounded log of operations (newest [`activity::MAX_ROWS`] kept).
-//! - `meta`: key/value pairs (`last_account`: the server + user the folder links belong to).
+//! - `meta`: key/value pairs (`last_account`: the server + user the folder links belong
+//!   to; `auto_sync`: `on` / `off`, the global automatic sync switch, missing = on).
 
 pub mod account;
 pub mod activity;
@@ -155,5 +157,34 @@ mod tests {
         drop(db);
         let err = Db::open(&path).unwrap_err();
         assert_eq!(err.kind(), crate::ErrorKind::State);
+    }
+
+    #[test]
+    fn v2_gives_existing_links_manual_sync() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(migrations::MIGRATIONS[0]).unwrap();
+            conn.pragma_update(None, "user_version", 1).unwrap();
+            conn.execute(
+                "INSERT INTO folders (local_path, scope_id, folder_id, scope_name, folder_name,
+                                      ignore_patterns, paused, base_snapshot_id, created_at)
+                 VALUES ('/saves', 's1', 'f1', 'Games', 'Saves', '*.tmp', 1, 'snap1',
+                         '2026-01-01T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        }
+        let db = Db::open(&path).unwrap();
+        let folders = db.folders().unwrap();
+        assert_eq!(folders.len(), 1);
+        let link = &folders[0];
+        assert_eq!(link.ignore, vec!["*.tmp".to_owned()]);
+        assert!(link.paused);
+        assert_eq!(link.base_snapshot_id.as_deref(), Some("snap1"));
+        assert!(!link.auto_sync);
+        assert_eq!(link.quiet_secs, 30);
+        assert_eq!(link.process_name, None);
     }
 }

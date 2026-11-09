@@ -6,9 +6,11 @@
 //!   [`Engine::create_scope`], [`Engine::create_folder`];
 //! - links (`linking.rs`): [`Engine::link_folder`], [`Engine::create_and_link`],
 //!   [`Engine::unlink`], [`Engine::relocate`], [`Engine::set_ignore`],
-//!   [`Engine::set_paused`], [`Engine::folders`], [`Engine::refresh_names`];
-//! - sync (`ops.rs`): [`Engine::status`], [`Engine::sync`], and the conflict decisions
-//!   [`Engine::keep_local`], [`Engine::keep_server`], [`Engine::decide_later`];
+//!   [`Engine::set_paused`], [`Engine::set_auto_sync`] / [`Engine::set_auto_sync_enabled`],
+//!   [`Engine::folders`], [`Engine::refresh_names`];
+//! - sync (`ops.rs`): [`Engine::status`], [`Engine::sync`] / [`Engine::sync_with`], and the
+//!   conflict decisions [`Engine::keep_local`], [`Engine::keep_server`],
+//!   [`Engine::decide_later`];
 //! - [`Engine::activity`]; events: [`crate::events::follow`].
 //!
 //! `Engine` is cheap to clone (an `Arc`) and `Send + Sync`. Operations on one linked
@@ -18,7 +20,8 @@
 mod linking;
 mod ops;
 
-pub use ops::{SyncOutcome, SyncReport};
+pub use linking::{AutoSyncSettings, MAX_PROCESS_NAME, QUIET_SECS};
+pub use ops::{SyncOptions, SyncOutcome, SyncReport};
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

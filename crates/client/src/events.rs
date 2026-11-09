@@ -3,9 +3,12 @@
 //! [`follow`] runs a task that holds `GET /api/v1/events` (SSE) open and turns it into
 //! [`RemoteEvent`]s on a channel. Contract (STRUCTURE.md "Real-time events"): on every
 //! (re)connect the heads are fetched from `GET /sync/heads` and compared with what the
-//! follower knew (initially: each linked folder's base), then events are applied; with
-//! `realtime: local` (no shared fan-out between server instances) `/sync/heads` is also
-//! polled every [`POLL_INTERVAL`] with `If-None-Match`. A dropped stream reconnects
+//! follower knew (initially: each linked folder's base), then events are applied, and
+//! `/sync/heads` is also polled every [`POLL_INTERVAL`] with `If-None-Match`, in both
+//! real-time modes: with `realtime: local` (no shared fan-out between server instances)
+//! it is the only way to see other instances' commits, and with `shared` it is the safety
+//! net for an event lost on the way (a failed Redis publish on one instance is dropped,
+//! not retried). A 304 costs little. A dropped stream reconnects
 //! with exponential backoff (1 s to 60 s). A refused token (`unauthorized`, blocked
 //! account) ends the follower with [`RemoteEvent::SignedOut`].
 //!
@@ -24,7 +27,7 @@ use crate::api::Api;
 use crate::error::{Error, ErrorKind, Result};
 use crate::progress::{CancellationToken, OpContext};
 
-/// Heads polling interval while the server's real-time mode is `local`.
+/// Heads polling interval (in both real-time modes: see the module docs).
 pub const POLL_INTERVAL: Duration = Duration::from_secs(300);
 /// Longest reconnect backoff.
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
@@ -156,13 +159,12 @@ impl Follower {
         let mut line: Vec<u8> = Vec::new();
         let mut event = String::new();
         let mut data = String::new();
-        let mut realtime = RealtimeMode::Local;
         let mut poll = tokio::time::interval(POLL_INTERVAL);
         poll.tick().await;
         loop {
             let chunk = tokio::select! {
                 () = self.ctx.cancel_token().cancelled() => return Ok(()),
-                _ = poll.tick(), if realtime == RealtimeMode::Local => {
+                _ = poll.tick() => {
                     self.resync(api).await?;
                     continue;
                 }
@@ -185,10 +187,7 @@ impl Follower {
                 let text = String::from_utf8_lossy(&line).into_owned();
                 line.clear();
                 if text.is_empty() {
-                    if !event.is_empty()
-                        && let Some(mode) = self.dispatch(api, &event, &data).await?
-                    {
-                        realtime = mode;
+                    if !event.is_empty() && self.dispatch(api, &event, &data).await?.is_some() {
                         *backoff = Duration::from_secs(1);
                     }
                     event.clear();
