@@ -47,8 +47,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$TAG" --draft --verify-tag --title "cloudit $TAG" --generate-notes
-          id=$(gh api "repos/${{ github.repository }}/releases" --jq ".[] | select(.tag_name == \"$TAG\" and .draft) | .id" | head -n 1)
+          # Created through the API so the id comes from the answer itself (a draft is
+          # not reliably listed right after its creation).
+          id=$(gh api "repos/${{ github.repository }}/releases" \
+            -f tag_name="$TAG" -f name="cloudit $TAG" \
+            -F draft=true -F generate_release_notes=true --jq .id)
           test -n "$id"
           echo "id=$id" >> "$GITHUB_OUTPUT"
 
