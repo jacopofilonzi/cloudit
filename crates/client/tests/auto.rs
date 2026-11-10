@@ -74,6 +74,38 @@ async fn auto_sync_settings_are_validated_and_kept() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn device_settings_survive_restarts_and_the_pause_ends_by_itself() {
+    let server = Server::start().await;
+    let a = client(&server, "Desk").await;
+    assert_eq!(a.engine.paused_until().unwrap(), None);
+    assert!(a.engine.notifications_enabled().unwrap());
+    assert!(!a.engine.tray_notice_shown().unwrap());
+
+    // Stored with second precision.
+    let until = chrono::Utc::now() + chrono::Duration::hours(1);
+    let until = chrono::DateTime::from_timestamp(until.timestamp(), 0).unwrap();
+    a.engine.set_paused_until(Some(until)).unwrap();
+    a.engine.set_notifications_enabled(false).unwrap();
+    a.engine.set_tray_notice_shown().unwrap();
+    let Client { engine, data } = a;
+    drop(engine);
+    let engine = open_engine(data.path(), None).await;
+    assert_eq!(engine.paused_until().unwrap(), Some(until));
+    assert!(!engine.notifications_enabled().unwrap());
+    assert!(engine.tray_notice_shown().unwrap());
+
+    // An end in the past is no pause; resuming clears it.
+    let past = chrono::Utc::now() - chrono::Duration::minutes(1);
+    engine.set_paused_until(Some(past)).unwrap();
+    assert_eq!(engine.paused_until().unwrap(), None);
+    engine.set_paused_until(Some(until)).unwrap();
+    engine.set_paused_until(None).unwrap();
+    assert_eq!(engine.paused_until().unwrap(), None);
+    engine.set_notifications_enabled(true).unwrap();
+    assert!(engine.notifications_enabled().unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn without_pulls_local_changes_are_still_pushed() {
     let server = Server::start().await;
     let a = client(&server, "Desk").await;

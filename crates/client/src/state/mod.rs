@@ -124,6 +124,11 @@ impl Db {
             .map(drop)
         })
     }
+
+    /// Removes a `meta` value.
+    pub fn delete_meta(&self, key: &str) -> Result<()> {
+        self.with(|c| c.execute("DELETE FROM meta WHERE key = ?1", [key]).map(drop))
+    }
 }
 
 /// Now as RFC 3339 UTC with seconds (`2026-01-31T12:00:00Z`), like the API.

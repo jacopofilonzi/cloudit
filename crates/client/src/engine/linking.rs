@@ -11,11 +11,14 @@
 //!
 //! Also the link's settings: ignore patterns, pause, and the automatic sync settings
 //! ([`AutoSyncSettings`], plus the device-wide switch in `meta`), which the engine only
-//! stores and validates.
+//! stores and validates. The other device-wide settings of the desktop app live in
+//! `meta` too: the global pause ("paused until"), the notifications switch and whether
+//! the "still running in the tray" notice was shown.
 
 use std::ops::RangeInclusive;
 use std::path::Path;
 
+use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::Engine;
@@ -28,6 +31,12 @@ use crate::state::folders::{LinkedFolder, NewFolder};
 
 /// `meta` key of the global automatic sync switch (`on` / `off`; missing = on).
 const AUTO_SYNC_KEY: &str = "auto_sync";
+/// `meta` key of the global pause: its RFC 3339 UTC end (missing = not paused).
+const PAUSED_UNTIL_KEY: &str = "paused_until";
+/// `meta` key of the desktop notifications switch (`on` / `off`; missing = on).
+const NOTIFICATIONS_KEY: &str = "notifications";
+/// `meta` key set once the "still running in the tray" notice was shown.
+const TRAY_NOTICE_KEY: &str = "tray_notice_shown";
 /// Allowed quiet periods, in seconds.
 pub const QUIET_SECS: RangeInclusive<u32> = 5..=3600;
 /// Longest associated process name, in characters.
@@ -212,6 +221,54 @@ impl Engine {
     pub fn set_auto_sync_enabled(&self, enabled: bool) -> Result<()> {
         self.db()
             .set_meta(AUTO_SYNC_KEY, if enabled { "on" } else { "off" })
+    }
+
+    /// When the global pause of automatic sync ends (`None`: not paused). An end in the
+    /// past reads as not paused, so a pause ends by itself, even while the app is closed.
+    pub fn paused_until(&self) -> Result<Option<DateTime<Utc>>> {
+        let Some(value) = self.db().meta(PAUSED_UNTIL_KEY)? else {
+            return Ok(None);
+        };
+        // A value this code never writes counts as no pause rather than an error that
+        // would block the app's start.
+        let Ok(until) = DateTime::parse_from_rfc3339(&value) else {
+            tracing::warn!(%value, "ignoring an unreadable paused_until");
+            return Ok(None);
+        };
+        let until = until.with_timezone(&Utc);
+        Ok((until > Utc::now()).then_some(until))
+    }
+
+    /// Pauses automatic sync on this device until `until`, or resumes it (`None`).
+    pub fn set_paused_until(&self, until: Option<DateTime<Utc>>) -> Result<()> {
+        match until {
+            Some(until) => self.db().set_meta(
+                PAUSED_UNTIL_KEY,
+                &until.to_rfc3339_opts(SecondsFormat::Secs, true),
+            ),
+            None => self.db().delete_meta(PAUSED_UNTIL_KEY),
+        }
+    }
+
+    /// Whether the desktop app may show notifications (default on).
+    pub fn notifications_enabled(&self) -> Result<bool> {
+        Ok(self.db().meta(NOTIFICATIONS_KEY)?.as_deref() != Some("off"))
+    }
+
+    /// Turns the desktop notifications on or off for this device.
+    pub fn set_notifications_enabled(&self, enabled: bool) -> Result<()> {
+        self.db()
+            .set_meta(NOTIFICATIONS_KEY, if enabled { "on" } else { "off" })
+    }
+
+    /// Whether the desktop app already said that it keeps running in the tray.
+    pub fn tray_notice_shown(&self) -> Result<bool> {
+        Ok(self.db().meta(TRAY_NOTICE_KEY)?.is_some())
+    }
+
+    /// Remembers that the tray notice was shown (it is shown once per device).
+    pub fn set_tray_notice_shown(&self) -> Result<()> {
+        self.db().set_meta(TRAY_NOTICE_KEY, "yes")
     }
 
     /// Refreshes the cached scope and folder names (and emoji) from the server.
