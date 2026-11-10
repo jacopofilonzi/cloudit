@@ -22,7 +22,6 @@ export const desktopEn = {
   'desktop.welcome.device': 'Name of this computer',
   'desktop.welcome.device_hint': 'Shown in your devices list on the web.',
   'desktop.welcome.submit': 'Sign in with the browser',
-  'desktop.welcome.submit_hint': 'Your browser opens: sign in and approve this computer.',
   'desktop.welcome.ended':
     'This computer is no longer signed in. Sign in again to keep your folders in sync.',
   'desktop.waiting.title': 'Finish signing in with your browser',

@@ -90,7 +90,6 @@
         <Button type="submit" variant="primary" size="lg" block loading={starting}>
           {t('desktop.welcome.submit')}
         </Button>
-        <p class="text-center text-xs text-muted">{t('desktop.welcome.submit_hint')}</p>
       </form>
     {:else}
       <div class="text-center">

@@ -24,7 +24,6 @@ export const desktopIt: { readonly [K in DesktopKey]: string } = {
   'desktop.welcome.device': 'Nome di questo PC',
   'desktop.welcome.device_hint': "Compare nell'elenco dei dispositivi sul web.",
   'desktop.welcome.submit': 'Accedi con il browser',
-  'desktop.welcome.submit_hint': 'Si apre il browser: accedi e approva questo PC.',
   'desktop.welcome.ended':
     'Questo PC non è più connesso. Accedi di nuovo per tenere sincronizzate le cartelle.',
   'desktop.waiting.title': "Completa l'accesso nel browser",
