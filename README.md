@@ -56,7 +56,7 @@ starts as root only to give `./data` to the runtime user (`PUID`/`PGID`, default
 drops privileges; set `PUID`/`PGID` in `.env` to your own `id -u`/`id -g` to own the files yourself.
 
 The quick start builds the image from the sources. **In production** use the released image
-(`ghcr.io/jacopofilonzi/cloudit`, public) through [`docker-compose.prod.yml`](docker-compose.prod.yml):
+(`ghcr.io/jacopofilonzi/cloudit`, public, linux/amd64 and linux/arm64) through [`docker-compose.prod.yml`](docker-compose.prod.yml):
 
 ```sh
 cp .env.example .env        # set PUBLIC_URL (and TRUST_PROXY_HEADERS=true behind a proxy)
