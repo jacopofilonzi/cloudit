@@ -28,13 +28,34 @@
     "withGlobalTauri": false
   },
   "bundle": {
-    "active": false,
+    "active": true,
+    "targets": ["nsis", "appimage", "deb"],
+    "category": "Utility",
+    "shortDescription": "Folder sync with your own cloudit server",
+    "longDescription": "cloudit keeps folders (such as game saves) in sync with a self-hosted cloudit server, with versioned history and conflict handling.",
+    "homepage": "https://github.com/jacopofilonzi/cloudit",
+    "license": "Apache-2.0",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["English", "Italian"],
+        "displayLanguageSelector": false
+      }
+    },
+    "linux": {
+      "deb": {
+        "depends": ["libayatana-appindicator3-1"]
+      }
+    }
   }
 }

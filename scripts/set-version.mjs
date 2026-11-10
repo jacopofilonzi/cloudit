@@ -1,7 +1,7 @@
 // Sets the project version everywhere it lives:
 // - `[workspace.package] version` in Cargo.toml (all crates inherit it);
 // - `version` in package.json (root, apps/*, packages/*);
-// - (later) `version` in apps/desktop/src-tauri/tauri.conf.json.
+// - `version` in apps/desktop/src-tauri/tauri.conf.json (the installers and the updater).
 //
 // Usage: node scripts/set-version.mjs x.y.z   (or `make version V=x.y.z`)
 import { spawnSync } from 'node:child_process';

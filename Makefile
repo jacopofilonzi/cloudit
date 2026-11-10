@@ -3,7 +3,7 @@
 # Targets documented with `## ` show up in `make help`.
 
 .DEFAULT_GOAL := help
-.PHONY: help install dev dev-server dev-web dev-desktop build-desktop seed types fmt fmt-check lint test check check-types build docker up down up-ha down-ha test-ha clean version
+.PHONY: help install dev dev-server dev-web dev-desktop build-desktop bundle-desktop seed types fmt fmt-check lint test check check-types build docker up down up-ha down-ha test-ha clean version
 
 IMAGE ?= cloudit:dev
 
@@ -27,6 +27,9 @@ dev-desktop: ## Run the desktop app with hot reload (tauri dev; one instance at 
 
 build-desktop: ## Build the desktop release binary (no installer): target/release/cloudit-desktop
 	cd apps/desktop && pnpm tauri build --no-bundle
+
+bundle-desktop: ## Build the desktop installers for this OS (Windows: NSIS; Linux: AppImage + deb) under target/release/bundle
+	cd apps/desktop && pnpm tauri build
 
 seed: ## Fill a LOCAL running server with demo data (SEED_ARGS="--url … --db … --setup-token …")
 	cargo run --locked -p cloudit-server --example seed -- $(SEED_ARGS)
