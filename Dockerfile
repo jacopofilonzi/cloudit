@@ -21,6 +21,8 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY .cargo .cargo
 COPY crates crates
+# A workspace member: cargo must read its manifest even though only the server is built.
+COPY apps/desktop/src-tauri apps/desktop/src-tauri
 # Cache mounts keep the registry and compiled dependencies between builds.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
