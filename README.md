@@ -1,7 +1,5 @@
 # cloudit
 
-> Provisional name.
-
 cloudit is a self-hosted client-server folder sync service: point the desktop client at a
 folder (game saves, configs, documents) and it keeps versioned snapshots of it on your own
 server, synced across your devices. Folders are grouped in per-user scopes that can be shared
