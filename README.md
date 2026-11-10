@@ -5,20 +5,18 @@ folder (game saves, configs, documents) and it keeps versioned snapshots of it o
 server, synced across your devices. Folders are grouped in per-user scopes that can be shared
 with other users.
 
-**Status: early development.** The server has its storage infrastructure (database, blob
-storage, optional Redis), the account API (setup, password accounts, invites, desktop device
-login, admin, sign-in with OIDC / GitHub / Discord), scopes, folders, sharing and the trash,
-the sync protocol (chunk upload and download, versioned snapshots with conflict
-detection, history, restore, ZIP download) with storage quotas. The web UI has its sign-in
-pages and the app pages (scopes, folders, history, sharing, devices, trash, profile,
-administration). The desktop app (Windows, Linux) links local folders and syncs them by hand
-or automatically (after the folder stays still, at startup, on server changes, when the
-game using it closes; conflicts are always left to you). It lives in the tray (folders that need
-you, sync all, "pause for 1 hour"; closing the window keeps it running, Quit in the tray menu exits),
-can start with the system and notifies conflicts and sync errors (never finished syncs; a switch in
-its settings turns them off). On Linux the tray needs an AppIndicator host and
-`libayatana-appindicator3-1`. It installs from the GitHub releases (Windows installer, Linux
-AppImage or .deb, below) and updates itself when you say so. Don't use it for real data yet.
+**Status: early development (0.1.x releases).** Don't use it for real data yet.
+
+- **Server** (Linux, Docker): one container with SQLite and local files, or several instances
+  with PostgreSQL and S3-compatible storage. Password accounts, invites, admin approval of new
+  accounts, sign-in with OIDC / GitHub / Discord, storage quotas, maintenance jobs.
+- **Sync**: only new content is uploaded, every sync is an immutable version, two devices
+  changing the same folder get a conflict instead of overwriting each other. History, restore,
+  pinned and labelled versions, ZIP download.
+- **Web UI** (English, Italian; light and dark): scopes, folders, history, file lists, conflict
+  comparison, sharing, devices, trash, profile and the server administration.
+- **Desktop app** (Windows, Linux): links local folders and syncs them by hand or automatically,
+  from the tray, with installers and in-app updates.
 
 ## Desktop app
 
@@ -33,6 +31,16 @@ Download it from the [latest release](https://github.com/jacopofilonzi/cloudit/r
   (`sudo apt install ./cloudit_<version>_amd64.deb`; it depends on `libwebkit2gtk-4.1-0` and
   `libayatana-appindicator3-1`). The tray needs an AppIndicator host (most desktops; GNOME needs
   the AppIndicator extension).
+
+**Automatic sync** is opt-in per folder. A folder syncs at startup, on server changes and once
+its files have stayed still for a quiet period (10 seconds to 5 minutes). If you associate a
+program with it (e.g. a game), the folder doesn't sync at all while the program runs and syncs
+once after it closes. Conflicts are always left to you.
+
+**Tray**: closing the window keeps the app running; Quit in the tray menu exits. The menu lists
+the folders that need you, syncs everything and pauses automatic sync for an hour. The app can
+start with the system and notifies conflicts and sync errors, never finished syncs (a switch
+in its settings turns notifications off).
 
 **Updates**: the app looks for a new version a few seconds after it starts and every 6 hours.
 It never updates on its own: a banner (and a tray item) offers **Update**, which waits for the
@@ -74,6 +82,7 @@ docker compose logs cloudit | grep setup_token
 docker compose exec cloudit cloudit-server setup-token   # prints it again
 ```
 
+With the production compose file add `-f docker-compose.prod.yml` after `docker compose`.
 Every instance of an HA deployment prints the same token. Use it to create the first admin
 account; it stops working once setup is done. Until then the API answers `setup_required`.
 To choose the token yourself (automated deployments) set `SETUP_TOKEN` (at least 16 characters).
@@ -109,8 +118,8 @@ providers; `auto` = active at once).
   approval), the first admin, accounts that existed before this feature, and an OIDC account
   that is in one of the provider's **admin groups** (the provider vouches for it). Linking
   a provider to an existing account never needs approval.
-- Admins see the pending accounts in `GET /api/v1/admin/users?approval_status=pending` (and
-  their number in `GET /api/v1/admin/summary`), then `POST
+- Admins decide in the web administration (Users, filter Pending; the sidebar shows how many
+  are waiting). Scripts use `GET /api/v1/admin/users?approval_status=pending`, then `POST
   /api/v1/admin/users/<id>/approve` or `/reject`.
 - **Rejecting** is a ban: the account can't sign in by any method, its web sessions are
   deleted, its desktop devices stop working and its provider accounts can't sign up again.
@@ -139,12 +148,10 @@ Only the owner renames the scope, moves it to the trash, and adds, changes or re
 members; any member can leave. Server admins have no access to other users' scopes.
 
 Names are unique, ignoring case, among a user's scopes and among a scope's folders.
-Deleting a scope or folder moves it to the **trash** (`GET /api/v1/trash`), where it can be
+Deleting a scope or folder moves it to the **trash** (the Trash page of the web UI), where it can be
 restored (under another name if its old one was taken meanwhile) for `trash_retention_days`
 (admin setting, default 30); after that it is deleted for good. Owners (scopes) and scope
-admins (folders) can also delete trashed items for good right away
-(`DELETE /api/v1/trash/scopes/{id}`, `DELETE /api/v1/trash/folders/{id}`,
-`POST /api/v1/trash/empty`). A folder keeps by default the last 20 versions and at most 5 per
+admins (folders) can also delete trashed items for good right away. A folder keeps by default the last 20 versions and at most 5 per
 UTC day (admin settings `retention_max_versions`, `retention_max_per_day`; `0` =
 unlimited), overridable per folder; the current version, pinned versions and unresolved
 conflicts are always kept.
@@ -160,9 +167,8 @@ pinned, labelled or downloaded as a ZIP.
 
 **Storage quotas** count the stored bytes of every scope a user owns (shared scopes count
 against their owner, also for members' uploads; scopes in the trash still count). Admins set
-a server default (`default_quota_bytes` in `PATCH /api/v1/admin/settings`, unlimited by
-default) and per-user quotas (`PATCH /api/v1/admin/users/{id}` `{"quota_bytes": …}`);
-`GET /api/v1/me/usage` shows a user's usage. Space is given back when old versions are
+a server default (unlimited until they do) and per-user quotas in the web administration
+(Settings and Users); each user sees their usage in the sidebar and in the profile. Space is given back when old versions are
 deleted (retention, trash) and the garbage collector removes the data nothing uses any more
 (after `GC_GRACE`, default 24 hours).
 
@@ -182,15 +188,14 @@ right after a permanent delete), **cleanup** (expired sessions, codes and tokens
 **update_check** (daily: the latest cloudit release on GitHub; admins see a notice in the
 administration when the server is older; `UPDATE_CHECK=false` never contacts GitHub,
 `UPDATE_CHECK_URL` points it elsewhere).
-Admins see their runs in `GET /api/v1/admin/jobs` and can start one with
-`POST /api/v1/admin/jobs/{name}/run`. `JOBS_ENABLED=false` keeps an instance out of the
+Admins see their runs and can start one in the web administration (Maintenance).
+`JOBS_ENABLED=false` keeps an instance out of the
 scheduling; `GC_GRACE` sets how old unused data must be before it is deleted.
 
 ## Sign-in providers (OIDC, GitHub, Discord)
 
 Besides email and password (always available), users can sign in with identity providers that
-admins configure at runtime through the admin API (`/api/v1/admin/providers`; the web pages
-come with the UI milestone). Presets: Google, Microsoft (Entra ID), GitLab (gitlab.com or
+admins configure at runtime in the web administration (Sign-in providers). Presets: Google, Microsoft (Entra ID), GitLab (gitlab.com or
 self-hosted), authentik, Keycloak, Authelia, ZITADEL, Pocket ID, any OpenID Connect provider,
 GitHub and Discord. Apple is not supported yet.
 
@@ -200,7 +205,7 @@ GitHub and Discord. Apple is not supported yet.
 2. At the provider, create an OAuth/OIDC client with the redirect (callback) URL
    `<public URL>/api/v1/auth/oauth/<provider id>/callback`, where `<provider id>` is the id you
    give the provider in cloudit (e.g. `https://sync.example.com/api/v1/auth/oauth/google/callback`).
-   The admin API also shows it as `callback_url`.
+   The provider form in the administration shows it too.
 3. Add the provider in cloudit with its client id and secret (and the issuer URL for
    self-hosted ones). For OIDC the server fetches the discovery document right away and
    refuses the provider if that fails.
@@ -275,14 +280,17 @@ on a private network, leave presigning off: the server proxies the bytes.
 
 ## Development
 
-Requirements: Rust (stable), Node.js 24+, pnpm (version pinned in `package.json`), GNU make;
-Docker for the image.
+Requirements: Rust (stable), a C compiler, Node.js 24+, pnpm (version pinned in
+`package.json`), GNU make; Docker for the image and `make test-ha`. Building the desktop app on
+Linux also needs `libwebkit2gtk-4.1-dev librsvg2-dev libsoup-3.0-dev libgtk-3-dev
+libayatana-appindicator3-dev`.
 
 ```sh
 make install   # JS dependencies
 make dev       # server on :8080 + web dev server on :5173 (proxies /api)
-make check     # formatting, lints, tests, type freshness, web build
+make check     # formatting, lints, tests, type freshness, web and desktop UI builds
 make test-ha   # server tests against PostgreSQL, Garage and Valkey in Docker
+make seed      # demo data on a local server (see STRUCTURE.md, "Dev seed")
 make help      # every target
 ```
 
@@ -313,10 +321,20 @@ The server applies database migrations when it starts. With SQLite it backs up t
 first and refuses to start if the backup fails. With PostgreSQL take a backup yourself
 (`pg_dump`) before upgrading.
 
-- **Next release (update check):** nothing required. A new daily job `update_check` asks the
+- **0.1.3:** nothing required. A desktop folder with an associated program no longer syncs at
+  all while the program runs; before, it kept uploading and only held back downloads.
+- **0.1.2:** check your `.env` if you copied it from `.env.example` before this version: that
+  file had uncommented lines that override the Docker image's paths. Remove `DATA_DIR`,
+  `WEB_DIR` and `LOG_FORMAT` from `.env`. With them the server kept its data in `./data/data`
+  and didn't find the web UI: stop it and move the contents of `./data/data` up to `./data`
+  before restarting.
+
+The notes below apply to development builds older than 0.1.1, the first tagged release.
+
+- **Update check:** nothing required. A new daily job `update_check` asks the
   GitHub API for the latest release (outgoing HTTPS to `api.github.com`); set
   `UPDATE_CHECK=false` to keep the server from contacting it.
-- **Next release (events and jobs):** no manual step is required, but read on. New tables
+- **Events and jobs:** no manual step is required, but read on. New tables
   (`jobs`, `job_runs`, `object_deletions`) and columns (`scopes.purge_requested_at`,
   `folders.purge_requested_at`) are created at startup. The maintenance jobs start with the
   server: the first runs apply **retention** to existing folders (by default only the last
@@ -327,17 +345,17 @@ first and refuses to start if the backup fails. With PostgreSQL take a backup yo
   (default `24h`). A commit whose `parent` names an unknown (e.g. deleted) snapshot now
   answers 409 `conflict` instead of 422. Behind a reverse proxy, make sure
   `/api/v1/events` is not buffered (the server sends `X-Accel-Buffering: no`).
-- **Next release (sync protocol):** nothing required. New tables (`chunks`, `manifests`,
+- **Sync protocol:** nothing required. New tables (`chunks`, `manifests`,
   `snapshots`, `snapshot_chunks`) and columns (`scopes.stored_bytes`, `users.quota_bytes`)
   are created at startup; quotas are unlimited until an admin sets one. Folder responses gain
   `head` and `unresolved_conflicts`; admin user entries gain `used_bytes`, `quota_bytes`,
   `effective_quota_bytes`; error bodies may carry `head_snapshot_id`, `hashes` or `detail`.
   With `S3_PRESIGN=true` clients upload and download chunks directly with S3 (keep
   `S3_PRESIGN_TTL` short).
-- **Next release (scopes and folders):** nothing required. New tables (`scopes`,
+- **Scopes and folders:** nothing required. New tables (`scopes`,
   `scope_members`, `folders`) are created at startup; `GET/PATCH /api/v1/admin/settings`
   gain `retention_max_versions`, `retention_max_per_day` and `trash_retention_days`.
-- **Next release (sign-in providers):** with **PostgreSQL** set `SECRET_KEY` (same value on
+- **Sign-in providers:** with **PostgreSQL** set `SECRET_KEY` (same value on
   every instance, `cloudit-server gen-secret-key`) before upgrading, or the server refuses to
   start. With SQLite nothing is required: the first start writes `<DATA_DIR>/secret.key`;
   back it up with the database. New tables are created at startup. Disabling an account now
