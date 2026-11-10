@@ -53,7 +53,8 @@ repo/
 ├── Dockerfile            stages: web (node, pnpm build) → server (rust, release build) → runtime (debian trixie-slim)
 ├── docker/entrypoint.sh  runs as root: chowns DATA_DIR to PUID:PGID, then setpriv → cloudit-server
 ├── docker/Caddyfile      HA load balancer: round robin over the replicas, health check on /ready
-├── docker-compose.yml    single instance, `./data:/data`, port 8080 (SQLite + fs blobs)
+├── docker-compose.yml    single instance, `./data:/data`, port 8080 (SQLite + fs blobs), built locally
+├── docker-compose.prod.yml production single instance: `ghcr.io/jacopofilonzi/cloudit:${CLOUDIT_VERSION:-latest}`
 ├── docker/garage.toml    Garage config for the HA example, test-ha and CI (example secrets, dev only)
 ├── docker-compose.ha.yml HA example: 2 replicas + Caddy (:8080), postgres:18, Garage
 │                         (dxflrs/garage, single node, creates its bucket), valkey:9; also the

@@ -55,6 +55,18 @@ Then open <http://localhost:8080>. Data lives in `./data` (mounted at `/data`). 
 starts as root only to give `./data` to the runtime user (`PUID`/`PGID`, default `10001`), then
 drops privileges; set `PUID`/`PGID` in `.env` to your own `id -u`/`id -g` to own the files yourself.
 
+The quick start builds the image from the sources. **In production** use the released image
+(`ghcr.io/jacopofilonzi/cloudit`, public) through [`docker-compose.prod.yml`](docker-compose.prod.yml):
+
+```sh
+cp .env.example .env        # set PUBLIC_URL (and TRUST_PROXY_HEADERS=true behind a proxy)
+docker compose -f docker-compose.prod.yml up -d
+```
+
+Tags: `latest`, `X.Y` and `X.Y.Z`; pin one with `CLOUDIT_VERSION` in `.env` (e.g. `0.1`). To
+upgrade: back up `./data`, read the upgrade notes below, then `docker compose -f
+docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d`.
+
 ## First-run setup
 
 On its first start (no accounts yet) the server logs a one-time **setup token** at WARN level:

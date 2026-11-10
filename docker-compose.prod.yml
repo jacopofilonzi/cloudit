@@ -1,0 +1,26 @@
+# Production, single instance: the released image from GitHub Container Registry
+# (built by .github/workflows/release.yml on every vX.Y.Z tag). SQLite database and
+# filesystem blobs under ./data (/data in the container); settings in .env (see
+# .env.example: at least PUBLIC_URL, plus TRUST_PROXY_HEADERS=true behind a reverse proxy).
+#
+#   docker compose -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Image tags: `latest` (newest release), `X.Y` (newest patch of a minor) or `X.Y.Z`
+# (exact). Pin one with CLOUDIT_VERSION in .env (e.g. CLOUDIT_VERSION=0.1) and read the
+# README upgrade notes before moving to a new minor. Back up ./data before upgrading.
+# For several instances (PostgreSQL, S3, Valkey) start from docker-compose.ha.yml.
+services:
+  cloudit:
+    image: ghcr.io/jacopofilonzi/cloudit:${CLOUDIT_VERSION:-latest}
+    restart: unless-stopped
+    ports:
+      # Behind a reverse proxy on the same host, publish on loopback only:
+      # '127.0.0.1:8080:8080'.
+      - '8080:8080'
+    volumes:
+      - ./data:/data
+    env_file:
+      - path: .env
+        required: false
+    stop_grace_period: 30s
