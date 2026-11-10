@@ -1080,7 +1080,7 @@ dependencies = [
 
 [[package]]
 name = "cloudit-client"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "apple-native-keyring-store",
  "axum",
@@ -1114,7 +1114,7 @@ dependencies = [
 
 [[package]]
 name = "cloudit-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "fastcdc",
  "hex",
@@ -1128,7 +1128,7 @@ dependencies = [
 
 [[package]]
 name = "cloudit-desktop"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "chrono",
  "cloudit-client",
@@ -1155,7 +1155,7 @@ dependencies = [
 
 [[package]]
 name = "cloudit-server"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "argon2",
