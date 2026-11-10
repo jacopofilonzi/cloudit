@@ -1,10 +1,12 @@
 // Events pushed by the Rust backend (names mirror `src-tauri/src/events.rs`).
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
+  AppSettings,
   AutoFolderState,
   FolderOpEvent,
   FolderStatusEvent,
   LoginEvent,
+  NavigateEvent,
   Progress,
   RemoteEvent
 } from '@cloudit/api-types';
@@ -15,7 +17,9 @@ export const EVENTS = {
   op: 'folder-op',
   remote: 'remote',
   login: 'login-finished',
-  auto: 'auto-state'
+  auto: 'auto-state',
+  settings: 'app-settings',
+  navigate: 'navigate'
 } as const;
 
 export interface Handlers {
@@ -25,6 +29,8 @@ export interface Handlers {
   remote: (event: RemoteEvent) => void;
   login: (event: LoginEvent) => void;
   auto: (states: AutoFolderState[]) => void;
+  settings: (settings: AppSettings) => void;
+  navigate: (event: NavigateEvent) => void;
 }
 
 /** Subscribes to every backend event; the returned function unsubscribes all. */
@@ -35,7 +41,9 @@ export async function subscribe(handlers: Handlers): Promise<() => void> {
     listen<FolderOpEvent>(EVENTS.op, (e) => handlers.op(e.payload)),
     listen<RemoteEvent>(EVENTS.remote, (e) => handlers.remote(e.payload)),
     listen<LoginEvent>(EVENTS.login, (e) => handlers.login(e.payload)),
-    listen<AutoFolderState[]>(EVENTS.auto, (e) => handlers.auto(e.payload))
+    listen<AutoFolderState[]>(EVENTS.auto, (e) => handlers.auto(e.payload)),
+    listen<AppSettings>(EVENTS.settings, (e) => handlers.settings(e.payload)),
+    listen<NavigateEvent>(EVENTS.navigate, (e) => handlers.navigate(e.payload))
   ]);
   return () => stops.forEach((stop) => stop());
 }

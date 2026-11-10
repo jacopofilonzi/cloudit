@@ -298,7 +298,16 @@ export const desktopEn = {
   'desktop.settings.theme_light': 'Light',
   'desktop.settings.theme_dark': 'Dark',
   'desktop.settings.autostart': 'Start with the system',
-  'desktop.settings.autostart_hint': 'Coming soon.',
+  'desktop.settings.autostart_hint': 'Start cloudit in the tray when you sign in to this computer.',
+  'desktop.settings.pause': 'Pause automatic sync',
+  'desktop.settings.pause_hint':
+    'Stop automatic sync on this computer for an hour. You can still sync by hand.',
+  'desktop.settings.pause_hour': 'Pause for 1 hour',
+  'desktop.settings.notifications': 'Notifications',
+  'desktop.settings.notifications_hint':
+    'Tell me about conflicts and sync errors. Finished syncs are never notified.',
+  'desktop.pause.banner': 'Automatic sync is paused until {time}.',
+  'desktop.pause.resume': 'Resume',
   'desktop.settings.auto_sync': 'Automatic sync',
   'desktop.settings.auto_sync_hint':
     'Sync the folders that have it on by themselves. When off, folders sync only when you ask.',

@@ -8,6 +8,7 @@
   import { page } from '$app/state';
   import { Banner, ConfirmHost, Spinner, Toaster, initTheme } from '@cloudit/ui';
   import { getLang, t } from '@cloudit/ui/i18n';
+  import * as api from '#lib/api.ts';
   import { app } from '#lib/app.svelte.ts';
   import { commandErrorText } from '#lib/errors.ts';
   import { initLang } from '#lib/lang.ts';
@@ -26,7 +27,10 @@
   const atRoot = $derived(page.url.pathname === resolve('/'));
 
   $effect(() => {
-    document.documentElement.lang = getLang();
+    const lang = getLang();
+    document.documentElement.lang = lang;
+    // The tray menu and the notifications are written by the backend in this language.
+    api.setUiLanguage(lang).catch((error: unknown) => app.noteError(error));
   });
 
   $effect(() => {

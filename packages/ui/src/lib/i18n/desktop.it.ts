@@ -305,7 +305,17 @@ export const desktopIt: { readonly [K in DesktopKey]: string } = {
   'desktop.settings.theme_light': 'Chiaro',
   'desktop.settings.theme_dark': 'Scuro',
   'desktop.settings.autostart': 'Avvia con il sistema',
-  'desktop.settings.autostart_hint': 'In arrivo.',
+  'desktop.settings.autostart_hint':
+    "Avvia cloudit nell'area di notifica quando accedi a questo PC.",
+  'desktop.settings.pause': 'Metti in pausa la sincronizzazione automatica',
+  'desktop.settings.pause_hint':
+    "Ferma la sincronizzazione automatica su questo PC per un'ora. Puoi comunque sincronizzare a mano.",
+  'desktop.settings.pause_hour': 'Metti in pausa per 1 ora',
+  'desktop.settings.notifications': 'Notifiche',
+  'desktop.settings.notifications_hint':
+    'Avvisami di conflitti ed errori di sincronizzazione. Le sincronizzazioni riuscite non vengono mai notificate.',
+  'desktop.pause.banner': 'La sincronizzazione automatica è in pausa fino alle {time}.',
+  'desktop.pause.resume': 'Riprendi',
   'desktop.settings.auto_sync': 'Sincronizzazione automatica',
   'desktop.settings.auto_sync_hint':
     'Sincronizza da sole le cartelle che la hanno attiva. Se è disattivata, le cartelle si sincronizzano solo quando lo chiedi.',

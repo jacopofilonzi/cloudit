@@ -1,6 +1,7 @@
 // The app's shared state, fed by the backend's commands and events: who is signed in,
 // the linked folders, their statuses, running operations and progress, the connection.
 import type {
+  AppSettings,
   AutoFolderState,
   Account,
   FolderOpEvent,
@@ -9,10 +10,13 @@ import type {
   LinkedFolder,
   Connection,
   LoginEvent,
+  NavigateEvent,
   OpAction,
   Progress,
   RemoteEvent
 } from '@cloudit/api-types';
+import { goto } from '$app/navigation';
+import { resolve } from '$app/paths';
 import * as api from './api';
 import { CommandError } from './api';
 import { needsSignIn } from './errors';
@@ -56,6 +60,12 @@ class AppStore {
   login = $state<LoginEvent | null>(null);
   /** The device-wide automatic sync switch. */
   autoSync = $state(true);
+  /** Desktop notifications for conflicts and errors. */
+  notifications = $state(true);
+  /** The app starts with the system. */
+  autostart = $state(false);
+  /** Automatic sync is paused until then (RFC 3339), or not paused. */
+  pausedUntil = $state<string | null>(null);
   /** What automatic sync shows of each automatic folder (absent: not automatic now). */
   auto = $state<Record<number, AutoFolderState>>({});
 
@@ -80,7 +90,9 @@ class AppStore {
         op: (e) => this.#onOp(e),
         remote: (e) => this.#onRemote(e),
         login: (e) => void this.#onLogin(e),
-        auto: (states) => this.#onAuto(states)
+        auto: (states) => this.#onAuto(states),
+        settings: (settings) => this.#onSettings(settings),
+        navigate: (event) => void this.#onNavigate(event)
       });
       const info = await api.appInfo();
       this.appVersion = info.version;
@@ -123,7 +135,7 @@ class AppStore {
   async #loadAuto(): Promise<void> {
     try {
       const [settings, states] = await Promise.all([api.appSettings(), api.autoStates()]);
-      this.autoSync = settings.auto_sync;
+      this.#onSettings(settings);
       this.#onAuto(states);
     } catch (error) {
       this.noteError(error);
@@ -132,8 +144,40 @@ class AppStore {
 
   /** Turns automatic sync on or off for this computer. */
   async setAutoSync(on: boolean): Promise<void> {
-    const settings = await api.setAppSettings({ auto_sync: on });
+    this.#onSettings(await api.setAppSettings({ auto_sync: on }));
+  }
+
+  async setNotifications(on: boolean): Promise<void> {
+    this.#onSettings(await api.setAppSettings({ notifications: on }));
+  }
+
+  async setAutostart(on: boolean): Promise<void> {
+    this.#onSettings(await api.setAppSettings({ autostart: on }));
+  }
+
+  /** Pauses automatic sync (manual syncs still work). */
+  async pause(minutes: number): Promise<void> {
+    this.#onSettings(await api.pauseFor(minutes));
+  }
+
+  async resume(): Promise<void> {
+    this.#onSettings(await api.resume());
+  }
+
+  #onSettings(settings: AppSettings): void {
     this.autoSync = settings.auto_sync;
+    this.notifications = settings.notifications;
+    this.autostart = settings.autostart;
+    this.pausedUntil = settings.paused_until;
+  }
+
+  /** The tray asked for a folder's page. */
+  async #onNavigate(event: NavigateEvent): Promise<void> {
+    if (!this.signedIn) return;
+    this.selected = event.folder;
+    await (event.page === 'conflict'
+      ? goto(resolve('/(app)/folders/[id]/conflict', { id: String(event.folder) }))
+      : goto(resolve('/(app)/folders')));
   }
 
   /** Whether the folder is synced automatically now (its setting and the switch). */

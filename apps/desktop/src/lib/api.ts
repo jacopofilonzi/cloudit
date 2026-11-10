@@ -5,6 +5,7 @@ import type {
   ActivityEntry,
   AppInfo,
   AppSettings,
+  AppSettingsUpdate,
   AutoFolderState,
   AutoSyncSettings,
   CommandError as CommandErrorBody,
@@ -113,11 +114,15 @@ export const activity = (folder: number | null, limit: number) =>
 export const openFolder = (folder: number) => call<void>('open_folder', { folder });
 export const openHistory = (folder: number) => call<void>('open_history', { folder });
 export const openLogDir = () => call<void>('open_log_dir');
+/** Tells the backend the UI language (its tray menu and notifications follow it). */
+export const setUiLanguage = (lang: string) => call<void>('set_ui_language', { lang });
 
 // Automatic sync
 export const appSettings = () => call<AppSettings>('app_settings');
-export const setAppSettings = (settings: AppSettings) =>
+export const setAppSettings = (settings: AppSettingsUpdate) =>
   call<AppSettings>('set_app_settings', { settings });
+export const pauseFor = (minutes: number) => call<AppSettings>('pause_for', { minutes });
+export const resume = () => call<AppSettings>('resume');
 export const setAutoSync = (folder: number, settings: AutoSyncSettings) =>
   call<LinkedFolder>('set_auto_sync', { folder, settings });
 export const runningProcesses = () => call<string[]>('running_processes');

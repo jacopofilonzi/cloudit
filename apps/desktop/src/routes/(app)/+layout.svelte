@@ -1,14 +1,15 @@
 <script lang="ts">
   // The signed-in shell: sidebar (navigation with the attention badge, server state,
-  // account) and the page.
+  // account), the global pause banner and the page.
   import Clock from '@lucide/svelte/icons/clock';
   import FolderSync from '@lucide/svelte/icons/folder-sync';
   import SettingsIcon from '@lucide/svelte/icons/settings';
   import type { Component, Snippet } from 'svelte';
   import { page } from '$app/state';
   import { resolve } from '$app/paths';
-  import { Avatar, Logo, StatusDot } from '@cloudit/ui';
-  import { t, type MessageKey } from '@cloudit/ui/i18n';
+  import { Avatar, Banner, Button, Logo, StatusDot, formatTime } from '@cloudit/ui';
+  import { getLang, t, type MessageKey } from '@cloudit/ui/i18n';
+  import { reportError } from '#lib/actions.ts';
   import { app } from '#lib/app.svelte.ts';
   import { tn } from '#lib/plural.ts';
 
@@ -91,6 +92,16 @@
     {/if}
   </aside>
   <main class="min-w-0 flex-1 overflow-auto px-5 py-[18px]">
+    {#if app.pausedUntil}
+      <Banner variant="info" class="mb-3">
+        {t('desktop.pause.banner', { time: formatTime(app.pausedUntil, getLang()) })}
+        {#snippet actions()}
+          <Button size="sm" onclick={() => app.resume().catch(reportError)}>
+            {t('desktop.pause.resume')}
+          </Button>
+        {/snippet}
+      </Banner>
+    {/if}
     {@render children()}
   </main>
 </div>

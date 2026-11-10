@@ -1,6 +1,6 @@
 <script lang="ts">
-  // App settings: the account of this device, language and theme, what is coming, the
-  // versions and the log folder.
+  // App settings: the account of this device, language and theme, autostart, automatic
+  // sync and its pause, notifications, the versions and the log folder.
   import {
     Avatar,
     Banner,
@@ -9,6 +9,7 @@
     Toggle,
     confirmAction,
     formatDate,
+    formatTime,
     getThemeMode,
     setThemeMode,
     THEME_MODES,
@@ -105,10 +106,10 @@
       </div>
       <div class="py-3">
         <Toggle
-          checked={false}
-          disabled
+          checked={app.autostart}
           label={t('desktop.settings.autostart')}
           description={t('desktop.settings.autostart_hint')}
+          onchange={(on) => app.setAutostart(on).catch(reportError)}
         />
       </div>
       <div class="py-3">
@@ -117,6 +118,33 @@
           label={t('desktop.settings.auto_sync')}
           description={t('desktop.settings.auto_sync_hint')}
           onchange={(on) => app.setAutoSync(on).catch(reportError)}
+        />
+      </div>
+      <div class="flex items-center gap-3 py-3">
+        <div class="min-w-0 flex-1">
+          <b class="block">{t('desktop.settings.pause')}</b>
+          <p class="text-xs text-muted">
+            {app.pausedUntil
+              ? t('desktop.pause.banner', { time: formatTime(app.pausedUntil, getLang()) })
+              : t('desktop.settings.pause_hint')}
+          </p>
+        </div>
+        {#if app.pausedUntil}
+          <Button size="sm" onclick={() => app.resume().catch(reportError)}>
+            {t('desktop.pause.resume')}
+          </Button>
+        {:else}
+          <Button size="sm" onclick={() => app.pause(60).catch(reportError)}>
+            {t('desktop.settings.pause_hour')}
+          </Button>
+        {/if}
+      </div>
+      <div class="py-3">
+        <Toggle
+          checked={app.notifications}
+          label={t('desktop.settings.notifications')}
+          description={t('desktop.settings.notifications_hint')}
+          onchange={(on) => app.setNotifications(on).catch(reportError)}
         />
       </div>
     </div>
