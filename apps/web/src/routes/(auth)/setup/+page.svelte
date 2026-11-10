@@ -128,6 +128,5 @@
     <Button type="submit" variant="primary" size="lg" block class="mt-5" loading={busy}>
       {t('setup.submit')}
     </Button>
-    <p class="hint mt-2.5 text-center">{t('setup.providers_note')}</p>
   </form>
 </AuthCard>

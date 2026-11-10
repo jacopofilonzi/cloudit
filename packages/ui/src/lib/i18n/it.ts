@@ -55,8 +55,6 @@ export const it: Dictionary = {
   'setup.mode_open_hint': 'Chiunque raggiunga il server può creare un account.',
   'setup.mode_invite_hint': "Serve un link d'invito creato da un amministratore.",
   'setup.submit': 'Crea amministratore',
-  'setup.providers_note':
-    'I provider di accesso (Google, Authentik…) li aggiungi dopo da Amministrazione.',
   'invite.title': 'Sei stato invitato',
   'invite.checking': "Verifica dell'invito…",
   'invite.body': '{name} ti ha invitato su {host}.',

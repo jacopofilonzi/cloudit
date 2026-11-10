@@ -55,8 +55,6 @@ export const en = {
   'setup.mode_open_hint': 'Anyone who can reach the server can create an account.',
   'setup.mode_invite_hint': 'New users need an invite link created by an administrator.',
   'setup.submit': 'Create administrator',
-  'setup.providers_note':
-    'You can add sign-in providers (Google, Authentik…) later from Administration.',
   'invite.title': 'You have been invited',
   'invite.checking': 'Checking the invite…',
   'invite.body': '{name} invited you to {host}.',
