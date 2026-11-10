@@ -192,6 +192,8 @@ jobs:
   docker-manifest:
     name: Docker image (multi-arch tags)
     needs: docker
+    # `version` is skipped on a manual run: without this the skip would propagate here.
+    if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
