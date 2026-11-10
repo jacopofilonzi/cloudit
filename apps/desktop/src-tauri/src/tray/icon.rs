@@ -1,17 +1,26 @@
-//! The tray icons: the app icon, and the same with a dot in the corner when a folder
-//! needs attention (tray icons have no real badges). The dot is painted at runtime on
-//! the decoded RGBA pixels, so only the app icon is shipped.
+//! The tray icons: the monochrome cloud (white for dark taskbars, black for light ones,
+//! `theme.rs`; source `icons/source/tray.svg`), each also with a dot in the corner when
+//! a folder needs attention (tray icons have no real badges). The dot is painted at
+//! runtime on the decoded RGBA pixels, so only the two plain icons are shipped.
 
 use tauri::image::Image;
 
-/// The app icon (a placeholder until the real one: milestone 7c).
-const ICON_PNG: &[u8] = include_bytes!("../../icons/32x32.png");
+use super::theme::Taskbar;
+
+/// White icon (dark taskbars).
+const WHITE_PNG: &[u8] = include_bytes!("../../icons/tray/white.png");
+/// Black icon (light taskbars).
+const BLACK_PNG: &[u8] = include_bytes!("../../icons/tray/black.png");
 /// The dot: the UI's warning colour (`--cl-warning`), with a white ring.
 const DOT: [u8; 3] = [0xc4, 0x7a, 0x14];
 
-/// The normal icon and the one with the attention dot.
-pub fn icons() -> tauri::Result<(Image<'static>, Image<'static>)> {
-    let normal = Image::from_bytes(ICON_PNG)?;
+/// The normal icon and the one with the attention dot, for a taskbar.
+pub fn icons(taskbar: Taskbar) -> tauri::Result<(Image<'static>, Image<'static>)> {
+    let png = match taskbar {
+        Taskbar::Dark => WHITE_PNG,
+        Taskbar::Light => BLACK_PNG,
+    };
+    let normal = Image::from_bytes(png)?;
     let (width, height) = (normal.width(), normal.height());
     let mut rgba = normal.rgba().to_vec();
     paint_dot(&mut rgba, width, height);
@@ -52,8 +61,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_icons_differ_by_taskbar() {
+        let (white, _) = icons(Taskbar::Dark).expect("white");
+        let (black, _) = icons(Taskbar::Light).expect("black");
+        // The brightest opaque pixel: white on one, black on the other.
+        let brightest = |img: &Image<'_>| {
+            img.rgba()
+                .chunks(4)
+                .filter(|p| p[3] == 0xff)
+                .map(|p| u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2]))
+                .max()
+                .expect("opaque pixels")
+        };
+        assert_eq!(brightest(&white), 3 * 0xff);
+        assert_eq!(brightest(&black), 0);
+    }
+
+    #[test]
     fn the_dot_goes_in_the_bottom_right_corner() {
-        let (normal, dotted) = icons().expect("icon");
+        let (normal, dotted) = icons(Taskbar::Dark).expect("icon");
         assert_eq!(
             (dotted.width(), dotted.height()),
             (normal.width(), normal.height())

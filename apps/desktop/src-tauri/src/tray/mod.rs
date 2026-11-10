@@ -3,8 +3,9 @@
 //! - The menu (`model.rs`, pure) lists the folders that need the user with one action
 //!   each (resolve a conflict, upload, download, show what is wrong), then "Sync all",
 //!   "Pause for 1 hour" / "Resume", "Open cloudit", "Open on the web" and "Quit".
-//! - The icon gets a dot when a folder needs attention (`icon.rs`); the tooltip says
-//!   the same in short.
+//! - The icon is the monochrome cloud, white or black to suit the taskbar
+//!   (`theme.rs`, read again every [`theme::RECHECK`]); it gets a dot when a folder
+//!   needs attention (`icon.rs`); the tooltip says the same in short.
 //! - It is rebuilt when something it shows may have changed: the end of every
 //!   operation (statuses), the folder list, the session, the pause and the UI language
 //!   ([`Handle::refresh`]). Requests are coalesced ([`COALESCE`]) and the menu is
@@ -17,6 +18,7 @@
 
 mod icon;
 pub mod model;
+mod theme;
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -33,6 +35,7 @@ use crate::events::{NAVIGATE, NavigateEvent, NavigatePage, OpAction, emit};
 use crate::state::AppState;
 use crate::window;
 use model::{FolderAction, Item, MenuAction, TrayInput, TrayModel};
+use theme::Taskbar;
 
 /// The tray icon's id.
 const TRAY_ID: &str = "main";
@@ -60,10 +63,36 @@ pub fn channel() -> (Handle, UnboundedReceiver<()>) {
 /// The tray, managed by Tauri once it exists.
 pub struct Tray {
     icon: TrayIcon,
-    normal: Image<'static>,
-    attention: Image<'static>,
+    /// The icons for the current taskbar.
+    icons: Mutex<Icons>,
     /// What the menu shows now.
     shown: Mutex<Option<TrayModel>>,
+}
+
+/// The plain and the attention icon for one taskbar brightness.
+struct Icons {
+    taskbar: Taskbar,
+    normal: Image<'static>,
+    attention: Image<'static>,
+}
+
+impl Icons {
+    fn new(taskbar: Taskbar) -> tauri::Result<Self> {
+        let (normal, attention) = icon::icons(taskbar)?;
+        Ok(Self {
+            taskbar,
+            normal,
+            attention,
+        })
+    }
+
+    fn pick(&self, attention: bool) -> Image<'static> {
+        if attention {
+            self.attention.clone()
+        } else {
+            self.normal.clone()
+        }
+    }
 }
 
 /// Whether the tray exists (closing the window then only hides it).
@@ -73,9 +102,9 @@ pub fn exists(app: &AppHandle) -> bool {
 
 /// Creates the tray and starts its rebuild task (in `setup`, after `AppState`).
 pub fn start(app: &AppHandle, mut rx: UnboundedReceiver<()>) -> tauri::Result<()> {
-    let (normal, attention) = icon::icons()?;
+    let icons = Icons::new(theme::taskbar())?;
     let icon = TrayIconBuilder::with_id(TRAY_ID)
-        .icon(normal.clone())
+        .icon(icons.pick(false))
         .tooltip("cloudit")
         .show_menu_on_left_click(false)
         .on_menu_event(on_menu_event)
@@ -92,11 +121,11 @@ pub fn start(app: &AppHandle, mut rx: UnboundedReceiver<()>) -> tauri::Result<()
         .build(app)?;
     app.manage(Tray {
         icon,
-        normal,
-        attention,
+        icons: Mutex::new(icons),
         shown: Mutex::new(None),
     });
     render(app);
+    follow_taskbar(app.clone());
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         while rx.recv().await.is_some() {
@@ -111,6 +140,45 @@ pub fn start(app: &AppHandle, mut rx: UnboundedReceiver<()>) -> tauri::Result<()
 /// The end of the pause as the local `HH:MM`.
 pub fn local_time(at: DateTime<Utc>) -> String {
     at.with_timezone(&Local).format("%H:%M").to_string()
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Reads the taskbar brightness every [`theme::RECHECK`] and swaps the icons when it
+/// changed.
+fn follow_taskbar(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(theme::RECHECK).await;
+            let Ok(taskbar) = tauri::async_runtime::spawn_blocking(theme::taskbar).await else {
+                continue;
+            };
+            let Some(tray) = app.try_state::<Tray>() else {
+                return;
+            };
+            if lock(&tray.icons).taskbar == taskbar {
+                continue;
+            }
+            let icons = match Icons::new(taskbar) {
+                Ok(icons) => icons,
+                Err(error) => {
+                    tracing::warn!(%error, "could not load the tray icons");
+                    continue;
+                }
+            };
+            let attention = lock(&tray.shown).as_ref().is_some_and(|m| m.attention);
+            if let Err(error) = tray.icon.set_icon(Some(icons.pick(attention))) {
+                tracing::warn!(%error, "could not change the tray icon");
+                continue;
+            }
+            tracing::debug!(?taskbar, "the taskbar theme changed");
+            *lock(&tray.icons) = icons;
+        }
+    });
 }
 
 /// Rebuilds the tray if what it shows changed (failures are logged).
@@ -165,12 +233,8 @@ fn apply(
     menu.append(&menu_item(app, &model.quit)?)?;
     tray.icon.set_menu(Some(menu))?;
     if shown.is_none_or(|s| s.attention != model.attention) {
-        let icon = if model.attention {
-            &tray.attention
-        } else {
-            &tray.normal
-        };
-        tray.icon.set_icon(Some(icon.clone()))?;
+        let icon = lock(&tray.icons).pick(model.attention);
+        tray.icon.set_icon(Some(icon))?;
     }
     if shown.is_none_or(|s| s.tooltip != model.tooltip) {
         tray.icon.set_tooltip(Some(&model.tooltip))?;

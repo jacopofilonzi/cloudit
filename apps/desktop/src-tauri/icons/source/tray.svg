@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Monochrome tray icon: render white (dark taskbar) or black (light taskbar) by replacing #ffffff. -->
+  <path transform="translate(2.2 -1.4) scale(1.15)" fill="#ffffff" d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>
+  <rect x="6" y="23" width="20" height="3" rx="1.5" fill="#ffffff" opacity=".6"/>
+  <rect x="9.5" y="28" width="13" height="3" rx="1.5" fill="#ffffff" opacity=".35"/>
+</svg>
