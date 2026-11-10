@@ -51,9 +51,14 @@ than the latest release (only its administrator can update it).
 
 ## Quick start (Docker)
 
+The server is a released image (`ghcr.io/jacopofilonzi/cloudit`, public, linux/amd64 and
+linux/arm64). All you need is [`docker-compose.prod.yml`](docker-compose.prod.yml), no clone or
+build:
+
 ```sh
-cp .env.example .env        # optional: adjust settings
-docker compose up -d --build
+mkdir cloudit && cd cloudit
+curl -fsSLO https://raw.githubusercontent.com/jacopofilonzi/cloudit/main/docker-compose.prod.yml
+docker compose -f docker-compose.prod.yml up -d
 curl http://localhost:8080/health
 ```
 
@@ -61,16 +66,17 @@ Then open <http://localhost:8080>. Data lives in `./data` (mounted at `/data`). 
 starts as root only to give `./data` to the runtime user (`PUID`/`PGID`, default `10001`), then
 drops privileges; set `PUID`/`PGID` in `.env` to your own `id -u`/`id -g` to own the files yourself.
 
-The quick start builds the image from the sources. **In production** use the released image
-(`ghcr.io/jacopofilonzi/cloudit`, public, linux/amd64 and linux/arm64) through [`docker-compose.prod.yml`](docker-compose.prod.yml):
+Settings go in an optional `.env` next to the compose file. Start from the documented template,
+where every variable is commented out, and uncomment what you change:
 
 ```sh
-cp .env.example .env        # set PUBLIC_URL (and TRUST_PROXY_HEADERS=true behind a proxy)
-docker compose -f docker-compose.prod.yml up -d
+curl -fsSL -o .env https://raw.githubusercontent.com/jacopofilonzi/cloudit/main/.env.example
 ```
 
-Tags: `latest`, `X.Y` and `X.Y.Z`; pin one with `CLOUDIT_VERSION` in `.env` (e.g. `0.1`). To
-upgrade: back up `./data`, read the upgrade notes below, then `docker compose -f
+On a real server set `PUBLIC_URL` (and `TRUST_PROXY_HEADERS=true` behind a reverse proxy).
+
+Image tags: `latest`, `X.Y` and `X.Y.Z`; pin one with `CLOUDIT_VERSION` in `.env` (e.g. `0.1`).
+To upgrade: back up `./data`, read the upgrade notes below, then `docker compose -f
 docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d`.
 
 ## First-run setup
@@ -78,11 +84,10 @@ docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d`
 On its first start (no accounts yet) the server logs a one-time **setup token** at WARN level:
 
 ```sh
-docker compose logs cloudit | grep setup_token
-docker compose exec cloudit cloudit-server setup-token   # prints it again
+docker compose -f docker-compose.prod.yml logs cloudit | grep setup_token
+docker compose -f docker-compose.prod.yml exec cloudit cloudit-server setup-token   # prints it again
 ```
 
-With the production compose file add `-f docker-compose.prod.yml` after `docker compose`.
 Every instance of an HA deployment prints the same token. Use it to create the first admin
 account; it stops working once setup is done. Until then the API answers `setup_required`.
 To choose the token yourself (automated deployments) set `SETUP_TOKEN` (at least 16 characters).
@@ -131,7 +136,7 @@ link (valid 24 hours; the full URL when `PUBLIC_URL` is set), also for accounts 
 password:
 
 ```sh
-docker compose exec cloudit cloudit-server admin reset-password you@example.com
+docker compose -f docker-compose.prod.yml exec cloudit cloudit-server admin reset-password you@example.com
 ```
 
 ## Scopes, folders and sharing
@@ -236,7 +241,7 @@ storage work (its JSON body reports `database`, `storage` and `redis`).
 
 ### Single instance (default)
 
-`docker compose up -d` with no configuration runs one container with SQLite
+The quick start, with no configuration, runs one container with SQLite
 (`/data/cloudit.db`) and filesystem blob storage (`/data/blobs`). Back up the whole `./data`
 directory: it also holds `secret.key`, the generated key that encrypts the sign-in providers'
 client secrets (or set `SECRET_KEY` yourself). Before applying database migrations the server copies the database to
@@ -250,7 +255,7 @@ Instances are stateless: run as many as you like behind a load balancer, as long
 - **PostgreSQL**: `DATABASE_URL=postgres://user:password@host:5432/cloudit`. Instances
   starting together coordinate migrations with an advisory lock.
 - **the same `SECRET_KEY`** on every instance (required with PostgreSQL; generate it with
-  `cloudit-server gen-secret-key`, e.g. `docker run --rm <image> gen-secret-key`, and keep it
+  `docker run --rm ghcr.io/jacopofilonzi/cloudit gen-secret-key`, and keep it
   with your database backups).
 - **S3-compatible storage**: `STORAGE=s3`, `S3_ENDPOINT` (unset for AWS), `S3_REGION`,
   `S3_BUCKET` (must exist), `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`,
@@ -296,6 +301,10 @@ make help      # every target
 
 Desktop: `make dev-desktop` (hot reload), `make build-desktop` (release binary),
 `make bundle-desktop` (the installers of this OS under `target/release/bundle/`).
+
+Docker image from the sources: `make up` (`docker compose up -d --build` on
+[`docker-compose.yml`](docker-compose.yml)), `make down` to stop it. Settings come from `.env`
+(`cp .env.example .env`) and data lives in `./data`, as in the quick start.
 
 ### Releases
 
