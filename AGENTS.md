@@ -290,7 +290,12 @@ and align this project's copies with it:
     (`Builder::new().arg(..).build()`, `app.autolaunch()`: `enable` / `disable` / `is_enabled`;
     its state exists only if the plugin's setup succeeded: `try_state::<AutoLaunchManager>()`),
     tray: tauri features `tray-icon` + `image-png` (`TrayIconBuilder`, `Image::from_bytes`,
-    menus from `tauri::menu`; `&` in labels is a mnemonic: double it), tracing-appender 0.2; JS `@tauri-apps/api` and
+    menus from `tauri::menu`; `&` in labels is a mnemonic: double it), **tauri-plugin-updater 2.14**
+    (pinned to the minor; not the 3 alphas: `app.updater()?.check()` → `Option<Update>`,
+    `update.download(on_chunk, on_finish)` then `update.install(bytes)` (verifies the signature; on
+    Windows it starts the installer and exits the process), `AppHandle::restart()` on Linux; config in
+    `tauri.conf.json` `plugins.updater` {pubkey, endpoints, windows.installMode}; no
+    `tauri-plugin-process`), tracing-appender 0.2; JS `@tauri-apps/api` and
     `@tauri-apps/cli` 2.12. The Tauri CLI rewrites the `features = […]` lists of the desktop
     `Cargo.toml` on build (`tauri-build`: `[]`; `tauri`: `["tray-icon", "image-png"]`, kept as is):
     keep that form committed so builds don't dirty the tree.
@@ -371,10 +376,22 @@ and align this project's copies with it:
 
 - Versions are `x.y.z`: `x` major (only when I decide), `y` feature, `z` fix. A feature bumps `y` and resets `z`.
 - The version lives in `Cargo.toml` (`[workspace.package] version`, inherited by every crate, plus
-  `Cargo.lock`) and in every `package.json` (root, `apps/*`, `packages/*`; later also
-  `apps/desktop/src-tauri/tauri.conf.json`): change it only with `make version V=x.y.z` (=
+  `Cargo.lock`) and in every `package.json` (root, `apps/*`, `packages/*`) and in
+  `apps/desktop/src-tauri/tauri.conf.json` (the installers and the updater use it): change it only with
+  `make version V=x.y.z` (=
   `node scripts/set-version.mjs x.y.z`), which updates them all.
-- Tags and releases only when I ask.
+- Tags and releases only when I ask. A release = `make version V=x.y.z`, commit, push the tag
+  `vx.y.z`: `release.yml` checks the tag against the versions (`scripts/check-release-version.mjs`),
+  drafts the GitHub Release, builds the installers with `tauri-apps/tauri-action@v1`
+  (`uploadUpdaterJson`, `releaseId`; one OS at a time because each job rewrites `latest.json`) and
+  publishes it.
+- **The updater signing key** signs every desktop update; installed apps trust only its public half
+  (`plugins.updater.pubkey` in `tauri.conf.json`). The private key lives outside the repo (repository
+  secret `TAURI_SIGNING_PRIVATE_KEY`, plus `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` if it has one): never
+  commit, print or log it. Losing it means installed apps can never update themselves again; changing
+  it needs a release signed with the old key that ships the new public key.
+- The desktop app never downloads or installs an update without the user's click, and never while a
+  folder operation runs (`updater::install` holds automatic sync and waits).
 - CI runs the checks and tests on every push and pull request, but builds and publishes artifacts (Docker
   images, binaries, installers) only on a `vX.Y.Z` tag or a manual run, never on a plain push.
 
@@ -409,7 +426,17 @@ and align this project's copies with it:
   + `capabilities/default.json`, checked by a test). A plain `cargo build` of `cloudit-desktop` loads the dev
   server; use `--features custom-protocol` or `make build-desktop` to embed the UI. Linux CI needs
   `libwebkit2gtk-4.1-dev librsvg2-dev libsoup-3.0-dev libgtk-3-dev libayatana-appindicator3-dev` (the
-  tray; at runtime `libayatana-appindicator3-1`).
+  tray; at runtime `libayatana-appindicator3-1`); bundling the AppImage also needs `patchelf` and `file`.
+- Desktop bundles: `make bundle-desktop` needs no signing key (the updater packages come only with
+  `--config src-tauri/tauri.updater.conf.json`, set by the release workflow, which then needs
+  `TAURI_SIGNING_PRIVATE_KEY`). The NSIS installer is per user (`%LOCALAPPDATA%cloudit`, no admin):
+  installing it on a dev machine leaves a Start menu entry and an uninstaller. An installed app is a
+  second copy of cloudit: it shares the single-instance lock with dev runs, so stop it first. Its
+  update check fails (logged at warn) until a release with `latest.json` exists.
+- Desktop OS-specific bits follow the `#[path]` pattern of `auto/processes*`: `tray/theme_windows.rs`
+  reads the taskbar theme with `reg.exe` (`CREATE_NO_WINDOW`; `unsafe_code` is forbidden, so no raw
+  registry calls) and `tray/theme_unix.rs` is not compiled on Windows: check it on CI.
+  `tauri::Env::appimage` exists only on Linux: the updater reads `$APPIMAGE` itself.
 - Desktop automatic sync: every automatic run goes through `ops::run_auto` →
   `Engine::sync_with`; never sync from the scheduler any other way, and keep its decisions
   in the pure `auto::plan::Planner` (tests on paused time). The process name matching lives

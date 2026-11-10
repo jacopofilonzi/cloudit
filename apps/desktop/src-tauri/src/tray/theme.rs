@@ -23,7 +23,8 @@ pub enum Taskbar {
     /// Dark taskbar: white icon (the default when unknown).
     #[default]
     Dark,
-    /// Light taskbar: black icon.
+    /// Light taskbar: black icon (only Windows reports it).
+    #[cfg_attr(not(windows), allow(dead_code))]
     Light,
 }
 

@@ -6,7 +6,7 @@ the engine `cloudit-client`), and a web UI (served by the
 server as a static SPA) manages accounts, scopes and folders. The UIs talk to the server only
 through its JSON API under `/api/v1`, whose TypeScript types are generated from the Rust ones.
 
-Current state (milestone 7b done: desktop app with automatic sync, tray, global pause, autostart and notifications): the server has its infrastructure (database with migrations and
+Current state (milestone 7 done: desktop app with automatic sync, tray, global pause, autostart, notifications, installers and an in-app updater; the server checks for new releases): the server has its infrastructure (database with migrations and
 leases, blob storage, optional Redis with a rate limiter, readiness checks), exposes health probes,
 serves the web SPA and has the account API: first-run setup, password accounts with web sessions,
 invites, admin approval of new accounts, password resets, desktop device login (loopback +
@@ -42,9 +42,12 @@ repo/
 │   ├── api-types/        `@cloudit/api-types` — TS types generated from Rust by ts-rs
 │   └── ui/               `@cloudit/ui` — shared Svelte components, theme tokens, i18n EN/IT
 ├── scripts/              node scripts used by the Makefile (dev, types, set-version, help, clean, test-ha)
+│                         and by release.yml (check-release-version: the tag matches the versions)
 ├── .cargo/config.toml    ts-rs env (`TS_RS_EXPORT_DIR`, `TS_RS_LARGE_INT`)
 ├── .github/workflows/    ci.yml (make check on ubuntu + windows; server tests with PostgreSQL/Garage/Valkey),
-│                         release.yml (ghcr image on v*.*.* tags)
+│                         release.yml (v*.*.* tags: version check, draft release, desktop installers
+│                         + updater signatures + latest.json via tauri-action, publish; ghcr image;
+│                         a manual run builds the installers as workflow artifacts only)
 ├── Cargo.toml            Cargo workspace (edition 2024, shared version, clippy lints)
 ├── package.json          pnpm workspace root (lint/format tooling, `packageManager`)
 ├── Dockerfile            stages: web (node, pnpm build) → server (rust, release build) → runtime (debian trixie-slim)
@@ -80,7 +83,8 @@ crates/core/src/
 │   │                 DeviceToken*, DeviceInfo, UpdateDeviceRequest
 │   ├── admin.rs      AdminUser, AdminUserList, AdminUserUpdate, PasswordResetLink,
 │   │                 CreateInviteRequest, InviteLink, InviteStatus, InviteInfo, ServerSettings,
-│   │                 UpdateSettingsRequest, AdminSummary
+│   │                 UpdateSettingsRequest, AdminSummary (+ server_version, latest_release,
+│   │                 update_available), LatestRelease
 │   ├── providers.rs  ProviderKind (+ as_str/parse), ProviderProtocol, ProviderPreset,
 │   │                 ProviderInfo, CreateProviderRequest, UpdateProviderRequest, ProviderTestResult
 │   ├── oauth.rs      OAuthPurpose, OAuthStartRequest, OAuthStartResponse, IdentityInfo,
@@ -107,6 +111,7 @@ crates/core/src/
 │                     variants are stable kinds, `code()` gives a stable snake_case string)
 ├── hash.rs           ChunkHash, ManifestHash: SHA-256 newtypes, strict lowercase-hex FromStr/Display/serde
 ├── path.rs           validate_path: portable relative path rules (security-critical)
+├── version.rs        Version (major.minor.patch; leading `v` and -/+ suffixes ignored), is_newer
 ├── chunk/
 │   ├── mod.rs        MIN/AVG/MAX_CHUNK_SIZE
 │   ├── chunker.rs    FastCDC: chunk_reader (streaming, any Read), chunk_slice; golden vector
@@ -162,8 +167,9 @@ crates/server/src/
 │   │                 delete_tombstoned (objects under the scope lock), delete_objects
 │   ├── orphans.rs    orphan_sweep: list scopes/*, old objects without row, delete under the lock
 │   ├── trash_purge.rs purge_scope (rows, then objects by prefix), purge_folder, run
-│   └── cleanup.rs    expired sessions, codes, flows, pending sign-ups, resets, old unused
-│                     invites, old job runs
+│   ├── cleanup.rs    expired sessions, codes, flows, pending sign-ups, resets, old unused
+│   │                 invites, old job runs
+│   └── update_check.rs latest release (UPDATE_CHECK_URL) → the latest_release setting
 ├── crypto/           server key and encryption of stored secrets
 │   ├── mod.rs        SecretBox: XChaCha20-Poly1305, `[1][nonce 24][ciphertext+tag]`, AAD per value
 │   ├── key.rs        SecretKey (32 bytes, base64); resolve: SECRET_KEY, else <DATA_DIR>/secret.key
@@ -181,7 +187,7 @@ crates/server/src/
 │   ├── settings.rs   settings table: registration_mode (default invite), password_new_accounts
 │   │                 (default approval), autolink_email (default false), public_url,
 │   │                 retention_defaults (20 / 5), trash_retention_days (30),
-│   │                 default_quota_bytes (unlimited);
+│   │                 default_quota_bytes (unlimited), latest_release (update_check job);
 │   │                 get_strict, insert_if_absent
 │   ├── invites.rs    create, find_usable(_by_hash), consume (conditional UPDATE), list, revoke, status
 │   └── password_resets.rs  create (24 h; marks the user's older unused resets used), consume
@@ -315,7 +321,7 @@ crates/server/src/
 │                     archive, quota, presign (live S3 with TEST_S3_*), events (SSE
 │                     reader, recipients, revocation, limits, Redis fan-out), jobs
 │                     (scheduler, leases, cleanup), retention, gc (forced races with
-│                     hooks), trash_purge
+│                     hooks), trash_purge, update_check (fake release endpoint on 127.0.0.1)
 ├── logging.rs        tracing subscriber (env filter; pretty or json)
 ├── shutdown.rs       Ctrl+C / SIGTERM future (OS-specific, like platform.rs)
 └── healthcheck.rs    HTTP/1.0 GET /health on 127.0.0.1:$PORT, std only (Docker HEALTHCHECK)
@@ -369,7 +375,7 @@ Bearer cld_…`); **admin** (session of an effective admin); **onboarding** (the
 | `PATCH /admin/users/{id}` | admin | `AdminUserUpdate {admin?, disabled?, quota_bytes? (null = server default)}` → `AdminUser`; disabling deletes the web sessions |
 | `POST /admin/users/{id}/approve` | admin | → `AdminUser`; pending or rejected (lifts the ban) → approved; already approved: unchanged |
 | `POST /admin/users/{id}/reject` | admin | → `AdminUser`; pending or approved → rejected, web sessions deleted; own account → 403 `forbidden`; 409 `last_admin`; already rejected: unchanged |
-| `GET /admin/summary` | admin | `AdminSummary {pending_users}` |
+| `GET /admin/summary` | admin | `AdminSummary {pending_users, server_version, latest_release? {version, url, checked_at} (the `update_check` job's last find; null: never checked, disabled or no release), update_available}` |
 | `POST /admin/users/{id}/password-reset` | admin | → 201 `PasswordResetLink {token, path: "/reset-password/<token>", expires_at}`; older unused resets of the user stop working |
 | `GET /admin/invites` | admin | `InviteInfo[]` (newest first, no tokens) |
 | `POST /admin/invites` | admin | `CreateInviteRequest {email?, expires_in?}` (default 7d; `forever` → 422) → 201 `InviteLink {id, token, path: "/invite/<token>", expires_at}` |
@@ -417,7 +423,7 @@ Bearer cld_…`); **admin** (session of an effective admin); **onboarding** (the
 | `POST /trash/empty` | session | → 202 `TrashEmptyResponse {scopes, folders}`: marks everything `GET /trash` lists |
 | `GET /events` | any | `text/event-stream` (see "Real-time events"); 20 open streams per user and instance, more → 429 `rate_limited` |
 | `GET /sync/heads` | any | `SyncHeads {folders: [{scope_id, folder_id, head_snapshot_id, head_created_at, unresolved_conflicts}]}`: every visible folder outside the trash, by folder id; `ETag` (hash of the body), `If-None-Match` → 304 |
-| `GET /admin/jobs` | admin | `JobInfo[] {name, interval_secs, requested_at, last_started_at, recent_runs: JobRunInfo[] {id, job, instance_id, started_at, finished_at, outcome, counts, error}}` (≤ 10 runs, newest first; outcome `running` / `succeeded` / `failed` / `interrupted`), in the order retention, gc, orphan_sweep, trash_purge, cleanup |
+| `GET /admin/jobs` | admin | `JobInfo[] {name, interval_secs, requested_at, last_started_at, recent_runs: JobRunInfo[] {id, job, instance_id, started_at, finished_at, outcome, counts, error}}` (≤ 10 runs, newest first; outcome `running` / `succeeded` / `failed` / `interrupted`), in the order retention, gc, orphan_sweep, trash_purge, cleanup, update_check |
 | `POST /admin/jobs/{name}/run` | admin | → 202 `JobInfo`: sets `requested_at`; a scheduler runs it shortly (this instance at once if its jobs are enabled); unknown name → 404 |
 
 Scope routes: "viewer", "editor", "admin", "owner" is the minimum scope role; a scope or
@@ -768,7 +774,7 @@ request and 409 for head conflicts), `payload_too_large` 413. The callback carri
   older `running` runs → `interrupted`, a new `job_runs` row), runs it and records outcome,
   counts and error. A lost lease stops the run at its next batch (`interrupted`). Jobs work
   in small re-checked transactions, so a crash or a second run is harmless.
-- **Intervals** (constants): `retention` 15 min, `gc` 1 h, `orphan_sweep` 24 h,
+- **Intervals** (constants): `retention` 15 min, `gc` 1 h, `orphan_sweep` 24 h, `update_check` 24 h,
   `trash_purge` 1 h, `cleanup` 1 h.
 - **retention**: see "Scopes, folders, sharing and the trash"; folders in the trash or of a
   trashed scope are skipped. Selection is a pure function (`retention::select`). Each
@@ -794,6 +800,13 @@ request and 409 for head conflicts), `payload_too_large` 413. The callback carri
   (locks the folder row) deleting its snapshots' `snapshot_chunks`, its snapshots and the
   folder; its chunks and manifests are left to `gc` (they may be shared with other
   folders of the scope) and a `gc` run is requested. `folder_changed deleted`.
+- **update_check** (`jobs/update_check.rs`): with `UPDATE_CHECK=false` it contacts nothing
+  (counts `disabled`); else `GET UPDATE_CHECK_URL` (GitHub API "latest release") through the
+  shared outgoing client (`idp::http`: 5 s / 15 s timeouts, no redirects, 1 MiB, `User-Agent:
+  cloudit-server/<v>`) and stores `tag_name` (must parse as `x.y.z`) and `html_url` (http(s))
+  as the `latest_release` setting with the check time; a 404 (no release yet) succeeds
+  storing nothing; any other failure fails the run and keeps the old value. Counts `checked`,
+  `newer`, `no_release`, `disabled`.
 - **cleanup**: expired sessions, device codes and OAuth flows; expired pending sign-ups no
   flow references; used or expired password resets; unused invites that expired or were
   revoked more than 30 days ago (**used invites are kept**: they record who invited whom);
@@ -828,7 +841,8 @@ request and 409 for head conflicts), `payload_too_large` 413. The callback carri
     (bool, missing = false), `public_url` (string or null), `secret_key_check` (base64 of the
     encrypted check value), `retention_max_versions` (number, missing = 20),
     `retention_max_per_day` (missing = 5), `trash_retention_days` (missing = 30),
-    `default_quota_bytes` (number or null, missing = unlimited);
+    `default_quota_bytes` (number or null, missing = unlimited), `latest_release`
+    (`{version, url, checked_at}`, written by the `update_check` job, missing = never checked);
   - `invites(id, token_hash UNIQUE, created_by → users, email?, created_at, expires_at, used_at?,
     used_by? → users, revoked_at?)`;
   - `password_resets(id, token_hash UNIQUE, user_id → users, created_by? → users (null = CLI),
@@ -935,6 +949,8 @@ Read once at startup (`config/mod.rs`); empty values count as unset. Documented 
 | `REDIS_URL` | unset | `redis://…` (secret), Redis or Valkey; optional, never fatal; `rediss://` unsupported |
 | `JOBS_ENABLED` | `true` | Run the background jobs scheduler on this instance (jobs stay lease-guarded: one instance at a time) |
 | `GC_GRACE` | `24h` | Age (at least `1h`) before unreferenced chunk / manifest rows and objects without row may be deleted |
+| `UPDATE_CHECK` | `true` | The daily `update_check` job asks `UPDATE_CHECK_URL` for the latest release (admins see a notice); `false` never contacts it (tests set `false`) |
+| `UPDATE_CHECK_URL` | `https://api.github.com/repos/jacopofilonzi/cloudit/releases/latest` | GitHub API "latest release" endpoint (`http(s)://`) |
 | `TEST_DATABASE_URL`, `TEST_S3_*`, `TEST_REDIS_URL` | unset | Tests only (`make test-ha`, CI): run the server tests against PostgreSQL / S3 / Redis instead of SQLite and skipping |
 | `PUID` / `PGID` | `10001` | Docker only, read by the entrypoint (not the server): user/group the server runs as and owner of `DATA_DIR` |
 
@@ -1159,7 +1175,7 @@ server proxies `/api`, `/health`, `/ready` to `http://localhost:8080`. `#lib/*` 
 | `routes/(app)/devices` | desktop devices (rename, revoke; "never expires", revoked / expired status) and web sessions (current marked, sign out others) |
 | `routes/(app)/trash` | trash: restore (a `name_taken` opens a rename prompt), delete now, empty trash (confirms), who deleted (members of the scope), the space note |
 | `routes/(app)/profile` | name / email (current password when the email changes), language + theme (`Segmented`, function bindings), password (set / change), linked identities (unlink, `last_login_method` shown; link buttons start `purpose: link` with `return_to` = the profile), storage per owned scope |
-| `routes/(app)/admin/+layout.svelte`, `+page.ts` | administration: admins only (anyone else is sent to `/`), title + `Tabs` as navigation (Users with the pending badge, Invites, Sign-in providers, Settings, Maintenance); `/admin` redirects to `/admin/users` |
+| `routes/(app)/admin/+layout.svelte`, `+page.ts` | administration: admins only (anyone else is sent to `/`), title + `Tabs` as navigation (Users with the pending badge, Invites, Sign-in providers, Settings, Maintenance); a `Banner` "cloudit X is available (this server runs Y)" + release link when `AdminSummary.update_available`; `/admin` redirects to `/admin/users` |
 | `routes/(app)/admin/users` | filter All / Pending (n) / Rejected (`Segmented` with a function binding), 25 per page; pending view: sign-up source (provider icon, "email and password", "invite") + requested time, Approve / Reject (confirm); full view: role (admin from groups), status, used / effective quota, linked providers, Reject (ban), ⋯ menu (make / remove admin, quota, password-reset link, disable / enable); rejected: "Revoke ban" (= approve). Refreshes the sidebar badge after each decision; no admin rights / disable / reject on one's own row |
 | `routes/(app)/admin/invites` | invites (for, created by, expires, status), "New invite" (optional email, duration 1h–1y) → `LinkModal` with the full link, revoke (confirm) |
 | `routes/(app)/admin/providers` | providers in position order, up / down (PATCH `position` of the providers whose index changes), Test (inline result), Edit, Delete (confirm; identities kept, id not reusable), "no public URL" banner, `ProviderModal` (preset grid, then the preset's fields; groups only when `supports_groups`; callback URL computed from the effective public URL while creating) |
@@ -1171,7 +1187,7 @@ server proxies `/api`, `/health`, `/ready` to `http://localhost:8080`. `#lib/*` 
 | `lib/guard.ts` | pure route guard (tested): setup pending → `/setup`; guest pages (`/login`, `/register`, `/invite/…`) send a signed-in user to a safe `return_to` or `/`; open pages (`/reset-password/…`, `/onboarding`, `/pending`) never redirect; everything else (app, `/device`) needs a session → `/login?return_to=<path+query>`; `safeReturnTo` |
 | `lib/device.ts` | `/device` query parsing and checks (as the server), `cancelUrl` (tested) |
 | `lib/fields.ts` | `inviteToken` (token or full link), `osName`, `isEmail`, `browserLabel` (user agent → "Chrome · Windows") (tested) |
-| `lib/app.svelte.ts` | `app`: scopes, usage, pending users shared by the pages; `load*` for direct use after a change, `schedule*` (coalesced) for live events |
+| `lib/app.svelte.ts` | `app`: scopes, usage, pending users and the admin `summary` shared by the pages; `load*` for direct use after a change, `schedule*` (coalesced) for live events |
 | `lib/live.svelte.ts` | `live` + `onLive(listener)`: one `EventSource` on `/events` while signed in; on every (re)connect fetches `/sync/heads` (ETag) and emits `resync` (not the first time); with `realtime: local` polls every 5 min and emits `folder_head` / `history_changed` / `folder_changed` for what changed; toasts a new conflict; a closed stream re-checks the session |
 | `lib/admin.ts` | pure helpers of the admin pages: quota units (`toBytes`, `splitBytes`, decimal MB / GB / TB), `absoluteUrl` (links from the effective public URL, else `location.origin`), provider id rules and `slugify`, `parseList` / `formatList`, `parseIntIn` (tested) |
 | `lib/coalesce.ts` | `coalesced(run, delay)`: bursts of refreshes become few runs, never stale (tested) |
@@ -1230,9 +1246,9 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
   database, the token store and the server follower are opened by the first process only. No env var
   bypasses it. Verified on Windows with the built binary (two launches: one process, window restored).
 - `src-tauri/src`: `lib.rs` (builder, plugins single-instance / dialog / opener / notification /
-  autostart, window events, setup: data dir = Tauri `app_local_data_dir` or `CLOUDIT_DESKTOP_DATA_DIR`,
-  logging, `Engine::open`, the tray, showing the window, the automatic sync scheduler), `commands/`
-  (account, folders, linking, auto, misc: one thin command per engine call;
+  updater / autostart, window events, setup: data dir = Tauri `app_local_data_dir` or `CLOUDIT_DESKTOP_DATA_DIR`,
+  logging, `Engine::open`, the tray, showing the window, the updater, the automatic sync scheduler),
+  `commands/` (account, folders, linking, auto, misc, updates: one thin command per engine call;
   those that change the folder list or settings notify the scheduler and the tray), `command_names.rs` (list shared with
   `build.rs`, which generates an `allow-<command>` permission each; a test checks that
   `capabilities/default.json` grants exactly these plus event listening: the web view has no plugin
@@ -1240,7 +1256,7 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
   with cancellation, progress throttled to 120 ms, started / finished / status events; `run_auto` for
   the scheduler's runs; every end is reported to the scheduler), `follower.rs` (`events::follow` while
   signed in; events go to the UI and the scheduler; a head or conflict change of a folder not synced
-  automatically refreshes its status), `auto/` (below), `tray/` (below), `window.rs` (hidden start,
+  automatically refreshes its status), `auto/` (below), `tray/` (below), `updater/` (below), `window.rs` (hidden start,
   close to the tray, `show_main`), `notifications.rs` (below), `i18n.rs` (the backend's own en / it texts:
   tray and notifications, `Lang` set by the UI through `set_ui_language`, English until then),
   `state.rs` (also the scheduler and tray handles, the scheduler's UI view, when each folder's last
@@ -1260,9 +1276,14 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
   Resolve = window + `navigate` to the conflict page; `server_conflict` → Resolve, `error` /
   `missing_local_path` / `remote_missing` → Show = window + `navigate` to the folder detail;
   `local_changes` → Upload, `remote_changes` → Download = a manual sync through `ops`, as the UI's;
-  "N more…"), "Sync all" (manual, every non-paused folder), "Pause for 1 hour" / "Resume", "Open
-  cloudit", "Open on the web" (the server URL), "Quit". `tray/icon.rs` paints a dot (warning colour) on
-  the app icon at runtime when a folder needs attention; the tooltip is "cloudit — <header>". The menu
+  "N more…"), "Sync all" (manual, every non-paused folder), "Pause for 1 hour" / "Resume", "Update to
+  X.Y.Z" (or "Version X.Y.Z is available" for a .deb install: the release page) while an app update is
+  available, "Open cloudit", "Open on the web" (the server URL), "Quit". The icon is the monochrome
+  cloud (`icons/tray/white.png` / `black.png`, 32 px, rendered from `icons/source/tray.svg`):
+  `tray/theme.rs` picks white for a dark taskbar and black for a light one, read at startup and every
+  minute (`theme_windows.rs`: `HKCU\…\Themes\Personalize\SystemUsesLightTheme` through `reg.exe`
+  without a console, missing = dark; `theme_unix.rs`: always white). `tray/icon.rs` paints a dot
+  (warning colour) on it at runtime when a folder needs attention; the tooltip is "cloudit — <header>". The menu
   is rebuilt (requests coalesced over 250 ms, replaced only when the model changed, never on progress)
   after every operation, folder change, session change, pause change and language change. Left click
   shows the window on Windows; on Linux (AppIndicator, runtime library `libayatana-appindicator3-1`)
@@ -1281,9 +1302,32 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
   Never for a finished sync. Off with the device-wide switch (`meta` `notifications`, default on), and
   not shown while the main window is visible and focused. Dedupe rules: the pure `Alerts` (tested). In a
   build without installer Windows shows them under the PowerShell app id (the plugin's fallback for
-  binaries in `target/`).
+  binaries in `target/`); the installed app shows them as "cloudit".
 - **Autostart** (`tauri-plugin-autostart`, entry with `--minimized`): the settings toggle reads and sets
-  it through `set_app_settings` (the web view has no plugin permission).
+  it through `set_app_settings` (the web view has no plugin permission). Windows: the `HKCU\…\Run`
+  value `cloudit`; Linux: `~/.config/autostart/cloudit.desktop`, pointing at `$APPIMAGE` when run from an
+  AppImage (the plugin does it: the mounted path changes on every run).
+- **Icon and installers**: the app icon (approved design: indigo rounded square, white cloud, two bars)
+  is `icons/source/app.svg`; `pnpm tauri icon src-tauri/icons/source/app.svg` (run in `apps/desktop`)
+  generated `icons/` (only the desktop sizes, `.ico`, `.icns` are kept). The web favicon is the same SVG
+  (`apps/web/static/favicon.svg` + `favicon.png`). Bundles (`tauri.conf.json` `bundle`): NSIS
+  (`currentUser`: no admin, English + Italian, WebView2 `downloadBootstrapper`), AppImage, deb
+  (depends on `libayatana-appindicator3-1`; Tauri adds webkit / gtk). `make bundle-desktop` builds those
+  of the current OS; releases add `--config src-tauri/tauri.updater.conf.json`
+  (`createUpdaterArtifacts`: signed updater packages, needs `TAURI_SIGNING_PRIVATE_KEY`).
+- **Updater** (`updater/`, `tauri-plugin-updater`, backend only: no plugin permission in the web view):
+  endpoint `https://github.com/jacopofilonzi/cloudit/releases/latest/download/latest.json`, packages
+  signed with the key whose public half is `plugins.updater.pubkey`; Windows install mode `quiet` (the
+  NSIS installer replaces the app and restarts it). Checks 5 s after start, every 6 h and on request;
+  never downloads by itself. `updater/model.rs` is the pure state (`UpdateState {phase: idle | checking |
+  up_to_date | available | waiting | downloading | installing | failed, install: in_app | release_page |
+  never, current_version, latest_version?, notes?, release_url?, downloaded, total?, error?,
+  checked_at?}`, tested). `Install::detect`: debug builds `never` (shown, not installed), Windows or
+  `$APPIMAGE` set `in_app`, else (a .deb) `release_page`. The user's Update (`install_update`, or the
+  tray item) sends `auto::Input::Updating(true)` (`Planner::active` false: no new automatic run), waits
+  until no operation runs (`AppState::any_op_running`), downloads with progress (`update-state` every
+  200 ms), verifies, installs and restarts (`AppHandle::restart` on Linux); a failure sends
+  `Updating(false)` and allows a retry.
 - **Automatic sync** (`src-tauri/src/auto/`; opt-in per folder, `Engine::sync_with` only, so the safety
   rule holds and conflicts are never decided automatically): `mod.rs` is one scheduler task for the app's
   lifetime (inputs through `auto::Handle`: folder changes, session, the switch, file events, server
@@ -1310,7 +1354,8 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
   report or error; `auto` marks the scheduler's runs), `remote` (`RemoteEvent`), `login-finished`,
   `auto-state` (`AutoFolderState[] {folder, process_running, deferred, failures}` of the folders synced
   automatically now), `app-settings` (`AppSettings`, after any change: UI, tray, end of a pause),
-  `navigate` (`NavigateEvent {folder, page: detail | conflict}`, from the tray). `session` also returns
+  `navigate` (`NavigateEvent {folder, page: detail | conflict}`, from the tray), `update-state`
+  (`UpdateState`, every change of the updater). `session` also returns
   the server stream state, and `auto_states` the last `auto-state`, because the UI may load after the
   events.
 - **Commands of the settings and automatic sync** (`commands/auto.rs`): `app_settings` /
@@ -1318,7 +1363,10 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
   {auto_sync, notifications, autostart, paused_until}` (stored by the engine, autostart by the plugin),
   `pause_for(minutes)`, `resume`, `set_auto_sync(folder, AutoSyncSettings)`, `running_processes`
   (executable names, sorted, for the picker), `auto_states`; `set_ui_language(lang)` in
-  `commands/misc.rs`.
+  `commands/misc.rs`. Updates (`commands/updates.rs`): `update_state`, `check_update`,
+  `install_update`, `open_release_page`, `version_info` (`VersionInfo {app_version, server_version?
+  (`GET /health`), latest_version? (the newer release found, or this version after a check found
+  nothing), server_outdated}`).
 - **Types**: client and desktop types derive ts-rs (client: cargo feature `ts`, enabled by the desktop
   crate's dev-dependency; `PathChange.change` is `PathChangeKind`) and `make types` exports them into
   `@cloudit/api-types` next to the server types.
@@ -1330,15 +1378,20 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
   `folders/[id]/settings`, `activity`, `settings`. A conflict left on the server by another device points
   to the history on the web. Folder settings: automatic sync toggle, quiet period (10 s – 5 min chips),
   associated program (free input or a filtered picker of the running ones, clear); the app settings hold
-  autostart, the device-wide switch, "Pause for 1 hour" / Resume and notifications. The app shell shows
-  "Automatic sync is paused until HH:MM" with Resume while paused. The root layout sends the language to
+  autostart, the device-wide switch, "Pause for 1 hour" / Resume and notifications, and About (this
+  app's, the server's and the latest version, "Check for updates", and "The server runs X, the latest
+  is Y: ask its administrator to update it" when `server_outdated`). The app shell shows
+  `UpdateBanner` (an available version with its notes and Update, or Download for a .deb, a note for
+  dev builds; then waiting / download progress / installing / failed with retry) and "Automatic sync
+  is paused until HH:MM" with Resume while paused. The root layout sends the language to
   the backend (`set_ui_language`) at startup and on every switch; the store follows `app-settings` and
   answers `navigate` (selects the folder, opens the folder list or its conflict page). The folder list
   tags automatic folders ("Auto"),
   the detail says when downloads wait for the program to close or a run is retrying; automatic runs
   stopped only by locked files show no error.
 - **Run**: `make dev-desktop` (tauri dev), `make build-desktop` (release binary
-  `target/release/cloudit-desktop`, no installer). Env: `CLOUDIT_DESKTOP_DATA_DIR` (scratch state),
+  `target/release/cloudit-desktop`, no installer), `make bundle-desktop` (installers under
+  `target/release/bundle/`). Env: `CLOUDIT_DESKTOP_DATA_DIR` (scratch state),
   `CLOUDIT_DESKTOP_NO_OPEN` (only log the URLs to open; automated runs), `RUST_LOG`. A plain `cargo build`
   loads the dev server URL; the cargo feature `custom-protocol` (set by `tauri build`) embeds the UI.
   `build.rs` creates a stub `apps/desktop/build` when missing so clippy and tests compile without the UI.
@@ -1432,7 +1485,7 @@ warnings, eslint, svelte-check, cargo test, vitest, type freshness, web build), 
 `up`/`down`, `up-ha`/`down-ha` (HA example stack; `down-ha` keeps volumes), `test-ha`
 (`scripts/test-ha.mjs`: postgres + garage + valkey from `docker-compose.ha.yml` as project
 `cloudit-test` on random 127.0.0.1 ports, `cargo test -p cloudit-server` with the `TEST_*` env, then
-`down -v`; `--keep` leaves them running), `seed`, `clean`, `version V=x.y.z`.
+`down -v`; `--keep` leaves them running), `seed`, `clean`, `version V=x.y.z`, `build-desktop`, `bundle-desktop` (the installers of this OS).
 
 **Dev seed** (`make seed`, `crates/server/examples/seed/`: `main.rs` the scenario, `api.rs` HTTP +
 sync client on `cloudit-core`, `data.rs` deterministic demo files): fills a LOCAL running
@@ -1466,10 +1519,8 @@ app (done) · 5b the app pages (scopes, folders, history, sharing, devices, tras
 updates: done) · 5c administration pages and the final end-to-end check (milestone 5 done) · 6a
 client sync engine `crates/client` (done) · 6b desktop app `apps/desktop`: manual sync + conflicts
 over the engine (done) · 7a desktop automatic sync (done) · 7b tray (with "pause for 1 hour"), global pause,
-autostart, notifications (done) · 7c (next) the real app icon, installers.
-
-Planned for milestone 7c in `apps/desktop`: the real app icon (tray icons included; the tray uses the
-placeholder icon now), installers (they also give Windows notifications the app's own name).
+autostart, notifications (done) · 7c app and tray icon, installers, release workflow, in-app
+updater, update notices (done: milestone 7 done).
 
 ### Storage and deployment
 
@@ -1478,5 +1529,6 @@ transfer of the sync API and the lease-guarded background jobs are implemented.
 
 ### Desktop client
 
-- The engine and automatic sync are built ("Client engine", "Desktop app"). The tray, the global
-  pause, autostart and notifications too. Next: the app icon and installers.
+- Built: the engine, automatic sync, the tray, the global pause, autostart, notifications, the
+  icon, the installers and the updater ("Client engine", "Desktop app"). Not planned yet: code
+  signing of the installers, macOS.

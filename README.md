@@ -19,7 +19,29 @@ game using it closes; conflicts are always left to you). It lives in the tray (f
 you, sync all, "pause for 1 hour"; closing the window keeps it running, Quit in the tray menu exits),
 can start with the system and notifies conflicts and sync errors (never finished syncs; a switch in
 its settings turns them off). On Linux the tray needs an AppIndicator host and
-`libayatana-appindicator3-1`. Installers come next. Don't use it for real data yet.
+`libayatana-appindicator3-1`. It installs from the GitHub releases (Windows installer, Linux
+AppImage or .deb, below) and updates itself when you say so. Don't use it for real data yet.
+
+## Desktop app
+
+Download it from the [latest release](https://github.com/jacopofilonzi/cloudit/releases/latest):
+
+- **Windows** (10, 11): `cloudit_<version>_x64-setup.exe`. It installs for your user only (no
+  administrator rights) and adds a Start menu shortcut; the WebView2 runtime is downloaded if
+  missing. The installer is not code-signed yet, so Windows SmartScreen warns about an unknown
+  publisher: choose **More info → Run anyway**.
+- **Linux** (x86_64): the AppImage (`chmod +x cloudit_<version>_amd64.AppImage`, then run it;
+  it updates itself) or the Debian/Ubuntu package
+  (`sudo apt install ./cloudit_<version>_amd64.deb`; it depends on `libwebkit2gtk-4.1-0` and
+  `libayatana-appindicator3-1`). The tray needs an AppIndicator host (most desktops; GNOME needs
+  the AppIndicator extension).
+
+**Updates**: the app looks for a new version a few seconds after it starts and every 6 hours.
+It never updates on its own: a banner (and a tray item) offers **Update**, which waits for the
+running syncs, downloads the new version, checks its signature, installs it and restarts. A
+.deb install can't update itself: the banner links to the release page instead. Settings →
+About shows this app's, the server's and the latest version, and says when the server is older
+than the latest release (only its administrator can update it).
 
 ## Quick start (Docker)
 
@@ -146,7 +168,10 @@ desktop client also polls it every 5 minutes as a safety net).
 Background jobs run on any instance, one at a time per job (a lease in the database):
 **retention** (every 15 minutes), **gc** (unreferenced chunks and manifests, hourly),
 **orphan_sweep** (stored objects without a database row, daily), **trash_purge** (hourly and
-right after a permanent delete) and **cleanup** (expired sessions, codes and tokens, hourly).
+right after a permanent delete), **cleanup** (expired sessions, codes and tokens, hourly) and
+**update_check** (daily: the latest cloudit release on GitHub; admins see a notice in the
+administration when the server is older; `UPDATE_CHECK=false` never contacts GitHub,
+`UPDATE_CHECK_URL` points it elsewhere).
 Admins see their runs in `GET /api/v1/admin/jobs` and can start one with
 `POST /api/v1/admin/jobs/{name}/run`. `JOBS_ENABLED=false` keeps an instance out of the
 scheduling; `GC_GRACE` sets how old unused data must be before it is deleted.
@@ -251,6 +276,24 @@ make test-ha   # server tests against PostgreSQL, Garage and Valkey in Docker
 make help      # every target
 ```
 
+Desktop: `make dev-desktop` (hot reload), `make build-desktop` (release binary),
+`make bundle-desktop` (the installers of this OS under `target/release/bundle/`).
+
+### Releases
+
+1. `make version V=x.y.z` (every `Cargo.toml`, `package.json` and `tauri.conf.json`), commit.
+2. Tag and push the tag: `git tag vx.y.z && git push origin vx.y.z`.
+3. The **Release** workflow checks the tag against those versions, builds the Windows
+   installer and the Linux AppImage + deb with their updater signatures and `latest.json`,
+   publishes the GitHub Release `vx.y.z` and pushes the Docker image. A manual run (no tag)
+   only builds the installers, as workflow artifacts.
+
+The repository secrets `TAURI_SIGNING_PRIVATE_KEY` (the content of the updater signing key)
+and, if the key has a password, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` sign the updates; the
+matching public key is in `apps/desktop/src-tauri/tauri.conf.json`. Keep the private key
+backed up outside the repository: **if it is lost, installed apps can no longer update
+themselves** (users must reinstall a build signed with a new key).
+
 Project layout and internals: [STRUCTURE.md](STRUCTURE.md). Contribution rules:
 [AGENTS.md](AGENTS.md).
 
@@ -260,6 +303,9 @@ The server applies database migrations when it starts. With SQLite it backs up t
 first and refuses to start if the backup fails. With PostgreSQL take a backup yourself
 (`pg_dump`) before upgrading.
 
+- **Next release (update check):** nothing required. A new daily job `update_check` asks the
+  GitHub API for the latest release (outgoing HTTPS to `api.github.com`); set
+  `UPDATE_CHECK=false` to keep the server from contacting it.
 - **Next release (events and jobs):** no manual step is required, but read on. New tables
   (`jobs`, `job_runs`, `object_deletions`) and columns (`scopes.purge_requested_at`,
   `folders.purge_requested_at`) are created at startup. The maintenance jobs start with the
