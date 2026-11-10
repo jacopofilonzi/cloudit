@@ -169,8 +169,16 @@ pub async fn summary(
     State(state): State<AppState>,
     _admin: AdminUser,
 ) -> Result<Json<AdminSummary>, ApiError> {
+    let server_version = env!("CARGO_PKG_VERSION").to_owned();
+    let latest_release = settings::latest_release(&state.db).await?;
+    let update_available = latest_release
+        .as_ref()
+        .is_some_and(|r| cloudit_core::version::is_newer(&r.version, &server_version));
     Ok(Json(AdminSummary {
         pending_users: users::count_pending(&state.db).await?,
+        server_version,
+        latest_release,
+        update_available,
     }))
 }
 

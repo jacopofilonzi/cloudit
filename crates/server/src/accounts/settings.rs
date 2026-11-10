@@ -4,7 +4,8 @@
 //! `autolink_email` (default `false`), `public_url` (`null`/missing = none),
 //! `retention_max_versions` (default 20), `retention_max_per_day` (default 5),
 //! `trash_retention_days` (default 30), `default_quota_bytes` (`null`/missing =
-//! unlimited) and `secret_key_check` (see `crypto::canary`).
+//! unlimited), `latest_release` (`{version, url, checked_at}`, written by the
+//! `update_check` job) and `secret_key_check` (see `crypto::canary`).
 
 use anyhow::Context as _;
 use cloudit_core::protocol::{NewAccounts, RegistrationMode};
@@ -238,4 +239,21 @@ pub async fn set_default_quota_bytes(
     by: Option<Uuid>,
 ) -> anyhow::Result<()> {
     set(db, DEFAULT_QUOTA_BYTES, &value, by).await
+}
+
+/// The latest release seen by the `update_check` job.
+pub const LATEST_RELEASE: &str = "latest_release";
+
+/// The latest release the `update_check` job stored (`None`: never checked).
+pub async fn latest_release(
+    db: &impl ConnectionTrait,
+) -> anyhow::Result<Option<cloudit_core::protocol::LatestRelease>> {
+    get(db, LATEST_RELEASE).await
+}
+
+pub async fn set_latest_release(
+    db: &impl ConnectionTrait,
+    release: &cloudit_core::protocol::LatestRelease,
+) -> anyhow::Result<()> {
+    set(db, LATEST_RELEASE, release, None).await
 }

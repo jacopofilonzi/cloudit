@@ -209,4 +209,23 @@ pub struct UpdateSettingsRequest {
 pub struct AdminSummary {
     /// Accounts waiting for approval.
     pub pending_users: u64,
+    /// The version this server runs.
+    pub server_version: String,
+    /// The latest published release, as the `update_check` job last saw it (`null`:
+    /// never checked, checks disabled, or no release yet).
+    pub latest_release: Option<LatestRelease>,
+    /// `latest_release` is newer than `server_version`.
+    pub update_available: bool,
+}
+
+/// The latest published cloudit release (`update_check` job).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct LatestRelease {
+    /// `major.minor.patch`, without the tag's `v`.
+    pub version: String,
+    /// The release page (`https://…`).
+    pub url: String,
+    /// When the job fetched it (RFC 3339).
+    pub checked_at: String,
 }

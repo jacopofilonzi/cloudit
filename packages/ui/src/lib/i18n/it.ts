@@ -473,6 +473,8 @@ export const it: Dictionary = {
     'Vuoto = predefinito del server, 0 = illimitate. Il numero in grigio è il limite in vigore.',
   'admin.title': 'Amministrazione',
   'admin.subtitle': 'Account, metodi di accesso e il server stesso.',
+  'admin.update_available': 'È disponibile cloudit {latest} (questo server usa la {current}).',
+  'admin.update_link': 'Vedi la versione',
   'admin.tab_users': 'Utenti',
   'admin.tab_invites': 'Inviti',
   'admin.tab_providers': 'Provider di accesso',
@@ -678,6 +680,9 @@ export const it: Dictionary = {
   'admin.job_cleanup': 'Pulizia generale',
   'admin.job_cleanup_desc':
     'Rimuove sessioni, codici e tentativi di accesso scaduti e la cronologia vecchia dei processi.',
+  'admin.job_update_check': 'Controllo aggiornamenti',
+  'admin.job_update_check_desc':
+    'Cerca l’ultima versione di cloudit pubblicata, per sapere quando aggiornare questo server.',
   'admin.job_run': 'Avvia ora',
   'admin.job_requested': 'L’esecuzione è stata richiesta.',
   'admin.job_queued': 'In attesa di partire',
@@ -707,6 +712,10 @@ export const it: Dictionary = {
   'admin.count_folders': 'cartelle controllate',
   'admin.count_snapshots_deleted': 'versioni eliminate',
   'admin.count_scopes_deleted': 'raccolte eliminate',
+  'admin.count_checked': 'controlli',
+  'admin.count_newer': 'nuova versione trovata',
+  'admin.count_no_release': 'nessuna versione pubblicata',
+  'admin.count_disabled': 'controlli disattivati',
   'admin.count_folders_deleted': 'cartelle eliminate',
 
   // Desktop app

@@ -68,6 +68,12 @@ pub struct Config {
     /// `GC_GRACE`, default 24 h (at least 1 h): age before an unreferenced chunk or
     /// manifest row, or an object without row, may be garbage-collected.
     pub gc_grace: Duration,
+    /// `UPDATE_CHECK`, default `true`: the `update_check` job looks up the latest
+    /// release; `false` never contacts it.
+    pub update_check: bool,
+    /// `UPDATE_CHECK_URL`, default [`DEFAULT_UPDATE_CHECK_URL`]: the GitHub API
+    /// "latest release" endpoint (`http(s)://`).
+    pub update_check_url: String,
 }
 
 /// Minimum length of `SETUP_TOKEN`.
@@ -75,6 +81,9 @@ const MIN_SETUP_TOKEN_LEN: usize = 16;
 /// Default and minimum of `GC_GRACE`.
 pub const DEFAULT_GC_GRACE: Duration = Duration::from_secs(24 * 3600);
 const MIN_GC_GRACE: Duration = Duration::from_secs(3600);
+/// Default of `UPDATE_CHECK_URL`.
+pub const DEFAULT_UPDATE_CHECK_URL: &str =
+    "https://api.github.com/repos/jacopofilonzi/cloudit/releases/latest";
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -196,6 +205,22 @@ impl Config {
                 "must be at least 1h",
             ));
         }
+        let update_check = env.bool_or("UPDATE_CHECK", true)?;
+        let update_check_url = match get("UPDATE_CHECK_URL") {
+            None => DEFAULT_UPDATE_CHECK_URL.to_owned(),
+            Some(v)
+                if url::Url::parse(&v).is_ok_and(|u| matches!(u.scheme(), "http" | "https")) =>
+            {
+                v
+            }
+            Some(v) => {
+                return Err(invalid(
+                    "UPDATE_CHECK_URL",
+                    &v,
+                    "expected an http(s):// URL",
+                ));
+            }
+        };
         let secret_key = match get("SECRET_KEY") {
             None => None,
             // Never echo the value.
@@ -222,6 +247,8 @@ impl Config {
             trust_proxy_headers,
             jobs_enabled,
             gc_grace,
+            update_check,
+            update_check_url,
         })
     }
 
@@ -419,6 +446,18 @@ mod tests {
         assert!(parse(&[("GC_GRACE", "59m")]).is_err());
         assert!(parse(&[("GC_GRACE", "soon")]).is_err());
         assert!(parse(&[("JOBS_ENABLED", "sometimes")]).is_err());
+        assert!(config.update_check);
+        assert_eq!(config.update_check_url, DEFAULT_UPDATE_CHECK_URL);
+        let config = parse(&[
+            ("UPDATE_CHECK", "false"),
+            ("UPDATE_CHECK_URL", "http://127.0.0.1:9/latest"),
+        ])
+        .unwrap();
+        assert!(!config.update_check);
+        assert_eq!(config.update_check_url, "http://127.0.0.1:9/latest");
+        assert!(parse(&[("UPDATE_CHECK", "maybe")]).is_err());
+        assert!(parse(&[("UPDATE_CHECK_URL", "ftp://x/y")]).is_err());
+        assert!(parse(&[("UPDATE_CHECK_URL", "not a url")]).is_err());
     }
 
     #[test]

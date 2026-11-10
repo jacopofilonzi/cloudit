@@ -21,7 +21,8 @@
 //!   older than [`cleanup::KEEP_JOB_RUNS`].
 //!
 //! The jobs: [`retention`] (every 15 min), [`gc`] (1 h), [`orphans`] (`orphan_sweep`,
-//! daily), [`trash_purge`] (1 h, and on request), [`cleanup`] (1 h).
+//! daily), [`trash_purge`] (1 h, and on request), [`cleanup`] (1 h),
+//! [`update_check`] (daily: the latest published release).
 
 pub mod cleanup;
 pub mod gc;
@@ -30,6 +31,7 @@ pub mod retention;
 pub mod scheduler;
 pub mod store;
 pub mod trash_purge;
+pub mod update_check;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -46,7 +48,7 @@ pub fn interval(job: JobName) -> Duration {
     match job {
         JobName::Retention => Duration::from_secs(15 * 60),
         JobName::Gc | JobName::TrashPurge | JobName::Cleanup => Duration::from_secs(3600),
-        JobName::OrphanSweep => Duration::from_secs(24 * 3600),
+        JobName::OrphanSweep | JobName::UpdateCheck => Duration::from_secs(24 * 3600),
     }
 }
 
@@ -107,6 +109,7 @@ pub async fn run_job(
         JobName::Gc => gc::run(state, ctx, counts).await,
         JobName::OrphanSweep => orphans::run(state, ctx, counts).await,
         JobName::TrashPurge => trash_purge::run(state, ctx, counts).await,
+        JobName::UpdateCheck => update_check::run(state, ctx, counts).await,
     }
 }
 

@@ -24,6 +24,7 @@ mod snapshots;
 mod support;
 mod sync_client;
 mod trash_purge;
+mod update_check;
 
 use std::path::{Path, PathBuf};
 

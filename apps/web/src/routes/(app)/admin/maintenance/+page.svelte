@@ -77,7 +77,8 @@
     gc: { title: 'admin.job_gc', desc: 'admin.job_gc_desc' },
     orphan_sweep: { title: 'admin.job_orphan_sweep', desc: 'admin.job_orphan_sweep_desc' },
     trash_purge: { title: 'admin.job_trash_purge', desc: 'admin.job_trash_purge_desc' },
-    cleanup: { title: 'admin.job_cleanup', desc: 'admin.job_cleanup_desc' }
+    cleanup: { title: 'admin.job_cleanup', desc: 'admin.job_cleanup_desc' },
+    update_check: { title: 'admin.job_update_check', desc: 'admin.job_update_check_desc' }
   };
 
   const COUNT_KEYS: Record<string, MessageKey> = {
@@ -98,7 +99,11 @@
     folders: 'admin.count_folders',
     snapshots_deleted: 'admin.count_snapshots_deleted',
     scopes_deleted: 'admin.count_scopes_deleted',
-    folders_deleted: 'admin.count_folders_deleted'
+    folders_deleted: 'admin.count_folders_deleted',
+    checked: 'admin.count_checked',
+    newer: 'admin.count_newer',
+    no_release: 'admin.count_no_release',
+    disabled: 'admin.count_disabled'
   };
 
   function counts(run: JobRunInfo): string[] {

@@ -75,7 +75,14 @@ async fn admin_api_lists_jobs_and_requests_runs() {
         .collect();
     assert_eq!(
         names,
-        ["retention", "gc", "orphan_sweep", "trash_purge", "cleanup"]
+        [
+            "retention",
+            "gc",
+            "orphan_sweep",
+            "trash_purge",
+            "cleanup",
+            "update_check"
+        ]
     );
     assert_eq!(resp.body[1]["interval_secs"], 3600);
     assert_eq!(resp.body[0]["requested_at"], json!(null));

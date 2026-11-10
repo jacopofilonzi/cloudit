@@ -3,4 +3,4 @@
 /**
  * A maintenance job.
  */
-export type JobName = "retention" | "gc" | "orphan_sweep" | "trash_purge" | "cleanup";
+export type JobName = "retention" | "gc" | "orphan_sweep" | "trash_purge" | "cleanup" | "update_check";

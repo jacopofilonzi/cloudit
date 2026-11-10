@@ -65,6 +65,7 @@ export type { JobInfo } from './JobInfo';
 export type { JobName } from './JobName';
 export type { JobOutcome } from './JobOutcome';
 export type { JobRunInfo } from './JobRunInfo';
+export type { LatestRelease } from './LatestRelease';
 export type { LinkRefusal } from './LinkRefusal';
 export type { LinkedFolder } from './LinkedFolder';
 export type { LoginEvent } from './LoginEvent';

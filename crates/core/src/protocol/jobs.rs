@@ -23,15 +23,18 @@ pub enum JobName {
     TrashPurge,
     /// Deletes expired sessions, codes, sign-in flows, resets, invites and old job runs.
     Cleanup,
+    /// Looks up the latest published cloudit release (`UPDATE_CHECK`).
+    UpdateCheck,
 }
 
 impl JobName {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Retention,
         Self::Gc,
         Self::OrphanSweep,
         Self::TrashPurge,
         Self::Cleanup,
+        Self::UpdateCheck,
     ];
 
     /// The stored and API name.
@@ -43,6 +46,7 @@ impl JobName {
             Self::OrphanSweep => "orphan_sweep",
             Self::TrashPurge => "trash_purge",
             Self::Cleanup => "cleanup",
+            Self::UpdateCheck => "update_check",
         }
     }
 

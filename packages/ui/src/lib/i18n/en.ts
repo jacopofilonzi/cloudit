@@ -463,6 +463,8 @@ export const en = {
     'Empty = server default, 0 = unlimited. The grey number is the limit in force.',
   'admin.title': 'Administration',
   'admin.subtitle': 'Accounts, sign-in methods and the server itself.',
+  'admin.update_available': 'cloudit {latest} is available (this server runs {current}).',
+  'admin.update_link': 'See the release',
   'admin.tab_users': 'Users',
   'admin.tab_invites': 'Invites',
   'admin.tab_providers': 'Sign-in providers',
@@ -666,6 +668,9 @@ export const en = {
   'admin.job_cleanup': 'Cleanup',
   'admin.job_cleanup_desc':
     'Removes expired sessions, codes, sign-in attempts and old job history.',
+  'admin.job_update_check': 'Update check',
+  'admin.job_update_check_desc':
+    'Looks up the latest cloudit release, so you know when this server can be updated.',
   'admin.job_run': 'Run now',
   'admin.job_requested': 'The run was requested.',
   'admin.job_queued': 'Waiting to start',
@@ -695,6 +700,10 @@ export const en = {
   'admin.count_folders': 'folders checked',
   'admin.count_snapshots_deleted': 'versions deleted',
   'admin.count_scopes_deleted': 'scopes deleted',
+  'admin.count_checked': 'checked',
+  'admin.count_newer': 'newer release found',
+  'admin.count_no_release': 'no release published',
+  'admin.count_disabled': 'checks turned off',
   'admin.count_folders_deleted': 'folders deleted',
 
   // Desktop app

@@ -142,6 +142,10 @@ impl TestApp {
                 .iter()
                 .map(|(k, v)| ((*k).to_owned(), (*v).to_owned())),
         );
+        // Tests never contact GitHub: the update check is off unless a test turns it on.
+        if !extra.iter().any(|(k, _)| *k == "UPDATE_CHECK") {
+            vars.push(("UPDATE_CHECK".to_owned(), "false".to_owned()));
+        }
         // PostgreSQL refuses to start without a key (SQLite generates its key file).
         if db.url().is_some() && !extra.iter().any(|(k, _)| *k == "SECRET_KEY") {
             vars.push(("SECRET_KEY".to_owned(), TEST_SECRET_KEY.to_owned()));
