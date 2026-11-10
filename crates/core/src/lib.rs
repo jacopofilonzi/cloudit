@@ -24,6 +24,7 @@ pub mod hash;
 pub mod manifest;
 pub mod path;
 pub mod protocol;
+pub mod version;
 
 #[cfg(test)]
 mod testutil;
