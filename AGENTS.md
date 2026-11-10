@@ -285,9 +285,15 @@ and align this project's copies with it:
     `aws-lc-rs` (its C build needs a C compiler; it builds on Windows and in the Docker image).
   - **Tauri 2** (not the 3 alphas; desktop app `apps/desktop`): tauri 2.12, tauri-build 2.7,
     tauri-plugin-dialog 2.8, tauri-plugin-opener 2.7, tauri-plugin-single-instance 2.5
-    (registered first: one app instance only), tracing-appender 0.2; JS `@tauri-apps/api` and
-    `@tauri-apps/cli` 2.12. The Tauri CLI writes `features = []` into the desktop
-    `Cargo.toml` on build: keep that form committed so builds don't dirty the tree.
+    (registered first: one app instance only), tauri-plugin-notification 2.8
+    (`app.notification().builder().title(..).body(..).show()`), tauri-plugin-autostart 2.7
+    (`Builder::new().arg(..).build()`, `app.autolaunch()`: `enable` / `disable` / `is_enabled`;
+    its state exists only if the plugin's setup succeeded: `try_state::<AutoLaunchManager>()`),
+    tray: tauri features `tray-icon` + `image-png` (`TrayIconBuilder`, `Image::from_bytes`,
+    menus from `tauri::menu`; `&` in labels is a mnemonic: double it), tracing-appender 0.2; JS `@tauri-apps/api` and
+    `@tauri-apps/cli` 2.12. The Tauri CLI rewrites the `features = […]` lists of the desktop
+    `Cargo.toml` on build (`tauri-build`: `[]`; `tauri`: `["tray-icon", "image-png"]`, kept as is):
+    keep that form committed so builds don't dirty the tree.
   - Desktop automatic sync: **notify 8.2** (not the 9 release candidates; plain watcher,
     no debouncer crate: `notify::recommended_watcher(|res: notify::Result<Event>| …)` then
     `watcher.watch(path, RecursiveMode::Recursive)`; `Event::need_rescan()`) and **sysinfo
@@ -394,12 +400,16 @@ and align this project's copies with it:
 ## Known pitfalls
 
 - **The desktop app runs as a single instance** (`tauri-plugin-single-instance`, registered first in the
-  builder): nothing (engine, database, keychain, server follower) may be opened before it, and no env var
-  or flag may bypass it. Manual runs: `CLOUDIT_DESKTOP_DATA_DIR` for a scratch state, one instance at a time.
+  builder): nothing (engine, database, keychain, server follower, tray) may be opened before it, and no env
+  var or flag may bypass it. Manual runs: `CLOUDIT_DESKTOP_DATA_DIR` for a scratch state, one instance at a
+  time. Closing the window only hides it (the app stays in the tray): stop a manual run with the tray's
+  Quit (or end the process) before rebuilding. The window is created hidden (`"visible": false`) and
+  shown in `setup` unless started with `--minimized` (autostart).
 - Desktop: Tauri 2 (not the 3 alpha). Every command needs an `allow-<name>` permission (`command_names.rs`
   + `capabilities/default.json`, checked by a test). A plain `cargo build` of `cloudit-desktop` loads the dev
   server; use `--features custom-protocol` or `make build-desktop` to embed the UI. Linux CI needs
-  `libwebkit2gtk-4.1-dev librsvg2-dev libsoup-3.0-dev libgtk-3-dev`.
+  `libwebkit2gtk-4.1-dev librsvg2-dev libsoup-3.0-dev libgtk-3-dev libayatana-appindicator3-dev` (the
+  tray; at runtime `libayatana-appindicator3-1`).
 - Desktop automatic sync: every automatic run goes through `ops::run_auto` →
   `Engine::sync_with`; never sync from the scheduler any other way, and keep its decisions
   in the pure `auto::plan::Planner` (tests on paused time). The process name matching lives

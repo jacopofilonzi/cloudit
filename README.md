@@ -15,8 +15,11 @@ detection, history, restore, ZIP download) with storage quotas. The web UI has i
 pages and the app pages (scopes, folders, history, sharing, devices, trash, profile,
 administration). The desktop app (Windows, Linux) links local folders and syncs them by hand
 or automatically (after the folder stays still, at startup, on server changes, when the
-game using it closes; conflicts are always left to you); tray, autostart and installers come
-next. Don't use it for real data yet.
+game using it closes; conflicts are always left to you). It lives in the tray (folders that need
+you, sync all, "pause for 1 hour"; closing the window keeps it running, Quit in the tray menu exits),
+can start with the system and notifies conflicts and sync errors (never finished syncs; a switch in
+its settings turns them off). On Linux the tray needs an AppIndicator host and
+`libayatana-appindicator3-1`. Installers come next. Don't use it for real data yet.
 
 ## Quick start (Docker)
 

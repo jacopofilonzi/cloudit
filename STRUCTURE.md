@@ -6,7 +6,7 @@ the engine `cloudit-client`), and a web UI (served by the
 server as a static SPA) manages accounts, scopes and folders. The UIs talk to the server only
 through its JSON API under `/api/v1`, whose TypeScript types are generated from the Rust ones.
 
-Current state (milestone 7a done: desktop app with automatic sync): the server has its infrastructure (database with migrations and
+Current state (milestone 7b done: desktop app with automatic sync, tray, global pause, autostart and notifications): the server has its infrastructure (database with migrations and
 leases, blob storage, optional Redis with a rate limiter, readiness checks), exposes health probes,
 serves the web SPA and has the account API: first-run setup, password accounts with web sessions,
 invites, admin approval of new accounts, password resets, desktop device login (loopback +
@@ -26,7 +26,7 @@ administration pages (users and approvals, invites, sign-in providers, settings,
 see "Sync formats"); the server verifies every upload with it. `cloudit-client` is the
 desktop sync engine (milestone 6a, no UI): browser sign-in, OS keychain, linked folders,
 scanner with ignore rules, push, pull under the no-overwrite safety rule, conflicts, events
-(see "Client engine"); the desktop app syncs by hand or automatically and decides conflicts
+(see "Client engine"); the desktop app syncs by hand or automatically (tray, pause, autostart, notifications) and decides conflicts
 with the user (see "Desktop app"). Everything under "Planned design" is not implemented yet.
 
 ```text
@@ -1035,7 +1035,10 @@ the server crate).
    `set_auto_sync(id, AutoSyncSettings {enabled, quiet_secs (5..=3600), process_name?
    (executable name, ≤ 255 characters, no path separators)})`, and the device-wide
    switch `auto_sync_enabled` / `set_auto_sync_enabled` (`meta` key `auto_sync`, default
-   on); the engine stores them, the app schedules.
+   on); the engine stores them, the app schedules. Other device-wide settings of the app:
+   `paused_until` / `set_paused_until` (global pause, `meta` `paused_until`; a past end reads
+   as `None`), `notifications_enabled` / `set_notifications_enabled` (`meta` `notifications`,
+   default on), `tray_notice_shown` / `set_tray_notice_shown` (`meta` `tray_notice_shown`).
 5. Live updates: `events::follow(&engine, cancel)` → `RemoteEvent::HeadChanged {folder}` →
    `sync(folder)`; `FoldersChanged` → refresh lists; `SignedOut` → sign in again.
 6. Errors: map `Error::kind()` (stable names) through i18n; `ScanProblems` carries the
@@ -1099,7 +1102,9 @@ SQLite (WAL, foreign keys); migrations are the ordered scripts of `state/migrati
 `PRAGMA user_version` counts those applied (append-only; a newer database is refused).
 Tables: `meta(key, value)` (`last_account` = server + user the links belong to: signing in
 to another account unlinks every folder; `auto_sync` = `on` / `off`, the device-wide
-automatic sync switch, missing = on); `account(id = 1, server_url, user_id, email,
+automatic sync switch, missing = on; `paused_until` = RFC 3339 UTC end of the global
+pause, missing or past = not paused; `notifications` = `on` / `off`, missing = on;
+`tray_notice_shown` = set once the "keeps running in the tray" notice was shown); `account(id = 1, server_url, user_id, email,
 display_name, device_id, device_name, token_location, token_expires_at?, signed_in_at)`;
 `folders(id, local_path UNIQUE (canonical), scope_id, folder_id UNIQUE, scope_name,
 folder_name, emoji?, ignore_patterns (one per line), paused, base_snapshot_id?,
@@ -1224,20 +1229,61 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
   launch unminimizes, shows and focuses the first window and exits **before** `setup`, so the engine
   database, the token store and the server follower are opened by the first process only. No env var
   bypasses it. Verified on Windows with the built binary (two launches: one process, window restored).
-- `src-tauri/src`: `lib.rs` (builder, plugins dialog / opener / single-instance, setup: data dir = Tauri
-  `app_local_data_dir` or `CLOUDIT_DESKTOP_DATA_DIR`, logging, `Engine::open`, the automatic sync
-  scheduler), `commands/` (account, folders, linking, auto, misc: one thin command per engine call;
-  those that change the folder list or settings notify the scheduler), `command_names.rs` (list shared with
+- `src-tauri/src`: `lib.rs` (builder, plugins single-instance / dialog / opener / notification /
+  autostart, window events, setup: data dir = Tauri `app_local_data_dir` or `CLOUDIT_DESKTOP_DATA_DIR`,
+  logging, `Engine::open`, the tray, showing the window, the automatic sync scheduler), `commands/`
+  (account, folders, linking, auto, misc: one thin command per engine call;
+  those that change the folder list or settings notify the scheduler and the tray), `command_names.rs` (list shared with
   `build.rs`, which generates an `allow-<command>` permission each; a test checks that
   `capabilities/default.json` grants exactly these plus event listening: the web view has no plugin
   permissions, dialogs / browser / file manager are opened by the backend), `ops.rs` (runs an operation
   with cancellation, progress throttled to 120 ms, started / finished / status events; `run_auto` for
   the scheduler's runs; every end is reported to the scheduler), `follower.rs` (`events::follow` while
   signed in; events go to the UI and the scheduler; a head or conflict change of a folder not synced
-  automatically refreshes its status), `auto/` (below), `state.rs` (also the scheduler handle, its UI
-  view, when each folder's last operation ended), `events.rs`, `error.rs` (`CommandError {kind:
-  ErrorKind, message, details?}`: the UI translates `kind`), `logging.rs` (daily rolling file in
-  `<data>/logs`, 7 kept).
+  automatically refreshes its status), `auto/` (below), `tray/` (below), `window.rs` (hidden start,
+  close to the tray, `show_main`), `notifications.rs` (below), `i18n.rs` (the backend's own en / it texts:
+  tray and notifications, `Lang` set by the UI through `set_ui_language`, English until then),
+  `state.rs` (also the scheduler and tray handles, the scheduler's UI view, when each folder's last
+  operation ended, the UI language, the notification dedupe state), `events.rs`, `error.rs`
+  (`CommandError {kind: ErrorKind, message, details?}`: the UI translates `kind`), `logging.rs` (daily
+  rolling file in `<data>/logs`, 7 kept).
+- **Window and tray** (`window.rs`, `tray/`): the main window is created hidden (`"visible": false`)
+  and shown in `setup`, except when the process was started by autostart (argument `--minimized`, set
+  on the autostart entry): then it starts in the tray. Closing the window hides it (`CloseRequested` →
+  `prevent_close` + hide) and the app keeps syncing; the first time, a notification says so (once per
+  device: `meta` `tray_notice_shown`; shown even with notifications off). Without a tray (it failed to
+  start) closing quits as usual. "Quit" in the tray exits (`RunEvent::Exit` cancels running operations).
+  The tray (Tauri's built-in, feature `tray-icon`): `tray/model.rs` is the pure menu (`build(TrayInput)`
+  → `TrayModel`, tested): a disabled header ("N folders need attention", "Everything is in sync", "No
+  folders linked yet", "Not signed in", plus "Sync paused until HH:MM"), then up to 8 folders needing
+  action as "<emoji> <name> — <action>" (from `last_state`, like the UI's `displayState`: `conflict` →
+  Resolve = window + `navigate` to the conflict page; `server_conflict` → Resolve, `error` /
+  `missing_local_path` / `remote_missing` → Show = window + `navigate` to the folder detail;
+  `local_changes` → Upload, `remote_changes` → Download = a manual sync through `ops`, as the UI's;
+  "N more…"), "Sync all" (manual, every non-paused folder), "Pause for 1 hour" / "Resume", "Open
+  cloudit", "Open on the web" (the server URL), "Quit". `tray/icon.rs` paints a dot (warning colour) on
+  the app icon at runtime when a folder needs attention; the tooltip is "cloudit — <header>". The menu
+  is rebuilt (requests coalesced over 250 ms, replaced only when the model changed, never on progress)
+  after every operation, folder change, session change, pause change and language change. Left click
+  shows the window on Windows; on Linux (AppIndicator, runtime library `libayatana-appindicator3-1`)
+  icons get no clicks: "Open cloudit" in the menu does it.
+- **Global pause**: `pause_for(minutes)` (1..=1440; the tray uses 60) / `resume` store `meta`
+  `paused_until` (RFC 3339 UTC; it survives restarts and a past value reads as not paused) and tell the
+  scheduler; `Planner::active` is false while paused (no trigger fires, nothing is kept due) and
+  `next_due` wakes the scheduler at the end, when every automatic folder runs as at a start; the
+  scheduler also checks the wall clock every minute (the monotonic clock may lag after sleep) and clears
+  the key. Manual syncs (UI buttons, the tray's Upload / Download / Sync all) still work.
+- **Notifications** (`notifications.rs`, `tauri-plugin-notification`, sent by the backend only): a
+  folder entering `conflict` or `server_conflict` (from any operation's status: an automatic run ending
+  in `NeedsDecision`, the status refresh after `ConflictCreated`), once per entry into the state (states
+  known at startup are not news); the first failure of an automatic retry streak (never the quiet
+  locked-files case); "sign in again" once when the server refuses the token (until the next sign-in).
+  Never for a finished sync. Off with the device-wide switch (`meta` `notifications`, default on), and
+  not shown while the main window is visible and focused. Dedupe rules: the pure `Alerts` (tested). In a
+  build without installer Windows shows them under the PowerShell app id (the plugin's fallback for
+  binaries in `target/`).
+- **Autostart** (`tauri-plugin-autostart`, entry with `--minimized`): the settings toggle reads and sets
+  it through `set_app_settings` (the web view has no plugin permission).
 - **Automatic sync** (`src-tauri/src/auto/`; opt-in per folder, `Engine::sync_with` only, so the safety
   rule holds and conflicts are never decided automatically): `mod.rs` is one scheduler task for the app's
   lifetime (inputs through `auto::Handle`: folder changes, session, the switch, file events, server
@@ -1246,8 +1292,8 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
   ignored paths; errors / rescans count as changes), `processes.rs` the `sysinfo` process table with the
   OS-specific name matching in `processes_windows.rs` (image name, case-insensitive, `.exe` optional) and
   `processes_unix.rs` (exe file name, else first argument, else the 15-byte `comm`). A run happens only
-  while signed in, the device-wide switch is on (`Planner::active`: the one check point, where a future
-  "paused until" goes), the folder has `auto_sync` and isn't paused, and no run is going on for it.
+  while signed in, the device-wide switch is on and there is no global pause (`Planner::active`: the one
+  check point), the folder has `auto_sync` and isn't paused, and no run is going on for it.
   Triggers: app start / sign-in / folder turned automatic / watcher (re)started → at once; file changes →
   after `quiet_secs` without events (debounce; events during an operation on the folder or within 2 s of
   its end are the engine's own and dropped; ignored while this device's conflict decision is open);
@@ -1263,11 +1309,16 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
 - **Events** (Tauri): `folder-progress` (`Progress`), `folder-status`, `folder-op` (started / finished with
   report or error; `auto` marks the scheduler's runs), `remote` (`RemoteEvent`), `login-finished`,
   `auto-state` (`AutoFolderState[] {folder, process_running, deferred, failures}` of the folders synced
-  automatically now). `session` also returns the server stream state, and `auto_states` the last
-  `auto-state`, because the UI may load after the events.
-- **Commands of automatic sync** (`commands/auto.rs`): `app_settings` / `set_app_settings`
-  (`AppSettings {auto_sync}`, stored by the engine), `set_auto_sync(folder, AutoSyncSettings)`,
-  `running_processes` (executable names, sorted, for the picker), `auto_states`.
+  automatically now), `app-settings` (`AppSettings`, after any change: UI, tray, end of a pause),
+  `navigate` (`NavigateEvent {folder, page: detail | conflict}`, from the tray). `session` also returns
+  the server stream state, and `auto_states` the last `auto-state`, because the UI may load after the
+  events.
+- **Commands of the settings and automatic sync** (`commands/auto.rs`): `app_settings` /
+  `set_app_settings(AppSettingsUpdate {auto_sync?, notifications?, autostart?})` → `AppSettings
+  {auto_sync, notifications, autostart, paused_until}` (stored by the engine, autostart by the plugin),
+  `pause_for(minutes)`, `resume`, `set_auto_sync(folder, AutoSyncSettings)`, `running_processes`
+  (executable names, sorted, for the picker), `auto_states`; `set_ui_language(lang)` in
+  `commands/misc.rs`.
 - **Types**: client and desktop types derive ts-rs (client: cargo feature `ts`, enabled by the desktop
   crate's dev-dependency; `PathChange.change` is `PathChangeKind`) and `make types` exports them into
   `@cloudit/api-types` next to the server types.
@@ -1279,7 +1330,11 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
   `folders/[id]/settings`, `activity`, `settings`. A conflict left on the server by another device points
   to the history on the web. Folder settings: automatic sync toggle, quiet period (10 s – 5 min chips),
   associated program (free input or a filtered picker of the running ones, clear); the app settings hold
-  the device-wide switch (autostart stays disabled: 7b). The folder list tags automatic folders ("Auto"),
+  autostart, the device-wide switch, "Pause for 1 hour" / Resume and notifications. The app shell shows
+  "Automatic sync is paused until HH:MM" with Resume while paused. The root layout sends the language to
+  the backend (`set_ui_language`) at startup and on every switch; the store follows `app-settings` and
+  answers `navigate` (selects the folder, opens the folder list or its conflict page). The folder list
+  tags automatic folders ("Auto"),
   the detail says when downloads wait for the program to close or a run is retrying; automatic runs
   stopped only by locked files show no error.
 - **Run**: `make dev-desktop` (tauri dev), `make build-desktop` (release binary
@@ -1410,11 +1465,11 @@ Milestones: 1 scaffolding (done) · 2 core chunking/manifest (done) · 3a server
 app (done) · 5b the app pages (scopes, folders, history, sharing, devices, trash, profile, live
 updates: done) · 5c administration pages and the final end-to-end check (milestone 5 done) · 6a
 client sync engine `crates/client` (done) · 6b desktop app `apps/desktop`: manual sync + conflicts
-over the engine (done) · 7a desktop automatic sync (done) · 7b/7c (next) notifications,
-tray (with "pause for 1 hour"), autostart, installers.
+over the engine (done) · 7a desktop automatic sync (done) · 7b tray (with "pause for 1 hour"), global pause,
+autostart, notifications (done) · 7c (next) the real app icon, installers.
 
-Planned for milestone 7b/7c in `apps/desktop`: notifications, tray, a global "paused until" (plugs into
-`Planner::active`), autostart, installers.
+Planned for milestone 7c in `apps/desktop`: the real app icon (tray icons included; the tray uses the
+placeholder icon now), installers (they also give Windows notifications the app's own name).
 
 ### Storage and deployment
 
@@ -1423,5 +1478,5 @@ transfer of the sync API and the lease-guarded background jobs are implemented.
 
 ### Desktop client
 
-- The engine and automatic sync are built ("Client engine", "Desktop app"). Next: notifications,
-  tray, autostart, installers.
+- The engine and automatic sync are built ("Client engine", "Desktop app"). The tray, the global
+  pause, autostart and notifications too. Next: the app icon and installers.
