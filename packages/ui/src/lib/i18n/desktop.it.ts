@@ -111,7 +111,8 @@ export const desktopIt: { readonly [K in DesktopKey]: string } = {
   'desktop.detail.last_error': 'Ultimo errore',
   'desktop.detail.recheck': 'Ricontrolla',
   'desktop.detail.auto': 'Sincronizzata automaticamente',
-  'desktop.detail.auto_waiting': '{name} è in esecuzione: i download aspettano che si chiuda.',
+  'desktop.detail.auto_waiting':
+    '{name} è in esecuzione: la cartella si sincronizza quando si chiude.',
   'desktop.detail.auto_retrying':
     'La sincronizzazione automatica non è riuscita: riproverà a breve.',
 
@@ -240,7 +241,7 @@ export const desktopIt: { readonly [K in DesktopKey]: string } = {
   'desktop.fs.minutes': '{count} min',
   'desktop.fs.process': 'Programma che usa questa cartella',
   'desktop.fs.process_hint':
-    'Mentre è in esecuzione non viene scaricato nulla nella cartella; quando si chiude, la cartella viene sincronizzata.',
+    'Mentre è in esecuzione la cartella non viene né caricata né scaricata automaticamente; quando si chiude, la cartella viene sincronizzata.',
   'desktop.fs.process_none': 'Nessuno',
   'desktop.fs.process_pick': 'Scegli un programma in esecuzione',
   'desktop.fs.process_filter': 'Filtra i programmi',

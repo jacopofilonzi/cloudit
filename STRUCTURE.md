@@ -1045,8 +1045,8 @@ the server crate).
    `OpContext::with_progress`, cancel with its token). `SyncOutcome::NeedsDecision`,
    `SyncState::Conflict` or `ServerConflict` → offer `keep_local`, `keep_server`,
    `decide_later` (pauses: `sync` then answers `paused`). `activity` for the log.
-   `sync_with(id, SyncOptions { allow_pull: false }, ctx)` (the folder's program runs):
-   pushes as usual, but a run that would pull (`remote_changes`) or ask for a decision
+   `sync_with(id, SyncOptions { allow_pull: false }, ctx)` (not used by the desktop app,
+   which doesn't sync at all while the folder's program runs): pushes as usual, but a run that would pull (`remote_changes`) or ask for a decision
    (`conflict`) touches nothing, locally or on the server, and answers
    `SyncOutcome::Deferred` (the status says which). Automatic sync settings:
    `set_auto_sync(id, AutoSyncSettings {enabled, quiet_secs (5..=3600), process_name?
@@ -1344,8 +1344,10 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
   its end are the engine's own and dropped; ignored while this device's conflict decision is open);
   `HeadChanged` / `ConflictCreated` → at once, a reconnect → every folder; the associated process going
   from running to not running (polled every 5 s, only while some automatic folder has one) → after 3 s.
-  While the process runs the run uses `allow_pull: false` (a folder waits for the first poll before its
-  first run); `Deferred` is shown and the exit runs it again. Failures retry after 1, 2, 5, 15, then
+  While the process runs the folder doesn't sync at all, neither push nor pull (a game like Minecraft
+  writes constantly: every write would be an upload); triggers that come meanwhile wait, and the exit
+  runs the folder once, at least 3 s later (a folder waits for the first poll before its first run; a
+  run already going when the process starts finishes). Failures retry after 1, 2, 5, 15, then
   every 15 min (and on any trigger), logged at warn once per streak; locked (`unreadable`-only) files
   retry quietly after 1 min, or at the process exit; `unauthorized` / blocked / signed out stops
   everything until the next sign-in; a run ending in `NeedsDecision` is not retried. Folders whose path
@@ -1388,7 +1390,7 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
   the backend (`set_ui_language`) at startup and on every switch; the store follows `app-settings` and
   answers `navigate` (selects the folder, opens the folder list or its conflict page). The folder list
   tags automatic folders ("Auto"),
-  the detail says when downloads wait for the program to close or a run is retrying; automatic runs
+  the detail says when the folder waits for the program to close or a run is retrying; automatic runs
   stopped only by locked files show no error.
 - **Run**: `make dev-desktop` (tauri dev), `make build-desktop` (release binary
   `target/release/cloudit-desktop`, no installer), `make bundle-desktop` (installers under

@@ -5,7 +5,7 @@
  */
 export type AutoFolderState = { folder: number, 
 /**
- * The associated process is running (nothing is pulled meanwhile).
+ * The associated process is running (nothing is synced meanwhile).
  */
 process_running: boolean, 
 /**

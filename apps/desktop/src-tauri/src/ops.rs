@@ -90,17 +90,11 @@ where
     run_as(app, folder, action, false, operation).await
 }
 
-/// An automatic sync run (`allow_pull`: false while the folder's program runs).
-pub async fn run_auto(
-    app: &AppHandle,
-    folder: i64,
-    allow_pull: bool,
-) -> Result<SyncReport, CommandError> {
+/// An automatic sync run (the scheduler starts none while the folder's program runs).
+pub async fn run_auto(app: &AppHandle, folder: i64) -> Result<SyncReport, CommandError> {
     let engine = app.state::<AppState>().engine.clone();
     run_as(app, folder, OpAction::Sync, true, |ctx| async move {
-        engine
-            .sync_with(folder, SyncOptions { allow_pull }, &ctx)
-            .await
+        engine.sync_with(folder, SyncOptions::default(), &ctx).await
     })
     .await
 }

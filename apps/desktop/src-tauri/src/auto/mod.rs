@@ -20,9 +20,9 @@
 //!   rules, manual ones only update what the planner knows of the folder's state.
 //!
 //! It also polls the running programs every [`PROCESS_POLL`] while some automatic
-//! folder has an associated process (`processes.rs`), and every [`REWATCH`] retries the
-//! watchers of folders whose local path was missing. What the UI shows of it (process
-//! running, deferred pulls, failures) goes out as the `auto-state` event and is kept
+//! folder has an associated process (`processes.rs`; while it runs the folder doesn't
+//! sync at all), and every [`REWATCH`] retries the watchers of folders whose local path
+//! was missing. What the UI shows of it (process running, deferred runs, failures) goes out as the `auto-state` event and is kept
 //! in `AppState` for the `auto_states` command. The first failure of a retry streak
 //! and a refused token are notified (`notifications.rs`).
 
@@ -428,7 +428,7 @@ impl Scheduler {
             let app = self.app.clone();
             tauri::async_runtime::spawn(async move {
                 // The outcome reaches the planner through `OpFinished`.
-                let _ = ops::run_auto(&app, run.folder, run.allow_pull).await;
+                let _ = ops::run_auto(&app, run.folder).await;
             });
         }
     }

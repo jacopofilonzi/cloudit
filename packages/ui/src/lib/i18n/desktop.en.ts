@@ -106,7 +106,7 @@ export const desktopEn = {
   'desktop.detail.last_error': 'Last error',
   'desktop.detail.recheck': 'Check again',
   'desktop.detail.auto': 'Synced automatically',
-  'desktop.detail.auto_waiting': '{name} is running: downloads wait until it closes.',
+  'desktop.detail.auto_waiting': '{name} is running: the folder syncs when it closes.',
   'desktop.detail.auto_retrying': 'Automatic sync failed: it will try again shortly.',
 
   // Progress
@@ -233,7 +233,7 @@ export const desktopEn = {
   'desktop.fs.minutes': '{count} min',
   'desktop.fs.process': 'Program that uses this folder',
   'desktop.fs.process_hint':
-    'While it runs, nothing is downloaded into the folder; when it closes, the folder is synced.',
+    'While it runs, the folder is neither uploaded nor downloaded automatically; when it closes, the folder is synced.',
   'desktop.fs.process_none': 'None',
   'desktop.fs.process_pick': 'Choose a running program',
   'desktop.fs.process_filter': 'Filter programs',

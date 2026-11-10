@@ -16,8 +16,10 @@
 //!   collect more conflict snapshots);
 //! - start, sign-in, a new eligible folder and server events run at once; the exit of
 //!   the associated process after [`SETTLE`];
-//! - while that process runs the run may not pull ([`Run::allow_pull`]); a folder
-//!   whose process state is still unknown waits for the first poll;
+//! - while that process runs the folder doesn't sync at all (a game such as Minecraft
+//!   writes its files constantly: every write would become an upload); what came due
+//!   meanwhile waits, and the exit runs it. A folder whose process state is still
+//!   unknown waits for the first poll;
 //! - a failure retries with [`BACKOFF`] (and on any trigger); a refused token stops
 //!   everything until the next sign-in; files that can't be read (a running game
 //!   locks them) retry quietly, after the process exits when there is one;
@@ -88,8 +90,6 @@ pub enum Outcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Run {
     pub folder: i64,
-    /// False while the associated process runs.
-    pub allow_pull: bool,
 }
 
 /// What the UI shows of a folder's automatic sync.
@@ -97,7 +97,7 @@ pub struct Run {
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct AutoFolderState {
     pub folder: i64,
-    /// The associated process is running (nothing is pulled meanwhile).
+    /// The associated process is running (nothing is synced meanwhile).
     pub process_running: bool,
     /// The last run had to leave a pull or a decision for later.
     pub deferred: bool,
@@ -133,6 +133,11 @@ impl Slot {
 
     fn eligible(&self) -> bool {
         self.cfg.auto && !self.cfg.paused
+    }
+
+    /// Its process runs, or hasn't been polled yet: what is due waits.
+    fn held_by_process(&self) -> bool {
+        self.cfg.process.is_some() && self.process_running != Some(false)
     }
 
     /// Runs no later than `at`.
@@ -332,7 +337,10 @@ impl Planner {
         };
         let was = slot.process_running.replace(running);
         if was == Some(true) && !running && active && slot.eligible() {
-            slot.due_by(now + SETTLE);
+            // Not sooner than SETTLE, even if something came due while it ran: the
+            // program may still be writing.
+            let at = now + SETTLE;
+            slot.due = Some(slot.due.map_or(at, |due| due.max(at)));
         }
     }
 
@@ -343,17 +351,13 @@ impl Planner {
         }
         let mut runs = Vec::new();
         for (id, slot) in &mut self.slots {
-            let waiting_poll = slot.cfg.process.is_some() && slot.process_running.is_none();
-            if !slot.eligible() || slot.running || waiting_poll {
+            if !slot.eligible() || slot.running || slot.held_by_process() {
                 continue;
             }
             if slot.due.is_some_and(|due| due <= now) {
                 slot.due = None;
                 slot.running = true;
-                runs.push(Run {
-                    folder: *id,
-                    allow_pull: slot.process_running != Some(true),
-                });
+                runs.push(Run { folder: *id });
             }
         }
         runs
@@ -368,7 +372,7 @@ impl Planner {
         }
         self.slots
             .values()
-            .filter(|s| s.eligible() && !s.running)
+            .filter(|s| s.eligible() && !s.running && !s.held_by_process())
             .filter_map(|s| s.due)
             .min()
     }
@@ -514,13 +518,7 @@ mod tests {
         assert!(due_now(&mut p).is_empty());
         assert_eq!(p.next_due(), Some(Instant::now() + Duration::from_secs(10)));
         advance(Duration::from_secs(10)).await;
-        assert_eq!(
-            due_now(&mut p),
-            vec![Run {
-                folder: 1,
-                allow_pull: true
-            }]
-        );
+        assert_eq!(due_now(&mut p), vec![Run { folder: 1 }]);
         // Running: not started twice.
         p.trigger(1, Trigger::Remote, Instant::now());
         assert!(due_now(&mut p).is_empty());
@@ -573,13 +571,7 @@ mod tests {
         assert!(due_now(&mut p).is_empty());
         assert_eq!(p.next_due(), None);
         p.set_enabled(true, Instant::now());
-        assert_eq!(
-            due_now(&mut p),
-            vec![Run {
-                folder: 1,
-                allow_pull: true
-            }]
-        );
+        assert_eq!(due_now(&mut p), vec![Run { folder: 1 }]);
         p.finished(
             1,
             done(Outcome::UpToDate, SyncState::InSync),
@@ -658,13 +650,7 @@ mod tests {
         // It ends by itself and runs every automatic folder.
         assert!(p.expire_pause(Instant::now()));
         assert!(p.active());
-        assert_eq!(
-            due_now(&mut p),
-            vec![Run {
-                folder: 1,
-                allow_pull: true
-            }]
-        );
+        assert_eq!(due_now(&mut p), vec![Run { folder: 1 }]);
         p.finished(
             1,
             done(Outcome::UpToDate, SyncState::InSync),
@@ -688,42 +674,56 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn the_process_blocks_pulls_and_its_exit_runs() {
+    async fn the_process_blocks_every_run_and_its_exit_runs() {
         let mut p = Planner::new(true, true);
         p.set_folders([(1, cfg(Some("game.exe")))], Instant::now());
-        // Waits for the first poll.
+        // Waits for the first poll, without a wake-up for the start run.
         assert!(p.process_unknown());
         assert!(due_now(&mut p).is_empty());
-        p.process_seen(1, true, Instant::now());
-        assert_eq!(
-            due_now(&mut p),
-            vec![Run {
-                folder: 1,
-                allow_pull: false
-            }]
-        );
-        p.finished(
-            1,
-            done(Outcome::Deferred, SyncState::RemoteChanges),
-            Instant::now(),
-        );
-        assert!(p.view()[0].deferred && p.view()[0].process_running);
-        // Still running: nothing new.
-        p.process_seen(1, true, Instant::now());
         assert_eq!(p.next_due(), None);
+        p.process_seen(1, true, Instant::now());
+        assert!(due_now(&mut p).is_empty());
+        assert!(p.view()[0].process_running);
+        // While it runs nothing syncs: neither its writes nor server changes.
+        p.trigger(1, Trigger::Files, Instant::now());
+        p.trigger(1, Trigger::Remote, Instant::now());
+        advance(QUIET * 10).await;
+        p.process_seen(1, true, Instant::now());
+        assert!(due_now(&mut p).is_empty());
+        assert_eq!(p.next_due(), None);
+        // Its exit runs once, SETTLE later, though something was due long before.
         p.process_seen(1, false, Instant::now());
+        assert_eq!(p.next_due(), Some(Instant::now() + SETTLE));
         advance(SETTLE - Duration::from_millis(1)).await;
         assert!(due_now(&mut p).is_empty());
         advance(Duration::from_millis(1)).await;
-        assert_eq!(
-            due_now(&mut p),
-            vec![Run {
-                folder: 1,
-                allow_pull: true
-            }]
+        assert_eq!(due_now(&mut p), vec![Run { folder: 1 }]);
+        p.finished(1, done(Outcome::Pushed, SyncState::InSync), Instant::now());
+        assert_eq!(p.next_due(), None);
+        assert!(!p.view()[0].process_running);
+        // Without the program, file changes run as usual.
+        p.trigger(1, Trigger::Files, Instant::now());
+        advance(QUIET).await;
+        assert_eq!(due_now(&mut p).len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_program_started_during_a_run_holds_the_next_one() {
+        let mut p = planner(Some("game"));
+        p.trigger(1, Trigger::Remote, Instant::now());
+        assert_eq!(due_now(&mut p).len(), 1);
+        p.process_seen(1, true, Instant::now());
+        p.finished(
+            1,
+            done(Outcome::Pushed, SyncState::LocalChanges),
+            Instant::now(),
         );
-        p.finished(1, done(Outcome::Pulled, SyncState::InSync), Instant::now());
-        assert!(!p.view()[0].deferred);
+        // The follow-up run waits for the exit.
+        advance(QUIET).await;
+        assert!(due_now(&mut p).is_empty());
+        p.process_seen(1, false, Instant::now());
+        advance(SETTLE).await;
+        assert_eq!(due_now(&mut p).len(), 1);
     }
 
     #[tokio::test(start_paused = true)]
@@ -778,10 +778,10 @@ mod tests {
         assert!(!p.finished(1, locked, Instant::now()));
         assert_eq!(p.next_due(), Some(Instant::now() + UNREADABLE_RETRY));
         assert_eq!(p.view()[0].failures, 0);
-        // While the game runs: wait for its exit instead.
+        // The game started during the run: wait for its exit instead.
         advance(UNREADABLE_RETRY).await;
-        p.process_seen(1, true, Instant::now());
         assert_eq!(due_now(&mut p).len(), 1);
+        p.process_seen(1, true, Instant::now());
         p.finished(1, locked, Instant::now());
         assert_eq!(p.next_due(), None);
         assert!(p.view()[0].deferred);
