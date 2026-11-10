@@ -17,7 +17,9 @@ import type {
   LoginStarted,
   ScopeInfo,
   SessionState,
-  SyncReport
+  SyncReport,
+  UpdateState,
+  VersionInfo
 } from '@cloudit/api-types';
 
 /** A failed command: `kind` is translated by `errors.ts`, `message` is for logs. */
@@ -127,3 +129,10 @@ export const setAutoSync = (folder: number, settings: AutoSyncSettings) =>
   call<LinkedFolder>('set_auto_sync', { folder, settings });
 export const runningProcesses = () => call<string[]>('running_processes');
 export const autoStates = () => call<AutoFolderState[]>('auto_states');
+
+// App updates and versions
+export const updateState = () => call<UpdateState>('update_state');
+export const checkUpdate = () => call<UpdateState>('check_update');
+export const installUpdate = () => call<UpdateState>('install_update');
+export const openReleasePage = () => call<void>('open_release_page');
+export const versionInfo = () => call<VersionInfo>('version_info');

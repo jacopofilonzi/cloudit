@@ -22,6 +22,23 @@
   import { changeLang } from '#lib/lang.ts';
 
   const account = $derived(app.account);
+  const versions = $derived(app.versions);
+  let checking = $state(false);
+
+  $effect(() => {
+    void app.loadVersions();
+  });
+
+  async function checkNow() {
+    checking = true;
+    try {
+      await app.checkUpdate();
+    } catch (error) {
+      reportError(error);
+    } finally {
+      checking = false;
+    }
+  }
   let lang = $state<Lang>(getLang());
   let theme = $state<ThemeMode>(getThemeMode());
 
@@ -150,13 +167,33 @@
     </div>
 
     <h2 class="mt-5">{t('desktop.settings.about')}</h2>
-    <div class="mt-2 flex items-center gap-3 text-xs text-muted">
-      <span>
-        {t('desktop.settings.versions', {
-          app: app.appVersion,
-          server: app.serverVersion ?? t('desktop.settings.server_unknown')
+    <dl class="mt-2 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-xs">
+      <dt class="text-muted">{t('desktop.settings.app_version')}</dt>
+      <dd>{app.appVersion}</dd>
+      <dt class="text-muted">{t('desktop.settings.server_version')}</dt>
+      <dd>
+        {versions?.server_version ?? app.serverVersion ?? t('desktop.settings.server_unknown')}
+      </dd>
+      <dt class="text-muted">{t('desktop.settings.latest_version')}</dt>
+      <dd>{versions?.latest_version ?? t('desktop.settings.latest_unknown')}</dd>
+    </dl>
+    {#if versions?.server_outdated && versions.server_version && versions.latest_version}
+      <Banner variant="info" class="mt-2">
+        {t('desktop.settings.server_outdated', {
+          server: versions.server_version,
+          latest: versions.latest_version
         })}
-      </span>
+      </Banner>
+    {/if}
+    {#if app.update?.phase === 'up_to_date'}
+      <p class="mt-2 text-xs text-muted">{t('desktop.settings.up_to_date')}</p>
+    {:else if app.update?.error && !app.update.latest_version}
+      <p class="mt-2 text-xs text-muted">{t('desktop.settings.check_failed')}</p>
+    {/if}
+    <div class="mt-2 flex items-center gap-3 text-xs text-muted">
+      <Button size="sm" loading={checking} onclick={checkNow}>
+        {t('desktop.settings.check_updates')}
+      </Button>
       <button
         type="button"
         class="ms-auto text-primary-fg hover:underline"

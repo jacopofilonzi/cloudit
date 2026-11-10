@@ -13,6 +13,7 @@ pub mod auto;
 pub mod folders;
 pub mod linking;
 pub mod misc;
+pub mod updates;
 
 /// Set (to anything) to only log the URLs the app would open: automated runs drive the
 /// browser themselves.

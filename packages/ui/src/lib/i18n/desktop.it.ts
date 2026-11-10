@@ -320,8 +320,33 @@ export const desktopIt: { readonly [K in DesktopKey]: string } = {
   'desktop.settings.auto_sync_hint':
     'Sincronizza da sole le cartelle che la hanno attiva. Se è disattivata, le cartelle si sincronizzano solo quando lo chiedi.',
   'desktop.settings.about': 'Informazioni',
-  'desktop.settings.versions': 'cloudit {app} · server {server}',
-  'desktop.settings.server_unknown': 'server non disponibile',
+  'desktop.settings.app_version': 'Questa app',
+  'desktop.settings.server_version': 'Server',
+  'desktop.settings.latest_version': 'Ultima versione',
+  'desktop.settings.server_unknown': 'non disponibile',
+  'desktop.settings.latest_unknown': 'non ancora controllata',
+  'desktop.settings.check_updates': 'Controlla aggiornamenti',
+  'desktop.settings.up_to_date': 'cloudit è aggiornato.',
+  'desktop.settings.check_failed': 'Impossibile controllare gli aggiornamenti. Riprova più tardi.',
+  'desktop.settings.server_outdated':
+    'Il server usa la {server}, l’ultima è la {latest}: chiedi al suo amministratore di aggiornarlo.',
+
+  // Aggiornamenti dell'app
+  'desktop.update.available': 'È disponibile la versione {version}',
+  'desktop.update.notes': 'Novità',
+  'desktop.update.install': 'Aggiorna',
+  'desktop.update.download_page': 'Scarica',
+  'desktop.update.manual':
+    'Questa copia di cloudit è stata installata con un pacchetto: scarica la nuova versione dalla pagina della release.',
+  'desktop.update.dev_build':
+    'Versione di sviluppo: gli aggiornamenti sono mostrati ma mai installati.',
+  'desktop.update.waiting':
+    'Aggiornamento alla {version}: attendo la fine delle sincronizzazioni in corso…',
+  'desktop.update.downloading': 'Download della versione {version}…',
+  'desktop.update.installing': 'Installazione della versione {version}: cloudit si riavvierà.',
+  'desktop.update.failed':
+    'L’aggiornamento alla {version} non è riuscito. Controlla la connessione e riprova.',
+  'desktop.update.retry': 'Riprova',
   'desktop.settings.log': 'Apri la cartella dei log',
 
   // Errors by engine kind

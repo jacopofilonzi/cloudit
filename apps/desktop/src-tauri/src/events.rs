@@ -21,6 +21,8 @@ pub const AUTO_STATE: &str = "auto-state";
 pub const LOGIN_FINISHED: &str = "login-finished";
 /// The device-wide settings changed, e.g. paused from the tray (`AppSettings`).
 pub const APP_SETTINGS: &str = "app-settings";
+/// The updater's state changed (`UpdateState`).
+pub const UPDATE_STATE: &str = "update-state";
 /// The tray asks the UI to show a folder's page (`NavigateEvent`).
 pub const NAVIGATE: &str = "navigate";
 

@@ -43,6 +43,10 @@ pub enum Msg<'a> {
     PauseHour,
     Resume,
     OpenApp,
+    /// Install the named app version.
+    UpdateTo(&'a str),
+    /// The named app version is out (installed elsewhere: the release page).
+    UpdateAvailable(&'a str),
     OpenWeb,
     Quit,
     /// A conflict this device must decide, in the named folder.
@@ -84,6 +88,8 @@ fn en(msg: Msg<'_>) -> String {
         Msg::PauseHour => "Pause for 1 hour".into(),
         Msg::Resume => "Resume".into(),
         Msg::OpenApp => "Open cloudit".into(),
+        Msg::UpdateTo(version) => format!("Update to {version}"),
+        Msg::UpdateAvailable(version) => format!("Version {version} is available"),
         Msg::OpenWeb => "Open on the web".into(),
         Msg::Quit => "Quit".into(),
         Msg::ConflictTitle(folder) => format!("Conflict in {folder}"),
@@ -123,6 +129,8 @@ fn it(msg: Msg<'_>) -> String {
         Msg::PauseHour => "Metti in pausa per 1 ora".into(),
         Msg::Resume => "Riprendi".into(),
         Msg::OpenApp => "Apri cloudit".into(),
+        Msg::UpdateTo(version) => format!("Aggiorna alla {version}"),
+        Msg::UpdateAvailable(version) => format!("È disponibile la versione {version}"),
         Msg::OpenWeb => "Apri sul web".into(),
         Msg::Quit => "Esci".into(),
         Msg::ConflictTitle(folder) => format!("Conflitto in {folder}"),

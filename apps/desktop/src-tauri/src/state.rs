@@ -166,6 +166,11 @@ impl AppState {
                 .is_some_and(|at| at.elapsed() < grace)
     }
 
+    /// Whether any operation runs on any folder (an update waits for them).
+    pub fn any_op_running(&self) -> bool {
+        !self.registry().ops.is_empty()
+    }
+
     /// Records the scheduler's view for the UI.
     pub fn set_auto_view(&self, view: Vec<AutoFolderState>) {
         *self

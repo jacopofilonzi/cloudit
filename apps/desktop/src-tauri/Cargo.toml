@@ -22,6 +22,8 @@ tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
+# Pinned to the minor: the updater's API moves between minors.
+tauri-plugin-updater = "2.14"
 # Automatic sync: file watching and the list of running programs.
 notify = "8.2.2"
 sysinfo = { version = "0.40.1", default-features = false, features = ["system"] }

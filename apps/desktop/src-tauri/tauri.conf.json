@@ -43,9 +43,7 @@
       "icons/icon.ico"
     ],
     "windows": {
-      "webviewInstallMode": {
-        "type": "downloadBootstrapper"
-      },
+      "webviewInstallMode": { "type": "downloadBootstrapper" },
       "nsis": {
         "installMode": "currentUser",
         "languages": ["English", "Italian"],
@@ -56,6 +54,15 @@
       "deb": {
         "depends": ["libayatana-appindicator3-1"]
       }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVGNTExM0ZDQzlDRjEzNEUKUldST0U4L0ovQk5SWDRFek5nRitGd1ZaZU1WZUZQaEdPem1IclY4V3Z1K0pBbmxYSXhTQVFsNkEK",
+      "endpoints": [
+        "https://github.com/jacopofilonzi/cloudit/releases/latest/download/latest.json"
+      ],
+      "windows": { "installMode": "quiet" }
     }
   }
 }

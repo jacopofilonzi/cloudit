@@ -2,7 +2,8 @@
 //!
 //! - The menu (`model.rs`, pure) lists the folders that need the user with one action
 //!   each (resolve a conflict, upload, download, show what is wrong), then "Sync all",
-//!   "Pause for 1 hour" / "Resume", "Open cloudit", "Open on the web" and "Quit".
+//!   "Pause for 1 hour" / "Resume", "Update to X.Y.Z" when an app update is
+//!   available (`updater`), "Open cloudit", "Open on the web" and "Quit".
 //! - The icon is the monochrome cloud, white or black to suit the taskbar
 //!   (`theme.rs`, read again every [`theme::RECHECK`]); it gets a dot when a folder
 //!   needs attention (`icon.rs`); the tooltip says the same in short.
@@ -33,8 +34,9 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use crate::commands::{self, auto as settings};
 use crate::events::{NAVIGATE, NavigateEvent, NavigatePage, OpAction, emit};
 use crate::state::AppState;
+use crate::updater::{self, Install, UpdatePhase};
 use crate::window;
-use model::{FolderAction, Item, MenuAction, TrayInput, TrayModel};
+use model::{FolderAction, Item, MenuAction, TrayInput, TrayModel, TrayUpdate};
 use theme::Taskbar;
 
 /// The tray icon's id.
@@ -193,11 +195,20 @@ fn render(app: &AppHandle) {
     });
     let has_account = matches!(state.engine.account(), Ok(Some(_)));
     let paused = state.engine.paused_until().ok().flatten().map(local_time);
+    let update = updater::current(app);
+    let shown_update = matches!(update.phase, UpdatePhase::Available | UpdatePhase::Failed)
+        .then_some(update.latest_version.as_deref())
+        .flatten()
+        .map(|version| TrayUpdate {
+            version,
+            in_app: update.install == Install::InApp,
+        });
     let model = model::build(TrayInput {
         signed_in: state.engine.signed_in(),
         has_account,
         folders: &folders,
         paused_until: paused.as_deref(),
+        update: shown_update,
         lang: state.lang(),
     });
     let mut shown = tray
@@ -265,6 +276,16 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
             FolderAction::Upload | FolderAction::Download => {
                 commands::folders::spawn_all(app.clone(), vec![folder], OpAction::Sync);
             }
+        },
+        MenuAction::Update => match updater::current(app).install {
+            Install::InApp => {
+                window::show_main(app);
+                if let Err(error) = updater::install(app) {
+                    tracing::warn!(kind = ?error.kind, message = %error.message, "tray: update failed");
+                }
+            }
+            Install::ReleasePage => commands::updates::open_release_page(app.clone()),
+            Install::Never => window::show_main(app),
         },
         MenuAction::SyncAll => {
             if let Err(error) = commands::folders::sync_all_folders(app) {

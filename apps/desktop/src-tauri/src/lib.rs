@@ -6,6 +6,8 @@
 //! - `follower`: forwards the server's events while signed in;
 //! - `auto`: the automatic sync scheduler (file watchers, associated programs, server
 //!   events, retries) over `ops`;
+//! - `updater`: in-app updates (checked by the backend, installed only when the user
+//!   asks);
 //! - `events`: event names and payloads (TypeScript twins in `src/lib/events.ts`);
 //! - `error`: the serializable error (`kind` is the engine's stable `ErrorKind`).
 //!
@@ -25,6 +27,7 @@ mod notifications;
 mod ops;
 mod state;
 mod tray;
+mod updater;
 mod window;
 
 use std::path::PathBuf;
@@ -53,6 +56,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_autostart::Builder::new()
                 .arg(window::MINIMIZED_ARG)
@@ -109,6 +113,7 @@ pub fn run() {
             if !window::started_minimized() || !tray::exists(app.handle()) {
                 window::show_main(app.handle());
             }
+            updater::start(app.handle());
             auto::start(app.handle(), auto_inputs);
             if signed_in {
                 follower::start(app.handle());
@@ -157,6 +162,11 @@ pub fn run() {
             commands::auto::set_auto_sync,
             commands::auto::running_processes,
             commands::auto::auto_states,
+            commands::updates::update_state,
+            commands::updates::check_update,
+            commands::updates::install_update,
+            commands::updates::open_release_page,
+            commands::updates::version_info,
         ])
         .build(tauri::generate_context!());
     let app = match app {

@@ -149,6 +149,8 @@ pub struct Planner {
     enabled: bool,
     /// The global pause ends then (`None`: not paused).
     paused_until: Option<Instant>,
+    /// An app update is about to be installed: no new run starts (those running end).
+    updating: bool,
     /// The server stream connected at least once in this session (later `Connected`
     /// events are reconnects: changes may have been missed).
     connected: bool,
@@ -167,7 +169,13 @@ impl Planner {
     /// Whether automatic sync may run at all: the one check point.
     #[must_use]
     pub fn active(&self) -> bool {
-        self.signed_in && self.enabled && self.paused_until.is_none()
+        self.signed_in && self.enabled && self.paused_until.is_none() && !self.updating
+    }
+
+    /// Holds every automatic run while an app update installs (`false`: it failed,
+    /// runs resume at once).
+    pub fn set_updating(&mut self, updating: bool, now: Instant) {
+        self.update_active(now, |p| p.updating = updating);
     }
 
     /// Pauses every automatic run until `until`, or resumes (`None`, or a time already
@@ -613,6 +621,19 @@ mod tests {
         assert!(p.view().is_empty());
         p.set_session(true, Instant::now());
         assert_eq!(due_now(&mut p).len(), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_app_update_holds_every_run() {
+        let mut p = planner(None);
+        p.set_updating(true, Instant::now());
+        assert!(!p.active());
+        p.trigger(1, Trigger::Remote, Instant::now());
+        assert!(due_now(&mut p).is_empty());
+        assert_eq!(p.next_due(), None);
+        // The update failed: everything runs again at once.
+        p.set_updating(false, Instant::now());
+        assert_eq!(due_now(&mut p).len(), 1);
     }
 
     #[tokio::test(start_paused = true)]

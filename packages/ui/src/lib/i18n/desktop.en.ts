@@ -312,8 +312,30 @@ export const desktopEn = {
   'desktop.settings.auto_sync_hint':
     'Sync the folders that have it on by themselves. When off, folders sync only when you ask.',
   'desktop.settings.about': 'About',
-  'desktop.settings.versions': 'cloudit {app} · server {server}',
-  'desktop.settings.server_unknown': 'server unavailable',
+  'desktop.settings.app_version': 'This app',
+  'desktop.settings.server_version': 'Server',
+  'desktop.settings.latest_version': 'Latest release',
+  'desktop.settings.server_unknown': 'unavailable',
+  'desktop.settings.latest_unknown': 'not checked yet',
+  'desktop.settings.check_updates': 'Check for updates',
+  'desktop.settings.up_to_date': 'cloudit is up to date.',
+  'desktop.settings.check_failed': 'Could not check for updates. Try again later.',
+  'desktop.settings.server_outdated':
+    'The server runs {server}, the latest is {latest}: ask its administrator to update it.',
+
+  // App updates
+  'desktop.update.available': 'Version {version} is available',
+  'desktop.update.notes': 'What’s new',
+  'desktop.update.install': 'Update',
+  'desktop.update.download_page': 'Download',
+  'desktop.update.manual':
+    'This copy of cloudit was installed with a package: download the new version from the release page.',
+  'desktop.update.dev_build': 'Development build: updates are shown but never installed.',
+  'desktop.update.waiting': 'Updating to {version}: waiting for the running syncs to finish…',
+  'desktop.update.downloading': 'Downloading version {version}…',
+  'desktop.update.installing': 'Installing version {version}: cloudit will restart.',
+  'desktop.update.failed': 'The update to {version} failed. Check your connection and try again.',
+  'desktop.update.retry': 'Try again',
   'desktop.settings.log': 'Open the log folder',
 
   // Errors by engine kind

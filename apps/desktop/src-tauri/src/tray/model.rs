@@ -27,7 +27,12 @@ pub enum FolderAction {
 /// A menu item's action, encoded in its id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuAction {
-    Folder { folder: i64, action: FolderAction },
+    Folder {
+        folder: i64,
+        action: FolderAction,
+    },
+    /// Install the available app update (or show where to get it).
+    Update,
     SyncAll,
     Pause,
     Resume,
@@ -51,6 +56,7 @@ impl MenuAction {
                 };
                 format!("folder:{folder}:{action}")
             }
+            Self::Update => "update".into(),
             Self::SyncAll => "sync_all".into(),
             Self::Pause => "pause".into(),
             Self::Resume => "resume".into(),
@@ -64,6 +70,7 @@ impl MenuAction {
     #[must_use]
     pub fn parse(id: &str) -> Option<Self> {
         match id {
+            "update" => return Some(Self::Update),
             "sync_all" => return Some(Self::SyncAll),
             "pause" => return Some(Self::Pause),
             "resume" => return Some(Self::Resume),
@@ -98,7 +105,17 @@ pub struct TrayInput<'a> {
     pub folders: &'a [LinkedFolder],
     /// The end of the global pause as a local `HH:MM` (`None`: not paused).
     pub paused_until: Option<&'a str>,
+    /// A newer app version the user can act on.
+    pub update: Option<TrayUpdate<'a>>,
     pub lang: Lang,
+}
+
+/// An available app update.
+#[derive(Debug, Clone, Copy)]
+pub struct TrayUpdate<'a> {
+    pub version: &'a str,
+    /// It installs from the app (else the item only shows where to get it).
+    pub in_app: bool,
 }
 
 /// One item of the menu.
@@ -120,7 +137,7 @@ pub struct TrayModel {
     pub status: Vec<Item>,
     /// Sync all and pause / resume.
     pub sync: Vec<Item>,
-    /// Open the app, open on the web.
+    /// The app update (if any), open the app, open on the web.
     pub open: Vec<Item>,
     pub quit: Item,
 }
@@ -232,10 +249,22 @@ pub fn build(input: TrayInput<'_>) -> TrayModel {
         tooltip,
         status,
         sync: vec![item(MenuAction::SyncAll, t(Msg::SyncAll), can_sync), pause],
-        open: vec![
-            item(MenuAction::Open, t(Msg::OpenApp), true),
-            item(MenuAction::Web, t(Msg::OpenWeb), input.has_account),
-        ],
+        open: input
+            .update
+            .map(|u| {
+                let label = if u.in_app {
+                    t(Msg::UpdateTo(u.version))
+                } else {
+                    t(Msg::UpdateAvailable(u.version))
+                };
+                item(MenuAction::Update, label, true)
+            })
+            .into_iter()
+            .chain([
+                item(MenuAction::Open, t(Msg::OpenApp), true),
+                item(MenuAction::Web, t(Msg::OpenWeb), input.has_account),
+            ])
+            .collect(),
         quit: item(MenuAction::Quit, t(Msg::Quit), true),
     }
 }
@@ -273,6 +302,7 @@ mod tests {
             has_account: true,
             folders,
             paused_until: paused,
+            update: None,
             lang: Lang::En,
         }
     }
@@ -373,6 +403,30 @@ mod tests {
     }
 
     #[test]
+    fn an_available_update_comes_first_in_the_open_section() {
+        let model = build(input(&[], None));
+        assert_eq!(labels(&model.open), vec!["Open cloudit", "Open on the web"]);
+        let model = build(TrayInput {
+            update: Some(TrayUpdate {
+                version: "0.3.0",
+                in_app: true,
+            }),
+            ..input(&[], None)
+        });
+        assert_eq!(model.open[0].label, "Update to 0.3.0");
+        assert_eq!(model.open[0].action, Some(MenuAction::Update));
+        let model = build(TrayInput {
+            update: Some(TrayUpdate {
+                version: "0.3.0",
+                in_app: false,
+            }),
+            lang: Lang::It,
+            ..input(&[], None)
+        });
+        assert_eq!(model.open[0].label, "È disponibile la versione 0.3.0");
+    }
+
+    #[test]
     fn menu_ids_round_trip() {
         let actions = [
             MenuAction::Folder {
@@ -383,6 +437,7 @@ mod tests {
                 folder: -1,
                 action: FolderAction::Review,
             },
+            MenuAction::Update,
             MenuAction::SyncAll,
             MenuAction::Pause,
             MenuAction::Resume,

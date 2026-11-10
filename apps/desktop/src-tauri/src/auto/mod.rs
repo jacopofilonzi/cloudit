@@ -9,7 +9,8 @@
 //!   switch ([`cloudit_client::Engine::auto_sync_enabled`]), the global pause
 //!   ([`cloudit_client::Engine::paused_until`]: nothing runs until then; it ends by
 //!   itself at that time, also checked against the wall clock every [`REWATCH`] in
-//!   case the computer slept, and every automatic folder then runs);
+//!   case the computer slept, and every automatic folder then runs), an app update
+//!   about to install (`updater`: no new run starts);
 //! - file changes from one watcher per automatic folder (`watcher.rs`); changes while
 //!   an operation runs on the folder (or just after: [`BUSY_GRACE`]) are the engine's
 //!   own and are dropped;
@@ -73,6 +74,9 @@ pub enum Input {
     Enabled(bool),
     /// The global pause: until then, or resumed (`None`).
     Paused(Option<DateTime<Utc>>),
+    /// An app update is being installed (`true`) or failed (`false`): no new run
+    /// starts meanwhile.
+    Updating(bool),
     /// A server event from the follower.
     Remote(RemoteEvent),
     /// An operation on a folder ended (`auto`: started by the scheduler).
@@ -242,6 +246,7 @@ impl Scheduler {
                 self.paused_until = until;
                 self.planner.set_paused_until(until.map(instant_of), now);
             }
+            Input::Updating(updating) => self.planner.set_updating(updating, now),
             Input::Remote(event) => match event {
                 RemoteEvent::Connected { .. } => self.planner.connected(now),
                 RemoteEvent::HeadChanged { folder, .. }

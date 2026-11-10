@@ -8,7 +8,8 @@ import type {
   LoginEvent,
   NavigateEvent,
   Progress,
-  RemoteEvent
+  RemoteEvent,
+  UpdateState
 } from '@cloudit/api-types';
 
 export const EVENTS = {
@@ -19,7 +20,8 @@ export const EVENTS = {
   login: 'login-finished',
   auto: 'auto-state',
   settings: 'app-settings',
-  navigate: 'navigate'
+  navigate: 'navigate',
+  update: 'update-state'
 } as const;
 
 export interface Handlers {
@@ -31,6 +33,7 @@ export interface Handlers {
   auto: (states: AutoFolderState[]) => void;
   settings: (settings: AppSettings) => void;
   navigate: (event: NavigateEvent) => void;
+  update: (state: UpdateState) => void;
 }
 
 /** Subscribes to every backend event; the returned function unsubscribes all. */
@@ -43,7 +46,8 @@ export async function subscribe(handlers: Handlers): Promise<() => void> {
     listen<LoginEvent>(EVENTS.login, (e) => handlers.login(e.payload)),
     listen<AutoFolderState[]>(EVENTS.auto, (e) => handlers.auto(e.payload)),
     listen<AppSettings>(EVENTS.settings, (e) => handlers.settings(e.payload)),
-    listen<NavigateEvent>(EVENTS.navigate, (e) => handlers.navigate(e.payload))
+    listen<NavigateEvent>(EVENTS.navigate, (e) => handlers.navigate(e.payload)),
+    listen<UpdateState>(EVENTS.update, (e) => handlers.update(e.payload))
   ]);
   return () => stops.forEach((stop) => stop());
 }

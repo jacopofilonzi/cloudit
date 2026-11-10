@@ -45,4 +45,9 @@ pub const COMMANDS: &[&str] = &[
     "set_auto_sync",
     "running_processes",
     "auto_states",
+    "update_state",
+    "check_update",
+    "install_update",
+    "open_release_page",
+    "version_info",
 ];

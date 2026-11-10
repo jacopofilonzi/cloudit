@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-version-info"
+description = "Enables the version_info command without any pre-configured scope."
+commands.allow = ["version_info"]
+
+[[permission]]
+identifier = "deny-version-info"
+description = "Denies the version_info command without any pre-configured scope."
+commands.deny = ["version_info"]

@@ -46,6 +46,11 @@
     "allow-resume",
     "allow-set-auto-sync",
     "allow-running-processes",
-    "allow-auto-states"
+    "allow-auto-states",
+    "allow-update-state",
+    "allow-check-update",
+    "allow-install-update",
+    "allow-open-release-page",
+    "allow-version-info"
   ]
 }

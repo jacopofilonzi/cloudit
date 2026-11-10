@@ -13,7 +13,9 @@ import type {
   NavigateEvent,
   OpAction,
   Progress,
-  RemoteEvent
+  RemoteEvent,
+  UpdateState,
+  VersionInfo
 } from '@cloudit/api-types';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
@@ -68,6 +70,10 @@ class AppStore {
   pausedUntil = $state<string | null>(null);
   /** What automatic sync shows of each automatic folder (absent: not automatic now). */
   auto = $state<Record<number, AutoFolderState>>({});
+  /** The app updater (checks run in the backend). */
+  update = $state<UpdateState | null>(null);
+  /** This app's, the server's and the latest release's versions. */
+  versions = $state<VersionInfo | null>(null);
 
   #stop: (() => void) | null = null;
 
@@ -92,8 +98,10 @@ class AppStore {
         login: (e) => void this.#onLogin(e),
         auto: (states) => this.#onAuto(states),
         settings: (settings) => this.#onSettings(settings),
-        navigate: (event) => void this.#onNavigate(event)
+        navigate: (event) => void this.#onNavigate(event),
+        update: (state) => this.#onUpdate(state)
       });
+      this.#onUpdate(await api.updateState());
       const info = await api.appInfo();
       this.appVersion = info.version;
       this.logDir = info.log_dir;
@@ -117,6 +125,7 @@ class AppStore {
       await this.loadFolders();
       void api.refreshAll();
       void this.#loadServerVersion();
+      void this.loadVersions();
       void this.#loadAuto();
     } else if (session.account) {
       // Signed in before, but the token is gone: sign in again.
@@ -197,6 +206,30 @@ class AppStore {
     }
   }
 
+  /** Reads the versions again (after a check, or when the settings open). */
+  async loadVersions(): Promise<void> {
+    try {
+      this.versions = await api.versionInfo();
+    } catch {
+      this.versions = null;
+    }
+  }
+
+  /** Starts the update the user asked for. */
+  async installUpdate(): Promise<void> {
+    this.#onUpdate(await api.installUpdate());
+  }
+
+  async checkUpdate(): Promise<void> {
+    this.#onUpdate(await api.checkUpdate());
+  }
+
+  #onUpdate(state: UpdateState): void {
+    const checked = state.checked_at !== this.update?.checked_at;
+    this.update = state;
+    if (checked && this.signedIn) void this.loadVersions();
+  }
+
   /** Report an error from a command: a refused token means "sign in again". */
   noteError(error: unknown): void {
     if (needsSignIn(error)) this.#endSession();
@@ -218,6 +251,7 @@ class AppStore {
     this.progress = {};
     this.errors = {};
     this.serverVersion = null;
+    this.versions = null;
     this.auto = {};
   }
 
