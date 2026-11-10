@@ -1,7 +1,7 @@
 // Data every signed-in page shares: the scopes of the sidebar, the storage meter and
-// (for admins) the number of accounts waiting for approval. Pages call `load*` after
+// (for admins) the number of accounts waiting for approval and the release check. Pages call `load*` after
 // their own changes; live events call the `schedule*` variants, which merge bursts.
-import type { ScopeInfo, UsageInfo } from '@cloudit/api-types';
+import type { AdminSummary, ScopeInfo, UsageInfo } from '@cloudit/api-types';
 import { getAdminSummary, getUsage, listScopes } from './api';
 import { coalesced } from './coalesce';
 
@@ -9,6 +9,8 @@ class AppData {
   scopes = $state<ScopeInfo[] | null>(null);
   usage = $state<UsageInfo | null>(null);
   pendingUsers = $state(0);
+  /** The last admin summary (server version, latest release). */
+  summary = $state<AdminSummary | null>(null);
 
   async loadScopes(): Promise<void> {
     this.scopes = await listScopes();
@@ -19,7 +21,9 @@ class AppData {
   }
 
   async loadSummary(): Promise<void> {
-    this.pendingUsers = (await getAdminSummary()).pending_users;
+    const summary = await getAdminSummary();
+    this.summary = summary;
+    this.pendingUsers = summary.pending_users;
   }
 
   /** The initial load; `admin` also reads the approval counter. */
@@ -40,6 +44,7 @@ class AppData {
     this.scopes = null;
     this.usage = null;
     this.pendingUsers = 0;
+    this.summary = null;
   }
 }
 
