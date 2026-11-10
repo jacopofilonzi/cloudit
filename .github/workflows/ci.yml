@@ -52,8 +52,15 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       # pwsh on Windows, so the Makefile recipes are exercised under cmd.exe too.
+      # (`shell` can't take an expression: one step per OS.)
       - name: make check
-        shell: ${{ runner.os == 'Windows' && 'pwsh' || 'bash' }}
+        if: runner.os != 'Windows'
+        shell: bash
+        run: make check
+
+      - name: make check (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: make check
 
   # Server tests against real PostgreSQL, S3 (Garage) and Valkey: the same tests as
