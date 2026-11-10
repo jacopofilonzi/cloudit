@@ -12,6 +12,9 @@ use cloudit_client::{CancellationToken, Engine};
 use tracing_appender::non_blocking::WorkerGuard;
 
 use crate::auto::{self, AutoFolderState};
+use crate::i18n::Lang;
+use crate::notifications::Alerts;
+use crate::tray;
 
 /// Whether the stream of server events is up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -50,6 +53,12 @@ pub struct AppState {
     pub auto: auto::Handle,
     /// Its last view for the UI (`auto_states`).
     auto_view: Mutex<Vec<AutoFolderState>>,
+    /// Rebuilds the tray menu.
+    pub tray: tray::Handle,
+    /// The UI language, for the texts the backend shows (tray, notifications).
+    lang: Mutex<Lang>,
+    /// What was already notified.
+    alerts: Mutex<Alerts>,
     registry: Mutex<Registry>,
     /// The server stream: `Connection` as a number (the UI may load after the event).
     connection: AtomicU8,
@@ -64,6 +73,8 @@ impl AppState {
         log_dir: PathBuf,
         log_guard: Option<WorkerGuard>,
         auto: auto::Handle,
+        tray: tray::Handle,
+        alerts: Alerts,
     ) -> Self {
         Self {
             engine,
@@ -71,10 +82,38 @@ impl AppState {
             log_dir,
             auto,
             auto_view: Mutex::new(Vec::new()),
+            tray,
+            lang: Mutex::new(Lang::default()),
+            alerts: Mutex::new(alerts),
             registry: Mutex::new(Registry::default()),
             connection: AtomicU8::new(0),
             _log_guard: log_guard,
         }
+    }
+
+    /// The UI language.
+    pub fn lang(&self) -> Lang {
+        *self
+            .lang
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Records the UI language; whether it changed.
+    pub fn set_lang(&self, lang: Lang) -> bool {
+        let mut current = self
+            .lang
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        std::mem::replace(&mut *current, lang) != lang
+    }
+
+    /// Runs `f` on the notification dedupe state.
+    pub fn alerts<T>(&self, f: impl FnOnce(&mut Alerts) -> T) -> T {
+        f(&mut self
+            .alerts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 
     /// Records whether the server stream is up.

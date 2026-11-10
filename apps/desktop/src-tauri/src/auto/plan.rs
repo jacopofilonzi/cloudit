@@ -5,9 +5,12 @@
 //!
 //! Rules (STRUCTURE.md "Automatic sync"):
 //!
-//! - a folder runs only while [`Planner::active`] (signed in and the device-wide switch
-//!   on: the single check point, where a later "paused until" goes) and it is
-//!   eligible (`auto_sync` on, not paused);
+//! - a folder runs only while [`Planner::active`] (signed in, the device-wide switch
+//!   on and no global pause: the single check point) and it is eligible (`auto_sync`
+//!   on, not paused);
+//! - while paused nothing fires; the pause ends at its time ([`Planner::next_due`]
+//!   wakes the caller then, [`Planner::expire_pause`] ends it) and every eligible
+//!   folder runs at once, like at a start;
 //! - file changes reset a debounce: the run starts `quiet` after the last one; they are
 //!   ignored while this device's conflict decision is open (the folder would only
 //!   collect more conflict snapshots);
@@ -144,6 +147,8 @@ pub struct Planner {
     slots: BTreeMap<i64, Slot>,
     signed_in: bool,
     enabled: bool,
+    /// The global pause ends then (`None`: not paused).
+    paused_until: Option<Instant>,
     /// The server stream connected at least once in this session (later `Connected`
     /// events are reconnects: changes may have been missed).
     connected: bool,
@@ -159,11 +164,27 @@ impl Planner {
         }
     }
 
-    /// Whether automatic sync may run at all: the one check point (a future "paused
-    /// until <time>" belongs here).
+    /// Whether automatic sync may run at all: the one check point.
     #[must_use]
     pub fn active(&self) -> bool {
-        self.signed_in && self.enabled
+        self.signed_in && self.enabled && self.paused_until.is_none()
+    }
+
+    /// Pauses every automatic run until `until`, or resumes (`None`, or a time already
+    /// past). Resuming runs every eligible folder at once.
+    pub fn set_paused_until(&mut self, until: Option<Instant>, now: Instant) {
+        let until = until.filter(|until| *until > now);
+        self.update_active(now, |p| p.paused_until = until);
+    }
+
+    /// Ends the pause if its time came; whether it ended now.
+    pub fn expire_pause(&mut self, now: Instant) -> bool {
+        if self.paused_until.is_some_and(|until| until <= now) {
+            self.set_paused_until(None, now);
+            true
+        } else {
+            false
+        }
     }
 
     fn eligible(&self, folder: i64) -> bool {
@@ -206,9 +227,17 @@ impl Planner {
     }
 
     fn set_active(&mut self, signed_in: bool, enabled: bool, now: Instant) {
+        self.update_active(now, |p| {
+            p.signed_in = signed_in;
+            p.enabled = enabled;
+        });
+    }
+
+    /// Applies a change to what `active` depends on: becoming active runs every
+    /// eligible folder, becoming inactive forgets what was due.
+    fn update_active(&mut self, now: Instant, change: impl FnOnce(&mut Self)) {
         let was = self.active();
-        self.signed_in = signed_in;
-        self.enabled = enabled;
+        change(self);
         let active = self.active();
         for slot in self.slots.values_mut() {
             if active && !was {
@@ -322,11 +351,12 @@ impl Planner {
         runs
     }
 
-    /// When the next run is due (`None`: nothing scheduled).
+    /// When the next run is due (`None`: nothing scheduled). While paused (and
+    /// otherwise active) that is the end of the pause.
     #[must_use]
     pub fn next_due(&self) -> Option<Instant> {
         if !self.active() {
-            return None;
+            return self.paused_until.filter(|_| self.signed_in && self.enabled);
         }
         self.slots
             .values()
@@ -583,6 +613,57 @@ mod tests {
         assert!(p.view().is_empty());
         p.set_session(true, Instant::now());
         assert_eq!(due_now(&mut p).len(), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_global_pause_stops_everything_until_it_ends() {
+        let mut p = planner(None);
+        let hour = Duration::from_secs(3600);
+        p.trigger(1, Trigger::Files, Instant::now());
+        p.set_paused_until(Some(Instant::now() + hour), Instant::now());
+        assert!(!p.active());
+        // What was due is forgotten and nothing fires meanwhile; the caller wakes at
+        // the end of the pause.
+        assert_eq!(p.next_due(), Some(Instant::now() + hour));
+        p.trigger(1, Trigger::Remote, Instant::now());
+        p.connected(Instant::now());
+        p.connected(Instant::now());
+        p.process_seen(1, false, Instant::now());
+        advance(QUIET).await;
+        assert!(due_now(&mut p).is_empty());
+        assert!(p.view().is_empty());
+        assert!(!p.expire_pause(Instant::now()));
+        advance(hour - QUIET).await;
+        // It ends by itself and runs every automatic folder.
+        assert!(p.expire_pause(Instant::now()));
+        assert!(p.active());
+        assert_eq!(
+            due_now(&mut p),
+            vec![Run {
+                folder: 1,
+                allow_pull: true
+            }]
+        );
+        p.finished(
+            1,
+            done(Outcome::UpToDate, SyncState::InSync),
+            Instant::now(),
+        );
+        // Resuming by hand runs at once too; an end already past is no pause.
+        p.set_paused_until(Some(Instant::now() + hour), Instant::now());
+        p.set_paused_until(None, Instant::now());
+        assert_eq!(due_now(&mut p).len(), 1);
+        p.finished(
+            1,
+            done(Outcome::UpToDate, SyncState::InSync),
+            Instant::now(),
+        );
+        p.set_paused_until(Some(Instant::now()), Instant::now());
+        assert!(p.active());
+        // Signed out while paused: no wake-up for the pause either.
+        p.set_paused_until(Some(Instant::now() + hour), Instant::now());
+        p.set_session(false, Instant::now());
+        assert_eq!(p.next_due(), None);
     }
 
     #[tokio::test(start_paused = true)]

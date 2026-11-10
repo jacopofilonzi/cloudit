@@ -42,6 +42,15 @@ impl CommandError {
             details: None,
         }
     }
+
+    /// A value the UI sent that the app refuses (e.g. a pause too long).
+    pub fn invalid_input(message: impl Into<String>) -> Self {
+        Self {
+            kind: ErrorKind::InvalidInput,
+            message: message.into(),
+            details: None,
+        }
+    }
 }
 
 impl From<Error> for CommandError {

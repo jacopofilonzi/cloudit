@@ -19,6 +19,29 @@ pub const REMOTE: &str = "remote";
 pub const AUTO_STATE: &str = "auto-state";
 /// The browser sign-in ended (`LoginEvent`).
 pub const LOGIN_FINISHED: &str = "login-finished";
+/// The device-wide settings changed, e.g. paused from the tray (`AppSettings`).
+pub const APP_SETTINGS: &str = "app-settings";
+/// The tray asks the UI to show a folder's page (`NavigateEvent`).
+pub const NAVIGATE: &str = "navigate";
+
+/// Which page of a folder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub enum NavigatePage {
+    /// The folder in the list, with its detail.
+    Detail,
+    /// The conflict decision page.
+    Conflict,
+}
+
+/// `navigate` payload.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct NavigateEvent {
+    pub folder: i64,
+    pub page: NavigatePage,
+}
 
 /// What an operation does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

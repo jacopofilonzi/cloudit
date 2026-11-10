@@ -147,13 +147,16 @@ pub fn set_paused(
 /// Refreshes the cached scope / folder names from the server.
 #[tauri::command]
 pub async fn refresh_names(state: State<'_, AppState>) -> Result<Vec<LinkedFolder>, CommandError> {
-    Ok(state.engine.refresh_names(&OpContext::new()).await?)
+    let folders = state.engine.refresh_names(&OpContext::new()).await?;
+    state.tray.refresh();
+    Ok(folders)
 }
 
 /// A command that changed the folder list or a folder's settings: tells the automatic
-/// sync scheduler when it succeeded.
+/// sync scheduler and the tray when it succeeded.
 fn changed<T>(state: &AppState, result: cloudit_client::Result<T>) -> Result<T, CommandError> {
     let value = result?;
     state.auto.send(Input::FoldersChanged);
+    state.tray.refresh();
     Ok(value)
 }

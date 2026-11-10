@@ -1,6 +1,7 @@
 //! Running engine operations for the UI: registration (cancellation), throttled
 //! progress events, the started / finished / status events every operation emits, and
-//! the end of each operation reported to the automatic sync scheduler.
+//! the end of each operation reported to the automatic sync scheduler (and its status
+//! to the notifications, which tell about new conflicts).
 
 use std::future::Future;
 use std::mem::Discriminant;
@@ -16,6 +17,7 @@ use crate::events::{
     FOLDER_OP, FOLDER_PROGRESS, FOLDER_STATUS, FolderOpEvent, FolderStatusEvent, OpAction, OpStage,
     emit,
 };
+use crate::notifications;
 use crate::state::AppState;
 
 /// Progress events are sent at most this often (a phase change always goes through).
@@ -137,6 +139,7 @@ where
     });
     match &result {
         Ok(outcome) => {
+            notifications::observe(app, folder, outcome.status().state);
             emit(
                 app,
                 FOLDER_STATUS,

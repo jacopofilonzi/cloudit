@@ -1,10 +1,11 @@
-//! Activity log, opening things in the OS, server version.
+//! Activity log, opening things in the OS, server version, the UI language.
 
 use cloudit_client::{ActivityEntry, OpContext};
 use tauri::{AppHandle, State};
 
 use super::{open_path, open_url};
 use crate::error::CommandError;
+use crate::i18n::Lang;
 use crate::state::AppState;
 
 #[tauri::command]
@@ -58,4 +59,13 @@ pub fn open_history(
 #[tauri::command]
 pub fn open_log_dir(app: AppHandle, state: State<'_, AppState>) -> Result<(), CommandError> {
     open_path(&app, &state.log_dir)
+}
+
+/// The UI's language (`en`, `it`; anything else counts as English), for the texts the
+/// backend shows itself: the tray menu and the notifications.
+#[tauri::command]
+pub fn set_ui_language(state: State<'_, AppState>, lang: String) {
+    if state.set_lang(Lang::parse(&lang).unwrap_or_default()) {
+        state.tray.refresh();
+    }
 }

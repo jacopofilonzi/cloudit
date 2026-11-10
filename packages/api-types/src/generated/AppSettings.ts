@@ -7,4 +7,16 @@ export type AppSettings = {
 /**
  * Automatic sync of the folders that have it on (default on).
  */
-auto_sync: boolean, };
+auto_sync: boolean, 
+/**
+ * Desktop notifications for conflicts and errors (default on).
+ */
+notifications: boolean, 
+/**
+ * The app starts with the system (in the tray).
+ */
+autostart: boolean, 
+/**
+ * Automatic sync is paused until then (RFC 3339 UTC; `None`: not paused).
+ */
+paused_until: string | null, };

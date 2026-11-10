@@ -16,14 +16,17 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 cloudit-client = { path = "../../../crates/client" }
 cloudit-core.workspace = true
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-autostart = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
 # Automatic sync: file watching and the list of running programs.
 notify = "8.2.2"
 sysinfo = { version = "0.40.1", default-features = false, features = ["system"] }
 tracing-appender = "0.2"
+chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

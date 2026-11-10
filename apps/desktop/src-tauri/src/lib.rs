@@ -19,9 +19,13 @@ mod commands;
 mod error;
 mod events;
 mod follower;
+mod i18n;
 mod logging;
+mod notifications;
 mod ops;
 mod state;
+mod tray;
+mod window;
 
 use std::path::PathBuf;
 
@@ -43,15 +47,18 @@ pub fn run() {
     // database, the token store or the server follower.
     let builder =
         tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            window::show_main(app);
         }));
     let app = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .arg(window::MINIMIZED_ARG)
+                .build(),
+        )
+        .on_window_event(window::on_event)
         .setup(|app| {
             let data_dir = match std::env::var_os(DATA_DIR_ENV) {
                 Some(dir) => PathBuf::from(dir),
@@ -78,7 +85,30 @@ pub fn run() {
             };
             let signed_in = engine.signed_in();
             let (auto_handle, auto_inputs) = auto::channel();
-            app.manage(AppState::new(engine, data_dir, log_dir, guard, auto_handle));
+            let (tray_handle, tray_inputs) = tray::channel();
+            let alerts = notifications::Alerts::new(
+                engine
+                    .folders()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|f| (f.id, f.last_state)),
+            );
+            app.manage(AppState::new(
+                engine,
+                data_dir,
+                log_dir,
+                guard,
+                auto_handle,
+                tray_handle,
+                alerts,
+            ));
+            // Without a tray (e.g. no AppIndicator on Linux) closing the window quits.
+            if let Err(error) = tray::start(app.handle(), tray_inputs) {
+                tracing::warn!(%error, "no tray icon");
+            }
+            if !window::started_minimized() || !tray::exists(app.handle()) {
+                window::show_main(app.handle());
+            }
             auto::start(app.handle(), auto_inputs);
             if signed_in {
                 follower::start(app.handle());
@@ -119,8 +149,11 @@ pub fn run() {
             commands::misc::open_history,
             commands::misc::open_log_dir,
             commands::misc::server_version,
+            commands::misc::set_ui_language,
             commands::auto::app_settings,
             commands::auto::set_app_settings,
+            commands::auto::pause_for,
+            commands::auto::resume,
             commands::auto::set_auto_sync,
             commands::auto::running_processes,
             commands::auto::auto_states,

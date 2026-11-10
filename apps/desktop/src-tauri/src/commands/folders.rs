@@ -59,19 +59,25 @@ pub async fn sync_folder(
 
 /// Syncs every folder that isn't paused, a few at a time, in the background.
 #[tauri::command]
-pub fn sync_all(app: AppHandle, state: State<'_, AppState>) -> Result<(), CommandError> {
-    let ids: Vec<i64> = state
+pub fn sync_all(app: AppHandle) -> Result<(), CommandError> {
+    sync_all_folders(&app)
+}
+
+/// Starts a manual sync of every folder that isn't paused (also the tray's "Sync all").
+pub(crate) fn sync_all_folders(app: &AppHandle) -> Result<(), CommandError> {
+    let ids: Vec<i64> = tauri::Manager::state::<AppState>(app)
         .engine
         .folders()?
         .iter()
         .filter(|f| !f.paused)
         .map(|f| f.id)
         .collect();
-    spawn_all(app, ids, OpAction::Sync);
+    spawn_all(app.clone(), ids, OpAction::Sync);
     Ok(())
 }
 
-fn spawn_all(app: AppHandle, ids: Vec<i64>, action: OpAction) {
+/// Runs `action` (status or a manual sync) on `ids`, a few at a time, in the background.
+pub(crate) fn spawn_all(app: AppHandle, ids: Vec<i64>, action: OpAction) {
     tauri::async_runtime::spawn(async move {
         let limit = Arc::new(Semaphore::new(PARALLEL));
         futures::stream::iter(ids)

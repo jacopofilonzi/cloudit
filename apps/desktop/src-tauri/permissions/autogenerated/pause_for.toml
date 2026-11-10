@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pause-for"
+description = "Enables the pause_for command without any pre-configured scope."
+commands.allow = ["pause_for"]
+
+[[permission]]
+identifier = "deny-pause-for"
+description = "Denies the pause_for command without any pre-configured scope."
+commands.deny = ["pause_for"]

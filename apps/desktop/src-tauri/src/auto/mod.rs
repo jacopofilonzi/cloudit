@@ -6,7 +6,10 @@
 //! Inputs ([`Input`], through the [`Handle`] every part of the app holds):
 //!
 //! - folder list or settings changed (commands), sign-in / sign-out, the device-wide
-//!   switch ([`cloudit_client::Engine::auto_sync_enabled`]);
+//!   switch ([`cloudit_client::Engine::auto_sync_enabled`]), the global pause
+//!   ([`cloudit_client::Engine::paused_until`]: nothing runs until then; it ends by
+//!   itself at that time, also checked against the wall clock every [`REWATCH`] in
+//!   case the computer slept, and every automatic folder then runs);
 //! - file changes from one watcher per automatic folder (`watcher.rs`); changes while
 //!   an operation runs on the folder (or just after: [`BUSY_GRACE`]) are the engine's
 //!   own and are dropped;
@@ -19,7 +22,8 @@
 //! folder has an associated process (`processes.rs`), and every [`REWATCH`] retries the
 //! watchers of folders whose local path was missing. What the UI shows of it (process
 //! running, deferred pulls, failures) goes out as the `auto-state` event and is kept
-//! in `AppState` for the `auto_states` command.
+//! in `AppState` for the `auto_states` command. The first failure of a retry streak
+//! and a refused token are notified (`notifications.rs`).
 
 mod plan;
 mod processes;
@@ -32,6 +36,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use cloudit_client::events::RemoteEvent;
 use cloudit_client::scan::ProblemKind;
 use cloudit_client::{Engine, ErrorKind, LinkedFolder, SyncOutcome};
@@ -39,8 +44,10 @@ use tauri::{AppHandle, Manager};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::time::{Instant, MissedTickBehavior};
 
+use crate::commands::auto as settings;
 use crate::error::{CommandError, ErrorDetails};
 use crate::events::{AUTO_STATE, emit};
+use crate::notifications;
 use crate::ops::{self, Outcome};
 use crate::state::AppState;
 use plan::{Ended, FolderCfg, Planner, Trigger};
@@ -64,6 +71,8 @@ pub enum Input {
     Session(bool),
     /// The device-wide switch.
     Enabled(bool),
+    /// The global pause: until then, or resumed (`None`).
+    Paused(Option<DateTime<Utc>>),
     /// A server event from the follower.
     Remote(RemoteEvent),
     /// An operation on a folder ended (`auto`: started by the scheduler).
@@ -102,9 +111,16 @@ pub fn start(app: &AppHandle, rx: UnboundedReceiver<Input>) {
         tracing::warn!(%error, "could not read the automatic sync switch: assuming on");
         true
     });
+    let paused_until = engine.paused_until().unwrap_or_else(|error| {
+        tracing::warn!(%error, "could not read the global pause: assuming none");
+        None
+    });
+    let mut planner = Planner::new(engine.signed_in(), enabled);
+    planner.set_paused_until(paused_until.map(instant_of), Instant::now());
     let scheduler = Scheduler {
         app: app.clone(),
-        planner: Planner::new(engine.signed_in(), enabled),
+        planner,
+        paused_until,
         engine,
         tx,
         links: HashMap::new(),
@@ -115,6 +131,12 @@ pub fn start(app: &AppHandle, rx: UnboundedReceiver<Input>) {
         view: Vec::new(),
     };
     tauri::async_runtime::spawn(scheduler.run(rx));
+}
+
+/// The monotonic instant of a wall-clock time (now for a time already past).
+fn instant_of(at: DateTime<Utc>) -> Instant {
+    let left = (at - Utc::now()).to_std().unwrap_or(Duration::ZERO);
+    Instant::now() + left
 }
 
 /// How an operation's result counts for the scheduler.
@@ -151,6 +173,9 @@ struct Scheduler {
     engine: Engine,
     tx: UnboundedSender<Input>,
     planner: Planner,
+    /// The end of the global pause on the wall clock: the planner's monotonic instant
+    /// may run late after the computer slept, so this is checked too.
+    paused_until: Option<DateTime<Utc>>,
     links: HashMap<i64, LinkedFolder>,
     watchers: HashMap<i64, FolderWatcher>,
     /// Folders whose watcher failed to start (logged once until it works).
@@ -180,6 +205,7 @@ impl Scheduler {
                 _ = process_tick.tick(), if polling => self.poll_processes().await,
                 _ = rewatch_tick.tick() => retry_failed = true,
             }
+            self.end_pause_if_due();
             self.reconcile_watchers(retry_failed).await;
             if self.planner.process_unknown() {
                 self.poll_processes().await;
@@ -205,17 +231,27 @@ impl Scheduler {
                 self.reload();
             }
             Input::Session(signed_in) => {
+                if signed_in {
+                    self.app.state::<AppState>().alerts(|a| a.signed_in());
+                }
                 self.reload();
                 self.planner.set_session(signed_in, now);
             }
             Input::Enabled(enabled) => self.planner.set_enabled(enabled, now),
+            Input::Paused(until) => {
+                self.paused_until = until;
+                self.planner.set_paused_until(until.map(instant_of), now);
+            }
             Input::Remote(event) => match event {
                 RemoteEvent::Connected { .. } => self.planner.connected(now),
                 RemoteEvent::HeadChanged { folder, .. }
                 | RemoteEvent::ConflictCreated { folder, .. } => {
                     self.planner.trigger(folder, Trigger::Remote, now);
                 }
-                RemoteEvent::SignedOut { .. } => self.planner.set_session(false, now),
+                RemoteEvent::SignedOut { .. } => {
+                    self.planner.set_session(false, now);
+                    notifications::signed_out(&self.app);
+                }
                 RemoteEvent::Disconnected { .. }
                 | RemoteEvent::FoldersChanged
                 | RemoteEvent::UsageChanged => {}
@@ -228,8 +264,17 @@ impl Scheduler {
                 if auto {
                     let streak = self.planner.finished(folder, ended, now);
                     if let Ended::Failed { kind, .. } = ended {
-                        if streak {
+                        if matches!(kind, ErrorKind::Unauthorized | ErrorKind::AccountBlocked) {
+                            notifications::signed_out(&self.app);
+                        } else if streak {
                             tracing::warn!(folder, %kind, "automatic sync failed: retrying later");
+                            let notice = self
+                                .app
+                                .state::<AppState>()
+                                .alerts(|a| a.failed(folder, streak));
+                            if let Some(notice) = notice {
+                                notifications::show(&self.app, notice);
+                            }
                         } else {
                             tracing::debug!(folder, %kind, "automatic sync failed again");
                         }
@@ -243,8 +288,30 @@ impl Scheduler {
         }
     }
 
-    /// Reads the folder list again.
+    /// Ends the global pause when its time came (by the monotonic clock or the wall
+    /// clock): every automatic folder runs, and the UI and the tray hear of it.
+    fn end_pause_if_due(&mut self) {
+        let now = Instant::now();
+        let wall_due = self.paused_until.is_some_and(|until| until <= Utc::now());
+        if wall_due {
+            self.planner.set_paused_until(None, now);
+        }
+        let ended = self.planner.expire_pause(now) || wall_due;
+        if !ended {
+            return;
+        }
+        self.paused_until = None;
+        tracing::info!("the pause of automatic sync ended");
+        if let Err(error) = self.engine.set_paused_until(None) {
+            // Harmless: a past end reads as no pause.
+            tracing::debug!(%error, "could not clear the pause");
+        }
+        settings::changed(&self.app);
+    }
+
+    /// Reads the folder list again (and lets the tray show it).
     fn reload(&mut self) {
+        self.app.state::<AppState>().tray.refresh();
         let folders = match self.engine.folders() {
             Ok(folders) => folders,
             Err(error) => {

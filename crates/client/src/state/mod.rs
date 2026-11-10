@@ -127,7 +127,10 @@ impl Db {
 
     /// Removes a `meta` value.
     pub fn delete_meta(&self, key: &str) -> Result<()> {
-        self.with(|c| c.execute("DELETE FROM meta WHERE key = ?1", [key]).map(drop))
+        self.with(|c| {
+            c.execute("DELETE FROM meta WHERE key = ?1", [key])
+                .map(drop)
+        })
     }
 }
 
