@@ -1,12 +1,15 @@
 // Fails unless a release tag matches the versions of its side (files listed in
 // scripts/versions.mjs): `app-vX.Y.Z` the desktop app's (so a release can't ship
 // installers whose updater version disagrees with its tag), `server-vX.Y.Z` the
-// server's (so the Docker image tags match the server it contains).
+// server's (so the Docker image tags match the server it contains); and that the side's
+// changelog (scripts/changelog.mjs) has entries for the version, so a release never ships
+// without its notes.
 //
 // Usage: node scripts/check-release-version.mjs app-v1.2.3   (the release workflows pass the tag)
 import { readFileSync } from 'node:fs';
 import { relative } from 'node:path';
 
+import { changelogFile, section } from './changelog.mjs';
 import { CARGO_VERSION, root, versionFiles } from './versions.mjs';
 
 const tag = process.argv[2] ?? '';
@@ -33,5 +36,14 @@ for (const [path, value] of found) {
     ok = false;
   }
 }
+const changelog = changelogFile(side);
+if (!section(readFileSync(changelog, 'utf8'), version)) {
+  console.error(
+    `check-release-version: ${relative(root, changelog)} has no entries for ${version} ("## [${version}] - …")`
+  );
+  ok = false;
+}
 if (!ok) process.exit(1);
-console.info(`check-release-version: ${tag} matches the ${side} versions (${found.length} files)`);
+console.info(
+  `check-release-version: ${tag} matches the ${side} versions (${found.length} files) and has its changelog section`
+);

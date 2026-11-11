@@ -5,13 +5,14 @@ name: Release app
 # never rebuilds the server, and the other way round.
 #
 # - Tag `app-vX.Y.Z`: checks the tag against the app versions (scripts/versions.mjs:
-#   crates/client, apps/desktop, tauri.conf.json), creates a draft GitHub Release, builds
-#   the desktop installers into it (Windows NSIS, Linux AppImage + deb, their updater
-#   signatures and `latest.json`), then publishes it as the repository's **latest**
-#   release: installed apps look for updates at
+#   crates/client, apps/desktop, tauri.conf.json) and that CHANGELOG-desktop.md has a
+#   section for the version, creates a draft GitHub Release whose notes are that section,
+#   builds the desktop installers into it (Windows NSIS, Linux AppImage + deb, their
+#   updater signatures and `latest.json`), then publishes it as the repository's
+#   **latest** release: installed apps look for updates at
 #   https://github.com/jacopofilonzi/cloudit/releases/latest/download/latest.json, so the
-#   "latest" release must always be an app release (server releases are published with
-#   `--latest=false`).
+#   "latest" release must always be an app release (server tags create no GitHub Release:
+#   they only publish the Docker image).
 # - Manual run without a tag: builds the same installers (unsigned for the updater) as
 #   workflow artifacts; no release.
 #
@@ -47,16 +48,22 @@ jobs:
       id: ${{ steps.create.outputs.id }}
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
       - id: create
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
+          # The release notes are the version's section of the desktop changelog (the
+          # version job checked that it exists).
+          node scripts/changelog.mjs section CHANGELOG-desktop.md "${TAG#app-v}" > "$RUNNER_TEMP/notes.md"
           # Created through the API so the id comes from the answer itself (a draft is
           # not reliably listed right after its creation).
           id=$(gh api "repos/${{ github.repository }}/releases" \
             -f tag_name="$TAG" -f name="cloudit app ${TAG#app-}" \
-            -F draft=true -F generate_release_notes=true --jq .id)
+            -F body=@"$RUNNER_TEMP/notes.md" -F draft=true --jq .id)
           test -n "$id"
           echo "id=$id" >> "$GITHUB_OUTPUT"
 
@@ -113,7 +120,6 @@ jobs:
           # Releases also build the signed updater packages (tauri.updater.conf.json).
           args: ${{ needs.draft.outputs.id && '--config src-tauri/tauri.updater.conf.json' || '' }}
           releaseId: ${{ needs.draft.outputs.id }}
-          releaseBody: cloudit app ${{ github.ref_name }}
           uploadUpdaterJson: true
           uploadWorkflowArtifacts: ${{ !needs.draft.outputs.id }}
 

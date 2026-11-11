@@ -1,5 +1,6 @@
 // Sets the version of one side of the project: the server and the desktop app are
-// versioned and released separately (files of each side: scripts/versions.mjs).
+// versioned and released separately (files of each side: scripts/versions.mjs), and
+// moves the [Unreleased] entries of its changelog under the new version.
 //
 // Usage: node scripts/set-version.mjs server|app x.y.z
 //        (or `make version-server V=x.y.z` / `make version-app V=x.y.z`)
@@ -7,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { relative } from 'node:path';
 
+import { changelogFile, release, section } from './changelog.mjs';
 import { CARGO_VERSION, root, versionFiles } from './versions.mjs';
 
 const side = process.argv[2] ?? '';
@@ -43,6 +45,21 @@ for (const path of files.json) {
   }
   writeFileSync(path, next);
   updated.push(path);
+}
+
+// The side's changelog: the `[Unreleased]` entries become this version's section (dated
+// today, UTC), unless the version already has one.
+const changelog = changelogFile(side);
+const notes = readFileSync(changelog, 'utf8');
+const released = release(notes, version, new Date().toISOString().slice(0, 10));
+if (released !== notes) {
+  writeFileSync(changelog, released);
+  updated.push(changelog);
+}
+if (!section(released, version)) {
+  console.warn(
+    `set-version: ${relative(root, changelog)} has no entries for ${version}: add them before tagging`
+  );
 }
 
 for (const path of updated) console.info(`set-version: ${relative(root, path)} -> ${version}`);
