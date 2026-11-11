@@ -3,7 +3,7 @@
 # Targets documented with `## ` show up in `make help`.
 
 .DEFAULT_GOAL := help
-.PHONY: help install dev dev-server dev-web dev-desktop build-desktop bundle-desktop seed types fmt fmt-check lint test check check-types build docker up down up-ha down-ha test-ha clean version
+.PHONY: help install dev dev-server dev-web dev-desktop build-desktop bundle-desktop seed types fmt fmt-check lint test check check-types build docker up down up-ha down-ha test-ha clean version-server version-app
 
 IMAGE ?= cloudit:dev
 
@@ -87,5 +87,8 @@ clean: ## Remove build outputs (target, web build, .svelte-kit)
 	cargo clean
 	node scripts/clean.mjs
 
-version: ## Set the version everywhere: make version V=x.y.z
-	node scripts/set-version.mjs $(V)
+version-server: ## Set the server version (core, server, web, packages): make version-server V=x.y.z
+	node scripts/set-version.mjs server $(V)
+
+version-app: ## Set the desktop app version (client, desktop, tauri.conf.json): make version-app V=x.y.z
+	node scripts/set-version.mjs app $(V)

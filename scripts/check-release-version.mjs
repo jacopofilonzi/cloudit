@@ -1,33 +1,37 @@
-// Fails unless a release tag (`vX.Y.Z`) matches the version in Cargo.toml
-// (`[workspace.package]`) and in apps/desktop/src-tauri/tauri.conf.json, so a release
-// can't ship installers whose updater version disagrees with its tag.
+// Fails unless a release tag matches the versions of its side (files listed in
+// scripts/versions.mjs): `app-vX.Y.Z` the desktop app's (so a release can't ship
+// installers whose updater version disagrees with its tag), `server-vX.Y.Z` the
+// server's (so the Docker image tags match the server it contains).
 //
-// Usage: node scripts/check-release-version.mjs v1.2.3   (release.yml passes the tag)
+// Usage: node scripts/check-release-version.mjs app-v1.2.3   (the release workflows pass the tag)
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { relative } from 'node:path';
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+import { CARGO_VERSION, root, versionFiles } from './versions.mjs';
+
 const tag = process.argv[2] ?? '';
-const match = /^v(\d+\.\d+\.\d+)$/.exec(tag);
+const match = /^(app|server)-v(\d+\.\d+\.\d+)$/.exec(tag);
 if (!match) {
-  console.error(`check-release-version: ${JSON.stringify(tag)} is not a vX.Y.Z tag`);
+  console.error(
+    `check-release-version: ${JSON.stringify(tag)} is not an app-vX.Y.Z or server-vX.Y.Z tag`
+  );
   process.exit(1);
 }
-const version = match[1];
+const [, side, version] = match;
+const files = versionFiles(side);
 
-const cargo = readFileSync(join(root, 'Cargo.toml'), 'utf8');
-const section = /\[workspace\.package\][^[]*?\nversion\s*=\s*"([^"]+)"/.exec(cargo);
-const tauri = JSON.parse(
-  readFileSync(join(root, 'apps', 'desktop', 'src-tauri', 'tauri.conf.json'), 'utf8')
-);
-const found = { 'Cargo.toml': section?.[1], 'tauri.conf.json': tauri.version };
+const found = [
+  ...files.cargo.map((path) => [path, CARGO_VERSION.exec(readFileSync(path, 'utf8'))?.[2]]),
+  ...files.json.map((path) => [path, JSON.parse(readFileSync(path, 'utf8')).version])
+];
 let ok = true;
-for (const [file, value] of Object.entries(found)) {
+for (const [path, value] of found) {
   if (value !== version) {
-    console.error(`check-release-version: ${file} has ${value ?? 'no version'}, the tag ${tag}`);
+    console.error(
+      `check-release-version: ${relative(root, path)} has ${value ?? 'no version'}, the tag ${tag}`
+    );
     ok = false;
   }
 }
 if (!ok) process.exit(1);
-console.info(`check-release-version: ${tag} matches Cargo.toml and tauri.conf.json`);
+console.info(`check-release-version: ${tag} matches the ${side} versions (${found.length} files)`);
