@@ -14,8 +14,8 @@ pending_users: number,
  */
 server_version: string, 
 /**
- * The latest published release, as the `update_check` job last saw it (`null`:
- * never checked, checks disabled, or no release yet).
+ * The latest published server version, as the `update_check` job last saw it
+ * (`null`: never checked, checks disabled, or no server version yet).
  */
 latest_release: LatestRelease | null, 
 /**

@@ -224,20 +224,21 @@ pub struct AdminSummary {
     pub pending_users: u64,
     /// The version this server runs.
     pub server_version: String,
-    /// The latest published release, as the `update_check` job last saw it (`null`:
-    /// never checked, checks disabled, or no release yet).
+    /// The latest published server version, as the `update_check` job last saw it
+    /// (`null`: never checked, checks disabled, or no server version yet).
     pub latest_release: Option<LatestRelease>,
     /// `latest_release` is newer than `server_version`.
     pub update_available: bool,
 }
 
-/// The latest published cloudit release (`update_check` job).
+/// The latest published cloudit server version (`update_check` job: the highest
+/// `server-vX.Y.Z` tag).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct LatestRelease {
     /// `major.minor.patch`, without the tag's `v`.
     pub version: String,
-    /// The release page (`https://…`).
+    /// Its release notes (`https://…`: the server changelog).
     pub url: String,
     /// When the job fetched it (RFC 3339).
     pub checked_at: String,

@@ -1,4 +1,4 @@
-//! The `update_check` job against a fake release endpoint on 127.0.0.1 (never GitHub),
+//! The `update_check` job against a fake tag endpoint on 127.0.0.1 (never GitHub),
 //! and what `GET /admin/summary` then tells admins.
 
 use std::sync::{Arc, Mutex};
@@ -16,6 +16,7 @@ use super::jobs::run_now;
 use super::support::TestApp;
 use crate::accounts::settings;
 use crate::jobs::scheduler::{self, Attempt};
+use crate::jobs::update_check::SERVER_CHANGELOG_URL;
 
 /// What the fake answers, and the `User-Agent` it last saw.
 #[derive(Default)]
@@ -28,7 +29,7 @@ struct Fake {
 
 type Shared = Arc<Mutex<Fake>>;
 
-async fn releases(State(fake): State<Shared>, headers: HeaderMap) -> impl IntoResponse {
+async fn tags(State(fake): State<Shared>, headers: HeaderMap) -> impl IntoResponse {
     let mut fake = fake.lock().unwrap();
     fake.hits += 1;
     fake.user_agent = headers
@@ -45,9 +46,12 @@ async fn releases(State(fake): State<Shared>, headers: HeaderMap) -> impl IntoRe
 /// Starts the fake; returns its URL.
 async fn start(fake: &Shared) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}/releases", listener.local_addr().unwrap());
+    let url = format!(
+        "http://{}/git/matching-refs/tags/server-v",
+        listener.local_addr().unwrap()
+    );
     let app = Router::new()
-        .route("/releases", get(releases))
+        .route("/git/matching-refs/tags/server-v", get(tags))
         .with_state(Arc::clone(fake));
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
@@ -59,6 +63,21 @@ fn answer(fake: &Shared, status: u16, body: Value) {
     let mut fake = fake.lock().unwrap();
     fake.status = status;
     fake.body = body.to_string();
+}
+
+/// A ref object as GitHub's "list matching references" answers it.
+fn git_ref(name: &str) -> Value {
+    json!({
+        "ref": name,
+        "node_id": "REF_kwDOtest",
+        "url": format!("https://api.github.com/repos/o/r/git/{name}"),
+        "object": {"sha": "0123456789abcdef0123456789abcdef01234567", "type": "commit",
+                   "url": "https://api.github.com/repos/o/r/git/commits/0123"}
+    })
+}
+
+fn refs(names: &[&str]) -> Value {
+    Value::Array(names.iter().map(|n| git_ref(n)).collect())
 }
 
 async fn run(app: &TestApp) -> (JobOutcome, crate::jobs::Counts) {
@@ -74,7 +93,7 @@ async fn run(app: &TestApp) -> (JobOutcome, crate::jobs::Counts) {
 }
 
 #[tokio::test]
-async fn stores_the_latest_release_and_tells_admins() {
+async fn stores_the_latest_version_and_tells_admins() {
     let fake = Shared::default();
     let url = start(&fake).await;
     let app = TestApp::with(&[("UPDATE_CHECK", "true"), ("UPDATE_CHECK_URL", &url)]).await;
@@ -87,19 +106,17 @@ async fn stores_the_latest_release_and_tells_admins() {
     assert_eq!(resp.body["latest_release"], json!(null));
     assert_eq!(resp.body["update_available"], false);
 
-    // The newest published server release wins; app releases (GitHub's "latest"),
-    // drafts, pre-releases and old `v` tags are ignored.
-    let page = "https://github.com/jacopofilonzi/cloudit/releases/tag/server-v999.0.0";
+    // The highest plain server tag wins; app tags, old `v` tags, pre-release suffixes
+    // and other names are ignored.
     answer(
         &fake,
         200,
-        json!([
-            {"tag_name": "app-v1000.0.0", "html_url": "https://example.test/app", "draft": false, "prerelease": false},
-            {"tag_name": "server-v1001.0.0", "html_url": "https://example.test/draft", "draft": true, "prerelease": false},
-            {"tag_name": "server-v1002.0.0", "html_url": "https://example.test/rc", "draft": false, "prerelease": true},
-            {"tag_name": "v1003.0.0", "html_url": "https://example.test/old", "draft": false, "prerelease": false},
-            {"tag_name": "server-v998.0.0", "html_url": "https://example.test/998", "draft": false, "prerelease": false},
-            {"tag_name": "server-v999.0.0", "html_url": page, "name": "cloudit server 999", "draft": false, "prerelease": false}
+        refs(&[
+            "refs/tags/server-v1000.0.0-rc.1",
+            "refs/tags/server-v998.0.0",
+            "refs/tags/server-v999.0.0",
+            "refs/tags/server-v99.0.0",
+            "refs/tags/server-vnext",
         ]),
     );
     let counts = run_now(&app.state, JobName::UpdateCheck).await;
@@ -110,13 +127,13 @@ async fn stores_the_latest_release_and_tells_admins() {
 
     let resp = app.get("/api/v1/admin/summary", &admin).await;
     assert_eq!(resp.body["latest_release"]["version"], "999.0.0");
-    assert_eq!(resp.body["latest_release"]["url"], page);
+    assert_eq!(resp.body["latest_release"]["url"], SERVER_CHANGELOG_URL);
     assert!(resp.body["latest_release"]["checked_at"].is_string());
     assert_eq!(resp.body["update_available"], true);
 
     // The same version as the server: stored, but nothing to update.
-    let current = format!("server-v{}", env!("CARGO_PKG_VERSION"));
-    answer(&fake, 200, json!([{"tag_name": current, "html_url": page}]));
+    let current = format!("refs/tags/server-v{}", env!("CARGO_PKG_VERSION"));
+    answer(&fake, 200, refs(&[&current]));
     let counts = run_now(&app.state, JobName::UpdateCheck).await;
     assert_eq!(counts.get("newer"), 0);
     let resp = app.get("/api/v1/admin/summary", &admin).await;
@@ -133,22 +150,14 @@ async fn bad_answers_fail_the_run_and_keep_the_previous_value() {
     let url = start(&fake).await;
     let app = TestApp::with(&[("UPDATE_CHECK", "true"), ("UPDATE_CHECK_URL", &url)]).await;
     app.setup_admin().await;
-    let page = "https://example.test/releases/v1.2.3";
-    answer(
-        &fake,
-        200,
-        json!([{"tag_name": "server-v1.2.3", "html_url": page}]),
-    );
+    answer(&fake, 200, refs(&["refs/tags/server-v1.2.3"]));
     run_now(&app.state, JobName::UpdateCheck).await;
 
     for (status, body) in [
         (500, json!({"message": "boom"})),
         (200, json!({"unexpected": true})),
         (200, json!([{"unexpected": true}])),
-        (
-            200,
-            json!([{"tag_name": "server-v2.0.0", "html_url": "javascript:alert(1)"}]),
-        ),
+        (200, json!([{"ref": 5}])),
     ] {
         answer(&fake, status, body.clone());
         let (outcome, _) = run(&app).await;
@@ -160,13 +169,13 @@ async fn bad_answers_fail_the_run_and_keep_the_previous_value() {
         .unwrap();
     assert_eq!(kept.version, "1.2.3");
 
-    // No server release published yet (none at all, a 404, only other tags): a
+    // No server version published yet (no matching tag, a 404, only other tags): a
     // success that stores nothing new.
     for (status, body) in [
         (404, json!({"message": "Not Found"})),
         (200, json!([])),
-        (200, json!([{"tag_name": "app-v3.0.0", "html_url": page}])),
-        (200, json!([{"tag_name": "nightly", "html_url": page}])),
+        (200, refs(&["refs/tags/server-v3.0.0-beta"])),
+        (200, refs(&["refs/tags/server-vnightly"])),
     ] {
         answer(&fake, status, body.clone());
         let (outcome, counts) = run(&app).await;

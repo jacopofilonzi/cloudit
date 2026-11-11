@@ -72,7 +72,7 @@ pub struct Config {
     /// release; `false` never contacts it.
     pub update_check: bool,
     /// `UPDATE_CHECK_URL`, default [`DEFAULT_UPDATE_CHECK_URL`]: the GitHub API
-    /// "list releases" endpoint (`http(s)://`), searched for `server-vX.Y.Z` tags.
+    /// "list matching references" endpoint for the `server-v` tags (`http(s)://`).
     pub update_check_url: String,
 }
 
@@ -83,7 +83,7 @@ pub const DEFAULT_GC_GRACE: Duration = Duration::from_secs(24 * 3600);
 const MIN_GC_GRACE: Duration = Duration::from_secs(3600);
 /// Default of `UPDATE_CHECK_URL`.
 pub const DEFAULT_UPDATE_CHECK_URL: &str =
-    "https://api.github.com/repos/jacopofilonzi/cloudit/releases?per_page=30";
+    "https://api.github.com/repos/jacopofilonzi/cloudit/git/matching-refs/tags/server-v";
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
