@@ -313,14 +313,12 @@ export const desktopEn = {
   'desktop.settings.about': 'About',
   'desktop.settings.app_version': 'This app',
   'desktop.settings.server_version': 'Server',
-  'desktop.settings.latest_version': 'Latest release',
+  'desktop.settings.latest_version': 'Latest app release',
   'desktop.settings.server_unknown': 'unavailable',
   'desktop.settings.latest_unknown': 'not checked yet',
   'desktop.settings.check_updates': 'Check for updates',
   'desktop.settings.up_to_date': 'cloudit is up to date.',
   'desktop.settings.check_failed': 'Could not check for updates. Try again later.',
-  'desktop.settings.server_outdated':
-    'The server runs {server}, the latest is {latest}: ask its administrator to update it.',
 
   // App updates
   'desktop.update.available': 'Version {version} is available',

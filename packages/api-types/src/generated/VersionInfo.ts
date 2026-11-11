@@ -9,11 +9,6 @@ export type VersionInfo = { app_version: string,
  */
 server_version: string | null, 
 /**
- * The latest release the updater knows of (`None`: not checked yet).
+ * The latest app release the updater knows of (`None`: not checked yet).
  */
-latest_version: string | null, 
-/**
- * The server runs a release older than the latest one (only its administrator
- * can update it).
- */
-server_outdated: boolean, };
+latest_version: string | null, };

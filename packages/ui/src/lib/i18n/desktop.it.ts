@@ -322,14 +322,12 @@ export const desktopIt: { readonly [K in DesktopKey]: string } = {
   'desktop.settings.about': 'Informazioni',
   'desktop.settings.app_version': 'Questa app',
   'desktop.settings.server_version': 'Server',
-  'desktop.settings.latest_version': 'Ultima versione',
+  'desktop.settings.latest_version': 'Ultima versione dell’app',
   'desktop.settings.server_unknown': 'non disponibile',
   'desktop.settings.latest_unknown': 'non ancora controllata',
   'desktop.settings.check_updates': 'Controlla aggiornamenti',
   'desktop.settings.up_to_date': 'cloudit è aggiornato.',
   'desktop.settings.check_failed': 'Impossibile controllare gli aggiornamenti. Riprova più tardi.',
-  'desktop.settings.server_outdated':
-    'Il server usa la {server}, l’ultima è la {latest}: chiedi al suo amministratore di aggiornarlo.',
 
   // Aggiornamenti dell'app
   'desktop.update.available': 'È disponibile la versione {version}',

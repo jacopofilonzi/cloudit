@@ -177,14 +177,6 @@
       <dt class="text-muted">{t('desktop.settings.latest_version')}</dt>
       <dd>{versions?.latest_version ?? t('desktop.settings.latest_unknown')}</dd>
     </dl>
-    {#if versions?.server_outdated && versions.server_version && versions.latest_version}
-      <Banner variant="info" class="mt-2">
-        {t('desktop.settings.server_outdated', {
-          server: versions.server_version,
-          latest: versions.latest_version
-        })}
-      </Banner>
-    {/if}
     {#if app.update?.phase === 'up_to_date'}
       <p class="mt-2 text-xs text-muted">{t('desktop.settings.up_to_date')}</p>
     {:else if app.update?.error && !app.update.latest_version}
