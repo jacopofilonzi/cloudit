@@ -51,8 +51,10 @@
     if (!open || !user) return;
     error = null;
     invalid = false;
-    mode = quotaModeOf(user);
-    unlimitedOffered = offersUnlimited(defaultQuota, mode);
+    // A local value: reading `mode` here would make the effect reset every choice.
+    const initial = quotaModeOf(user);
+    mode = initial;
+    unlimitedOffered = offersUnlimited(defaultQuota, initial);
     if (user.quota_bytes === null) {
       amount = '';
       unit = 'GB';

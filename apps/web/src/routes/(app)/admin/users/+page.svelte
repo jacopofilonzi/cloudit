@@ -173,6 +173,8 @@
     if (!quotaUser) return;
     await updateUser(quotaUser.id, update);
     toast.success(t('admin.quota_saved'));
+    // One's own quota also shows in the sidebar meter (no event announces it).
+    if (quotaUser.id === me) void app.loadUsage().catch(() => undefined);
     await load();
   }
 
