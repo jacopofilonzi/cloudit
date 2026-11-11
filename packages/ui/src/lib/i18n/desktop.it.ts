@@ -347,6 +347,19 @@ export const desktopIt: { readonly [K in DesktopKey]: string } = {
   'desktop.update.retry': 'Riprova',
   'desktop.settings.log': 'Apri la cartella dei log',
 
+  // Compatibilità con il server
+  'desktop.compat.app_outdated':
+    'Questo server richiede una versione più recente di cloudit ({min} o successiva)',
+  'desktop.compat.app_outdated_body':
+    'La sincronizzazione è ferma finché non aggiorni questa app (questa è la versione {version}).',
+  'desktop.compat.server_outdated':
+    'Il server ha la versione {version}, troppo vecchia per questa app: chiedi al suo amministratore di aggiornarlo.',
+  'desktop.compat.server_outdated_body':
+    'La sincronizzazione è ferma finché il server non viene aggiornato.',
+  'desktop.compat.check_updates': 'Controlla aggiornamenti',
+  'desktop.compat.check_again': 'Controlla di nuovo',
+  'desktop.compat.still_outdated': 'Il server è ancora troppo vecchio per questa app.',
+
   // Errors by engine kind
   'desktop.error.network':
     "Impossibile raggiungere il server. Controlla l'indirizzo e la connessione.",
@@ -379,6 +392,10 @@ export const desktopIt: { readonly [K in DesktopKey]: string } = {
     'La chiave di accesso non si è potuta salvare o leggere su questo PC.',
   'desktop.error.state': 'cloudit non riesce a leggere o scrivere i suoi dati locali.',
   'desktop.error.invalid_input': 'Quel valore non è valido.',
+  'desktop.error.app_outdated':
+    'Questo server richiede una versione più recente di cloudit. Aggiorna l’app.',
+  'desktop.error.server_outdated':
+    'Il server è troppo vecchio per questa app: chiedi al suo amministratore di aggiornarlo.',
   'desktop.error.name_taken': 'Questo nome è già in uso qui.',
   'desktop.error.validation': 'Il server non accetta quel valore.',
   'desktop.refusal.not_a_directory': 'Quel percorso è un file, non una cartella.',

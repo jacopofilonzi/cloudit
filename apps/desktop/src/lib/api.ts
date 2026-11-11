@@ -9,6 +9,7 @@ import type {
   AutoFolderState,
   AutoSyncSettings,
   CommandError as CommandErrorBody,
+  Compat,
   ErrorDetails,
   ErrorKind,
   FolderInfo,
@@ -74,6 +75,8 @@ export const reopenLoginBrowser = () => call<boolean>('reopen_login_browser');
 export const cancelLogin = () => call<boolean>('cancel_login');
 export const signOut = () => call<void>('sign_out');
 export const serverVersion = () => call<string>('server_version');
+/** Asks the server again whether it works with this app. */
+export const checkCompat = () => call<Compat>('check_compat');
 
 // Linked folders
 export const folders = () => call<LinkedFolder[]>('folders');

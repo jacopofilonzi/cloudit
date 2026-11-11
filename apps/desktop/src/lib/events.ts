@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
   AppSettings,
   AutoFolderState,
+  Compat,
   FolderOpEvent,
   FolderStatusEvent,
   LoginEvent,
@@ -21,7 +22,8 @@ export const EVENTS = {
   auto: 'auto-state',
   settings: 'app-settings',
   navigate: 'navigate',
-  update: 'update-state'
+  update: 'update-state',
+  compat: 'compat'
 } as const;
 
 export interface Handlers {
@@ -34,6 +36,7 @@ export interface Handlers {
   settings: (settings: AppSettings) => void;
   navigate: (event: NavigateEvent) => void;
   update: (state: UpdateState) => void;
+  compat: (compat: Compat) => void;
 }
 
 /** Subscribes to every backend event; the returned function unsubscribes all. */
@@ -47,7 +50,8 @@ export async function subscribe(handlers: Handlers): Promise<() => void> {
     listen<AutoFolderState[]>(EVENTS.auto, (e) => handlers.auto(e.payload)),
     listen<AppSettings>(EVENTS.settings, (e) => handlers.settings(e.payload)),
     listen<NavigateEvent>(EVENTS.navigate, (e) => handlers.navigate(e.payload)),
-    listen<UpdateState>(EVENTS.update, (e) => handlers.update(e.payload))
+    listen<UpdateState>(EVENTS.update, (e) => handlers.update(e.payload)),
+    listen<Compat>(EVENTS.compat, (e) => handlers.compat(e.payload))
   ]);
   return () => stops.forEach((stop) => stop());
 }

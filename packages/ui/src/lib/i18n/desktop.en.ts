@@ -335,6 +335,17 @@ export const desktopEn = {
   'desktop.update.retry': 'Try again',
   'desktop.settings.log': 'Open the log folder',
 
+  // Compatibility with the server
+  'desktop.compat.app_outdated': 'This server needs a newer version of cloudit ({min} or later)',
+  'desktop.compat.app_outdated_body':
+    'Sync is stopped until you update this app (this is version {version}).',
+  'desktop.compat.server_outdated':
+    'The server runs {version}, too old for this app: ask its administrator to update it.',
+  'desktop.compat.server_outdated_body': 'Sync is stopped until the server is updated.',
+  'desktop.compat.check_updates': 'Check for updates',
+  'desktop.compat.check_again': 'Check again',
+  'desktop.compat.still_outdated': 'The server is still too old for this app.',
+
   // Errors by engine kind
   'desktop.error.network': 'Cannot reach the server. Check the address and your connection.',
   'desktop.error.unauthorized': 'This computer is no longer signed in. Sign in again.',
@@ -361,6 +372,9 @@ export const desktopEn = {
   'desktop.error.token_store': 'The sign-in key could not be saved or read on this computer.',
   'desktop.error.state': 'cloudit could not read or write its local data.',
   'desktop.error.invalid_input': 'That value is not valid.',
+  'desktop.error.app_outdated': 'This server needs a newer version of cloudit. Update the app.',
+  'desktop.error.server_outdated':
+    'The server is too old for this app: ask its administrator to update it.',
   'desktop.error.name_taken': 'That name is already used here.',
   'desktop.error.validation': 'That value is not accepted by the server.',
   'desktop.refusal.not_a_directory': 'That path is a file, not a folder.',

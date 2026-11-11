@@ -4,6 +4,7 @@ import type {
   AppSettings,
   AutoFolderState,
   Account,
+  Compat,
   FolderOpEvent,
   FolderStatus,
   FolderStatusEvent,
@@ -74,6 +75,8 @@ class AppStore {
   update = $state<UpdateState | null>(null);
   /** This app's, the server's and the latest release's versions. */
   versions = $state<VersionInfo | null>(null);
+  /** Whether the server works with this app (sync stops when it doesn't). */
+  compat = $state<Compat>({ status: 'ok' });
 
   #stop: (() => void) | null = null;
 
@@ -99,7 +102,8 @@ class AppStore {
         auto: (states) => this.#onAuto(states),
         settings: (settings) => this.#onSettings(settings),
         navigate: (event) => void this.#onNavigate(event),
-        update: (state) => this.#onUpdate(state)
+        update: (state) => this.#onUpdate(state),
+        compat: (compat) => (this.compat = compat)
       });
       this.#onUpdate(await api.updateState());
       const info = await api.appInfo();
@@ -120,6 +124,7 @@ class AppStore {
     this.signedIn = session.signed_in;
     this.tokenWarning = session.token_warning;
     this.connection = session.connection;
+    this.compat = session.compat;
     if (session.signed_in) {
       this.sessionEnded = false;
       await this.loadFolders();
@@ -224,6 +229,12 @@ class AppStore {
     this.#onUpdate(await api.checkUpdate());
   }
 
+  /** Asks the server again whether it works with this app. */
+  async checkCompat(): Promise<Compat> {
+    this.compat = await api.checkCompat();
+    return this.compat;
+  }
+
   #onUpdate(state: UpdateState): void {
     const checked = state.checked_at !== this.update?.checked_at;
     this.update = state;
@@ -253,6 +264,7 @@ class AppStore {
     this.serverVersion = null;
     this.versions = null;
     this.auto = {};
+    this.compat = { status: 'ok' };
   }
 
   #onStatus(event: FolderStatusEvent): void {
