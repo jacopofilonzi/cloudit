@@ -42,13 +42,19 @@ repo/
 │   ├── api-types/        `@cloudit/api-types` — TS types generated from Rust by ts-rs
 │   └── ui/               `@cloudit/ui` — shared Svelte components, theme tokens, i18n EN/IT
 ├── scripts/              node scripts used by the Makefile (dev, types, set-version, help, clean, test-ha)
-│                         and by release.yml (check-release-version: the tag matches the versions)
+│                         and by the release workflows (check-release-version: the tag matches the
+│                         versions of its side); versions.mjs lists the version files of each side
+│                         (server: core, server, web, packages, root package.json; app: client,
+│                         desktop, tauri.conf.json)
 ├── .cargo/config.toml    ts-rs env (`TS_RS_EXPORT_DIR`, `TS_RS_LARGE_INT`)
 ├── .github/workflows/    ci.yml (make check on ubuntu + windows; server tests with PostgreSQL/Garage/Valkey),
-│                         release.yml (v*.*.* tags: version check, draft release, desktop installers
-│                         + updater signatures + latest.json via tauri-action, publish; ghcr image;
-│                         a manual run builds the installers as workflow artifacts only)
-├── Cargo.toml            Cargo workspace (edition 2024, shared version, clippy lints)
+│                         release-app.yml (app-v*.*.* tags: version check, draft release, desktop
+│                         installers + updater signatures + latest.json via tauri-action, publish
+│                         as the latest release; a manual run builds the installers as workflow
+│                         artifacts only), release-server.yml (server-v*.*.* tags: version check,
+│                         multi-arch ghcr image tagged x.y.z / x.y / latest / sha, a GitHub Release
+│                         with --latest=false; a manual run builds the image tagged by sha only)
+├── Cargo.toml            Cargo workspace (edition 2024, clippy lints; each crate has its own version)
 ├── package.json          pnpm workspace root (lint/format tooling, `packageManager`)
 ├── Dockerfile            stages: web (node, pnpm build) → server (rust, release build) → runtime (debian trixie-slim)
 ├── docker/entrypoint.sh  runs as root: chowns DATA_DIR to PUID:PGID, then setpriv → cloudit-server
@@ -170,7 +176,7 @@ crates/server/src/
 │   ├── trash_purge.rs purge_scope (rows, then objects by prefix), purge_folder, run
 │   ├── cleanup.rs    expired sessions, codes, flows, pending sign-ups, resets, old unused
 │   │                 invites, old job runs
-│   └── update_check.rs latest release (UPDATE_CHECK_URL) → the latest_release setting
+│   └── update_check.rs newest server-v release (UPDATE_CHECK_URL) → the latest_release setting
 ├── crypto/           server key and encryption of stored secrets
 │   ├── mod.rs        SecretBox: XChaCha20-Poly1305, `[1][nonce 24][ciphertext+tag]`, AAD per value
 │   ├── key.rs        SecretKey (32 bytes, base64); resolve: SECRET_KEY, else <DATA_DIR>/secret.key
@@ -802,11 +808,13 @@ request and 409 for head conflicts), `payload_too_large` 413. The callback carri
   folder; its chunks and manifests are left to `gc` (they may be shared with other
   folders of the scope) and a `gc` run is requested. `folder_changed deleted`.
 - **update_check** (`jobs/update_check.rs`): with `UPDATE_CHECK=false` it contacts nothing
-  (counts `disabled`); else `GET UPDATE_CHECK_URL` (GitHub API "latest release") through the
-  shared outgoing client (`idp::http`: 5 s / 15 s timeouts, no redirects, 1 MiB, `User-Agent:
-  cloudit-server/<v>`) and stores `tag_name` (must parse as `x.y.z`) and `html_url` (http(s))
-  as the `latest_release` setting with the check time; a 404 (no release yet) succeeds
-  storing nothing; any other failure fails the run and keeps the old value. Counts `checked`,
+  (counts `disabled`); else `GET UPDATE_CHECK_URL` (GitHub API "list releases", newest first,
+  one page of 30) through the shared outgoing client (`idp::http`: 5 s / 15 s timeouts, no
+  redirects, 1 MiB, `User-Agent: cloudit-server/<v>`), picks the highest published (not draft,
+  not pre-release) release tagged exactly `server-vX.Y.Z` (app releases, which GitHub marks
+  "latest", and other tags are ignored) and stores its version and `html_url` (http(s)) as the
+  `latest_release` setting with the check time; no server release in the list, or a 404,
+  succeeds storing nothing; any other failure fails the run and keeps the old value. Counts `checked`,
   `newer`, `no_release`, `disabled`.
 - **cleanup**: expired sessions, device codes and OAuth flows; expired pending sign-ups no
   flow references; used or expired password resets; unused invites that expired or were
@@ -950,8 +958,8 @@ Read once at startup (`config/mod.rs`); empty values count as unset. Documented 
 | `REDIS_URL` | unset | `redis://…` (secret), Redis or Valkey; optional, never fatal; `rediss://` unsupported |
 | `JOBS_ENABLED` | `true` | Run the background jobs scheduler on this instance (jobs stay lease-guarded: one instance at a time) |
 | `GC_GRACE` | `24h` | Age (at least `1h`) before unreferenced chunk / manifest rows and objects without row may be deleted |
-| `UPDATE_CHECK` | `true` | The daily `update_check` job asks `UPDATE_CHECK_URL` for the latest release (admins see a notice); `false` never contacts it (tests set `false`) |
-| `UPDATE_CHECK_URL` | `https://api.github.com/repos/jacopofilonzi/cloudit/releases/latest` | GitHub API "latest release" endpoint (`http(s)://`) |
+| `UPDATE_CHECK` | `true` | The daily `update_check` job asks `UPDATE_CHECK_URL` for the latest server release (admins see a notice); `false` never contacts it (tests set `false`) |
+| `UPDATE_CHECK_URL` | `https://api.github.com/repos/jacopofilonzi/cloudit/releases?per_page=30` | GitHub API "list releases" endpoint (`http(s)://`); the highest `server-vX.Y.Z` tag counts |
 | `TEST_DATABASE_URL`, `TEST_S3_*`, `TEST_REDIS_URL` | unset | Tests only (`make test-ha`, CI): run the server tests against PostgreSQL / S3 / Redis instead of SQLite and skipping |
 | `PUID` / `PGID` | `10001` | Docker only, read by the entrypoint (not the server): user/group the server runs as and owner of `DATA_DIR` |
 
@@ -1368,8 +1376,8 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
   (executable names, sorted, for the picker), `auto_states`; `set_ui_language(lang)` in
   `commands/misc.rs`. Updates (`commands/updates.rs`): `update_state`, `check_update`,
   `install_update`, `open_release_page`, `version_info` (`VersionInfo {app_version, server_version?
-  (`GET /health`), latest_version? (the newer release found, or this version after a check found
-  nothing), server_outdated}`).
+  (`GET /health`), latest_version? (the newer app release found, or this version after a check found
+  nothing)}`; the server is released separately, so its version is only shown).
 - **Types**: client and desktop types derive ts-rs (client: cargo feature `ts`, enabled by the desktop
   crate's dev-dependency; `PathChange.change` is `PathChangeKind`) and `make types` exports them into
   `@cloudit/api-types` next to the server types.
@@ -1382,8 +1390,7 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
   to the history on the web. Folder settings: automatic sync toggle, quiet period (10 s – 5 min chips),
   associated program (free input or a filtered picker of the running ones, clear); the app settings hold
   autostart, the device-wide switch, "Pause for 1 hour" / Resume and notifications, and About (this
-  app's, the server's and the latest version, "Check for updates", and "The server runs X, the latest
-  is Y: ask its administrator to update it" when `server_outdated`). The app shell shows
+  app's, the server's and the latest app version, "Check for updates"). The app shell shows
   `UpdateBanner` (an available version with its notes and Update, or Download for a .deb, a note for
   dev builds; then waiting / download progress / installing / failed with retry) and "Automatic sync
   is paused until HH:MM" with Resume while paused. The root layout sends the language to
@@ -1488,7 +1495,8 @@ warnings, eslint, svelte-check, cargo test, vitest, type freshness, web build), 
 `up`/`down`, `up-ha`/`down-ha` (HA example stack; `down-ha` keeps volumes), `test-ha`
 (`scripts/test-ha.mjs`: postgres + garage + valkey from `docker-compose.ha.yml` as project
 `cloudit-test` on random 127.0.0.1 ports, `cargo test -p cloudit-server` with the `TEST_*` env, then
-`down -v`; `--keep` leaves them running), `seed`, `clean`, `version V=x.y.z`, `build-desktop`, `bundle-desktop` (the installers of this OS).
+`down -v`; `--keep` leaves them running), `seed`, `clean`, `version-server V=x.y.z` / `version-app V=x.y.z` (one side's version files +
+`Cargo.lock`), `build-desktop`, `bundle-desktop` (the installers of this OS).
 
 **Dev seed** (`make seed`, `crates/server/examples/seed/`: `main.rs` the scenario, `api.rs` HTTP +
 sync client on `cloudit-core`, `data.rs` deterministic demo files): fills a LOCAL running

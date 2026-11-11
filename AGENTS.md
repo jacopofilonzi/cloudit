@@ -375,16 +375,26 @@ and align this project's copies with it:
 ## Versions and releases
 
 - Versions are `x.y.z`: `x` major (only when I decide), `y` feature, `z` fix. A feature bumps `y` and resets `z`.
-- The version lives in `Cargo.toml` (`[workspace.package] version`, inherited by every crate, plus
-  `Cargo.lock`) and in every `package.json` (root, `apps/*`, `packages/*`) and in
-  `apps/desktop/src-tauri/tauri.conf.json` (the installers and the updater use it): change it only with
-  `make version V=x.y.z` (=
-  `node scripts/set-version.mjs x.y.z`), which updates them all.
-- Tags and releases only when I ask. A release = `make version V=x.y.z`, commit, push the tag
-  `vx.y.z`: `release.yml` checks the tag against the versions (`scripts/check-release-version.mjs`),
-  drafts the GitHub Release, builds the installers with `tauri-apps/tauri-action@v1`
-  (`uploadUpdaterJson`, `releaseId`; one OS at a time because each job rewrites `latest.json`) and
-  publishes it.
+- **Two independent versions**, released separately (a release of one never rebuilds the other); the
+  files of each side are listed in `scripts/versions.mjs`:
+  - **server**: `crates/core`, `crates/server` (each `Cargo.toml` `[package] version`; there is no
+    shared `[workspace.package] version`), `apps/web`, `packages/*` and the root `package.json`;
+  - **app**: `crates/client`, `apps/desktop/src-tauri` (`Cargo.toml`), `apps/desktop/package.json` and
+    `apps/desktop/src-tauri/tauri.conf.json` (the installers and the updater use it).
+  Change them only with `make version-server V=x.y.z` / `make version-app V=x.y.z` (=
+  `node scripts/set-version.mjs server|app x.y.z`), which update that side's files and `Cargo.lock`.
+- Tags and releases only when I ask. An **app release** = `make version-app V=x.y.z`, commit, push the
+  tag `app-vx.y.z`: `release-app.yml` checks the tag against the app versions
+  (`scripts/check-release-version.mjs`), drafts the GitHub Release, builds the installers with
+  `tauri-apps/tauri-action@v1` (`uploadUpdaterJson`, `releaseId`; one OS at a time because each job
+  rewrites `latest.json`) and publishes it with `--latest`. A **server release** =
+  `make version-server V=x.y.z`, commit, push `server-vx.y.z`: `release-server.yml` checks the tag,
+  pushes the multi-arch Docker image (tags `x.y.z`, `x.y`, `latest`, sha: no prefix) and creates a
+  GitHub Release with `--latest=false`.
+- **GitHub's "latest" release must always be an app release**: installed apps fetch
+  `releases/latest/download/latest.json`, so a server release marked latest would break their update
+  check. The server's `update_check` job lists the releases and picks the highest `server-v*` tag
+  instead.
 - **The updater signing key** signs every desktop update; installed apps trust only its public half
   (`plugins.updater.pubkey` in `tauri.conf.json`). The private key lives outside the repo (repository
   secret `TAURI_SIGNING_PRIVATE_KEY`, plus `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` if it has one): never
@@ -393,7 +403,8 @@ and align this project's copies with it:
 - The desktop app never downloads or installs an update without the user's click, and never while a
   folder operation runs (`updater::install` holds automatic sync and waits).
 - CI runs the checks and tests on every push and pull request, but builds and publishes artifacts (Docker
-  images, binaries, installers) only on a `vX.Y.Z` tag or a manual run, never on a plain push.
+  images, binaries, installers) only on an `app-vX.Y.Z` / `server-vX.Y.Z` tag or a manual run, never
+  on a plain push.
 
 ## Adding a field to an API model
 

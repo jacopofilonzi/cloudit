@@ -46,8 +46,8 @@ in its settings turns notifications off).
 It never updates on its own: a banner (and a tray item) offers **Update**, which waits for the
 running syncs, downloads the new version, checks its signature, installs it and restarts. A
 .deb install can't update itself: the banner links to the release page instead. Settings →
-About shows this app's, the server's and the latest version, and says when the server is older
-than the latest release (only its administrator can update it).
+About shows this app's, the server's and the latest app version. The app and the server have
+their own versions and releases.
 
 ## Quick start (Docker)
 
@@ -190,7 +190,7 @@ Background jobs run on any instance, one at a time per job (a lease in the datab
 **retention** (every 15 minutes), **gc** (unreferenced chunks and manifests, hourly),
 **orphan_sweep** (stored objects without a database row, daily), **trash_purge** (hourly and
 right after a permanent delete), **cleanup** (expired sessions, codes and tokens, hourly) and
-**update_check** (daily: the latest cloudit release on GitHub; admins see a notice in the
+**update_check** (daily: the latest cloudit server release on GitHub, tagged `server-vX.Y.Z`; admins see a notice in the
 administration when the server is older; `UPDATE_CHECK=false` never contacts GitHub,
 `UPDATE_CHECK_URL` points it elsewhere).
 Admins see their runs and can start one in the web administration (Maintenance).
@@ -308,12 +308,29 @@ Docker image from the sources: `make up` (`docker compose up -d --build` on
 
 ### Releases
 
-1. `make version V=x.y.z` (every `Cargo.toml`, `package.json` and `tauri.conf.json`), commit.
-2. Tag and push the tag: `git tag vx.y.z && git push origin vx.y.z`.
-3. The **Release** workflow checks the tag against those versions, builds the Windows
-   installer and the Linux AppImage + deb with their updater signatures and `latest.json`,
-   publishes the GitHub Release `vx.y.z` and pushes the Docker image. A manual run (no tag)
+The desktop app and the server have separate versions and are released separately: a release
+of one never rebuilds the other.
+
+**Desktop app** (`crates/client`, `apps/desktop`):
+
+1. `make version-app V=x.y.z` (their `Cargo.toml`, `package.json` and `tauri.conf.json`), commit.
+2. Tag and push the tag: `git tag app-vx.y.z && git push origin app-vx.y.z`.
+3. The **Release app** workflow checks the tag against those versions, builds the Windows
+   installer and the Linux AppImage + deb with their updater signatures and `latest.json`, and
+   publishes the GitHub Release `app-vx.y.z` as the **latest** release. A manual run (no tag)
    only builds the installers, as workflow artifacts.
+
+**Server** (`crates/core`, `crates/server`, `apps/web`, `packages/*`):
+
+1. `make version-server V=x.y.z`, commit.
+2. `git tag server-vx.y.z && git push origin server-vx.y.z`.
+3. The **Release server** workflow checks the tag, pushes the Docker image
+   `ghcr.io/jacopofilonzi/cloudit` tagged `x.y.z`, `x.y` and `latest`, and creates the GitHub
+   Release `server-vx.y.z` **not** marked as latest. A manual run only builds the image
+   (tagged with the commit).
+
+GitHub's "latest release" must always be an app release: installed apps look for updates in
+`releases/latest/download/latest.json`. Servers find their own releases by the `server-v` tag.
 
 The repository secrets `TAURI_SIGNING_PRIVATE_KEY` (the content of the updater signing key)
 and, if the key has a password, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` sign the updates; the
@@ -330,6 +347,14 @@ The server applies database migrations when it starts. With SQLite it backs up t
 first and refuses to start if the backup fails. With PostgreSQL take a backup yourself
 (`pg_dump`) before upgrading.
 
+- **Separate app and server releases** (after 0.1.3): nothing required. The server and the
+  desktop app now have their own versions and releases (tags `server-vX.Y.Z` and
+  `app-vX.Y.Z`; Docker image tags stay `X.Y.Z`, `X.Y`, `latest`). A 0.1.x server reads
+  GitHub's "latest release", which is now a desktop app release, so its update notice in the
+  administration may point at an app release until the server is updated to a release that
+  looks for `server-v` tags. If you set `UPDATE_CHECK_URL` to the GitHub "latest release"
+  endpoint, change it to the "list releases" one (see `.env.example`) or unset it. The desktop
+  app no longer says whether the server is out of date.
 - **0.1.3:** nothing required. A desktop folder with an associated program no longer syncs at
   all while the program runs; before, it kept uploading and only held back downloads.
 - **0.1.2:** check your `.env` if you copied it from `.env.example` before this version: that
