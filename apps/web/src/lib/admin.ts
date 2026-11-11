@@ -2,29 +2,38 @@
 
 import type { AdminUser, AdminUserUpdate } from '@cloudit/api-types';
 
-/** An account's quota choice: the server default, no limit, or its own size. */
-export type QuotaMode = 'default' | 'unlimited' | 'custom';
+/**
+ * An account's own quota: the server default or its own size. "Unlimited" is a separate
+ * switch on top of it, which keeps this choice (in force again once switched off).
+ */
+export type QuotaMode = 'default' | 'custom';
 
-export function quotaModeOf(user: Pick<AdminUser, 'quota_bytes' | 'quota_unlimited'>): QuotaMode {
-  if (user.quota_unlimited) return 'unlimited';
+export function quotaModeOf(user: Pick<AdminUser, 'quota_bytes'>): QuotaMode {
   return user.quota_bytes === null ? 'default' : 'custom';
 }
 
 /**
- * Whether "Unlimited" is offered: only when the server default is limited (otherwise
- * the default already means unlimited), or when the account already is unlimited.
+ * Whether the "Unlimited" switch is offered: only when the server default is limited
+ * (otherwise the default already means unlimited), or when the account already is.
  */
-export function offersUnlimited(defaultQuota: number | null, mode: QuotaMode): boolean {
-  return defaultQuota !== null || mode === 'unlimited';
+export function offersUnlimited(defaultQuota: number | null, unlimited: boolean): boolean {
+  return defaultQuota !== null || unlimited;
 }
 
-/** The `PATCH /admin/users/{id}` body of a quota choice (`bytes` only for `custom`). */
+/**
+ * The `PATCH /admin/users/{id}` body of the quota dialog: the switch and the own quota
+ * (`bytes`: the parsed custom size, `null` when it doesn't parse). `null` = the custom
+ * size must be fixed first. While unlimited the size fields are disabled, so an
+ * unparsable size is left as stored (`quota_bytes` omitted) instead of refused.
+ */
 export function quotaUpdate(
+  unlimited: boolean,
   mode: QuotaMode,
   bytes: number | null
-): Pick<AdminUserUpdate, 'quota_bytes' | 'quota_unlimited'> {
-  if (mode === 'unlimited') return { quota_bytes: null, quota_unlimited: true };
-  return { quota_bytes: mode === 'custom' ? bytes : null, quota_unlimited: false };
+): Pick<AdminUserUpdate, 'quota_bytes' | 'quota_unlimited'> | null {
+  if (mode === 'default') return { quota_unlimited: unlimited, quota_bytes: null };
+  if (bytes !== null) return { quota_unlimited: unlimited, quota_bytes: bytes };
+  return unlimited ? { quota_unlimited: true } : null;
 }
 
 export const QUOTA_UNITS = ['MB', 'GB', 'TB'] as const;

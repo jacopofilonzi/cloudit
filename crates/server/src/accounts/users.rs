@@ -221,46 +221,57 @@ pub async fn find_many(
     Ok(list.into_iter().map(|u| (u.id, u)).collect())
 }
 
-/// An account's own storage quota setting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QuotaSetting {
-    /// The server default.
-    Default,
-    /// Its own limit, in bytes.
-    Bytes(i64),
-    /// No limit, whatever the server default.
-    Unlimited,
+/// A change of an account's own storage quota. The two settings are independent:
+/// `unlimited` overrides `bytes` without erasing it, so clearing it brings the account's
+/// own quota (or the server default) back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct QuotaUpdate {
+    /// `Some(None)`: the server default; `Some(Some(n))`: its own limit; `None`: unchanged.
+    pub bytes: Option<Option<i64>>,
+    /// `Some(true)`: no limit at all; `None`: unchanged.
+    pub unlimited: Option<bool>,
 }
 
-impl QuotaSetting {
-    /// The stored `(quota_bytes, quota_unlimited)`.
+impl QuotaUpdate {
     #[must_use]
-    pub fn columns(self) -> (Option<i64>, bool) {
-        match self {
-            Self::Default => (None, false),
-            Self::Bytes(v) => (Some(v), false),
-            Self::Unlimited => (None, true),
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_none() && self.unlimited.is_none()
+    }
+
+    /// Applies the change to a loaded row (after [`set_quota`] stored it).
+    pub fn apply(&self, user: &mut users::Model) {
+        if let Some(bytes) = self.bytes {
+            user.quota_bytes = bytes;
+        }
+        if let Some(unlimited) = self.unlimited {
+            user.quota_unlimited = unlimited;
         }
     }
 }
 
-/// Sets the account's own storage quota: both columns in one statement, so
-/// `quota_unlimited` and `quota_bytes` are never set together.
+/// Stores the fields of `quota` that are set, in one statement (a no-op when empty).
 pub async fn set_quota(
     db: &impl ConnectionTrait,
     id: Uuid,
-    quota: QuotaSetting,
+    quota: QuotaUpdate,
 ) -> anyhow::Result<()> {
-    let (bytes, unlimited) = quota.columns();
-    users::Entity::update_many()
-        .col_expr(
+    if quota.is_empty() {
+        return Ok(());
+    }
+    let mut update = users::Entity::update_many();
+    if let Some(bytes) = quota.bytes {
+        update = update.col_expr(
             users::Column::QuotaBytes,
             sea_orm::sea_query::Expr::value(bytes),
-        )
-        .col_expr(
+        );
+    }
+    if let Some(unlimited) = quota.unlimited {
+        update = update.col_expr(
             users::Column::QuotaUnlimited,
             sea_orm::sea_query::Expr::value(unlimited),
-        )
+        );
+    }
+    update
         .col_expr(
             users::Column::UpdatedAt,
             sea_orm::sea_query::Expr::value(crate::time::now()),

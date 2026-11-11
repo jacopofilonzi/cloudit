@@ -13,21 +13,27 @@ import {
 } from './admin';
 
 describe('quota modes', () => {
-  it('reads the mode of an account', () => {
-    expect(quotaModeOf({ quota_bytes: null, quota_unlimited: false })).toBe('default');
-    expect(quotaModeOf({ quota_bytes: 5, quota_unlimited: false })).toBe('custom');
-    expect(quotaModeOf({ quota_bytes: null, quota_unlimited: true })).toBe('unlimited');
+  it('reads the own quota of an account, whatever the unlimited switch', () => {
+    expect(quotaModeOf({ quota_bytes: null })).toBe('default');
+    expect(quotaModeOf({ quota_bytes: 5 })).toBe('custom');
   });
   it('offers unlimited only when the default is limited or already chosen', () => {
-    expect(offersUnlimited(1000, 'default')).toBe(true);
-    expect(offersUnlimited(null, 'default')).toBe(false);
-    expect(offersUnlimited(null, 'custom')).toBe(false);
-    expect(offersUnlimited(null, 'unlimited')).toBe(true);
+    expect(offersUnlimited(1000, false)).toBe(true);
+    expect(offersUnlimited(null, false)).toBe(false);
+    expect(offersUnlimited(null, true)).toBe(true);
   });
-  it('builds the update body', () => {
-    expect(quotaUpdate('unlimited', 7)).toEqual({ quota_bytes: null, quota_unlimited: true });
-    expect(quotaUpdate('default', 7)).toEqual({ quota_bytes: null, quota_unlimited: false });
-    expect(quotaUpdate('custom', 7)).toEqual({ quota_bytes: 7, quota_unlimited: false });
+  it('sends the switch and the own quota together', () => {
+    expect(quotaUpdate(false, 'default', 7)).toEqual({ quota_bytes: null, quota_unlimited: false });
+    expect(quotaUpdate(false, 'custom', 7)).toEqual({ quota_bytes: 7, quota_unlimited: false });
+    expect(quotaUpdate(true, 'custom', 7)).toEqual({ quota_bytes: 7, quota_unlimited: true });
+    expect(quotaUpdate(true, 'default', null)).toEqual({
+      quota_bytes: null,
+      quota_unlimited: true
+    });
+  });
+  it('refuses a bad size only when it would be in force', () => {
+    expect(quotaUpdate(false, 'custom', null)).toBeNull();
+    expect(quotaUpdate(true, 'custom', null)).toEqual({ quota_unlimited: true });
   });
 });
 

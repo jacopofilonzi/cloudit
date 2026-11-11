@@ -547,7 +547,7 @@ export const it: Dictionary = {
   'admin.quota_default_of': 'La quota predefinita del server è {size}.',
   'admin.quota_unlimited': 'Illimitata',
   'admin.quota_unlimited_desc':
-    'Nessun limite per questo account, qualunque sia la quota predefinita del server.',
+    'Nessun limite per questo account, qualunque sia la quota predefinita del server. La scelta qui sotto resta salvata e torna in vigore quando lo disattivi.',
   'admin.quota_custom': 'Dimensione personalizzata',
   'admin.quota_size': 'Dimensione',
   'admin.quota_unit': 'Unità',

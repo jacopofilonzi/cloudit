@@ -11,7 +11,9 @@ version `X.Y.Z` is the git tag `server-vX.Y.Z` and the image tags `X.Y.Z`, `X.Y`
 
 - `/health` announces the server's API level and the oldest desktop app version it accepts, so
   apps can tell when one of the two must be updated.
-- Admins can give an account unlimited storage even when the server has a default quota.
+- Admins can give an account unlimited storage even when the server has a default quota
+  ("Unlimited" in the quota dialog). The account's own quota is kept: turning "Unlimited"
+  off again brings it back (or the server default if it had none).
 - Chunk packs: desktop apps that support them upload and download many small chunks in one
   request, which makes syncing folders with many small files much faster.
 - The update check also runs when an admin opens the web app (at most every 10 minutes for

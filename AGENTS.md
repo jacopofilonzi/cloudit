@@ -583,9 +583,10 @@ and align this project's copies with it:
   `seed` take `C:/…` paths (`WEB_DIR`, `--db`; Git Bash `/c/…` paths are not understood by the exe,
   and an absolute `--db` can fail: use a relative one). After changing sign-in providers or the
   registration mode call `session.refreshConfig()`: the login page reads `session.config`, loaded
-  once. A per-account quota is `quota_bytes` (`null` = server default) or `quota_unlimited`
-  (never both): the quota dialog offers "Unlimited" only while the server default is limited
-  (or the account already is unlimited).
+  once. A per-account quota is `quota_bytes` (`null` = server default) plus an independent
+  `quota_unlimited` switch that overrides it without erasing it: the quota dialog offers the
+  "Unlimited" switch only while the server default is limited (or the account already is
+  unlimited).
 - `make seed` (`crates/server/examples/seed/`) needs a local server with `S3_PRESIGN=false`; for
   back-dated history pass the server's SQLite file with `--db`.
 - The Vite dev proxy must keep the browser's Host (`changeOrigin: false` in

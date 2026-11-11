@@ -1,6 +1,8 @@
 <script lang="ts">
-  // Sets one account's storage quota: the server default, unlimited (offered only when
-  // the default is limited) or a custom size.
+  // Sets one account's storage quota: its own quota (the server default or a custom
+  // size) and, on top of it, the "Unlimited" switch (offered only when the default is
+  // limited or the account already is unlimited). Switching it on disables the choice
+  // below without erasing it: switching it off later brings that quota back.
   import type { AdminUser, AdminUserUpdate } from '@cloudit/api-types';
   import {
     Banner,
@@ -10,6 +12,7 @@
     Modal,
     RadioCards,
     Select,
+    Toggle,
     formatBytes
   } from '@cloudit/ui';
   import { getLang, t } from '@cloudit/ui/i18n';
@@ -38,8 +41,9 @@
     onsave: (update: Pick<AdminUserUpdate, 'quota_bytes' | 'quota_unlimited'>) => Promise<void>;
   } = $props();
 
+  let unlimited = $state(false);
   let mode = $state<QuotaMode>('default');
-  // Fixed when the dialog opens, so the choice doesn't vanish while picking another one.
+  // Fixed when the dialog opens, so the switch doesn't vanish while toggling it.
   let unlimitedOffered = $state(false);
   let amount = $state('');
   let unit = $state<QuotaUnit>('GB');
@@ -51,10 +55,9 @@
     if (!open || !user) return;
     error = null;
     invalid = false;
-    // A local value: reading `mode` here would make the effect reset every choice.
-    const initial = quotaModeOf(user);
-    mode = initial;
-    unlimitedOffered = offersUnlimited(defaultQuota, initial);
+    unlimited = user.quota_unlimited;
+    mode = quotaModeOf(user);
+    unlimitedOffered = offersUnlimited(defaultQuota, user.quota_unlimited);
     if (user.quota_bytes === null) {
       amount = '';
       unit = 'GB';
@@ -69,15 +72,12 @@
   async function submit(event: SubmitEvent) {
     event.preventDefault();
     invalid = false;
-    let quota: number | null = null;
-    if (mode === 'custom') {
-      quota = toBytes(amount, unit);
-      if (quota === null) return void (invalid = true);
-    }
+    const update = quotaUpdate(unlimited, mode, mode === 'custom' ? toBytes(amount, unit) : null);
+    if (!update) return void (invalid = true);
     busy = true;
     error = null;
     try {
-      await onsave(quotaUpdate(mode, quota));
+      await onsave(update);
       open = false;
     } catch (err) {
       error = errorText(err);
@@ -95,51 +95,51 @@
 >
   <form id="quota-{uid}" onsubmit={submit} class="flex flex-col">
     {#if error}<Banner variant="danger">{error}</Banner>{/if}
-    <RadioCards
-      name="quota-mode-{uid}"
-      bind:value={mode}
-      options={[
-        {
-          value: 'default',
-          title: t('admin.quota_default'),
-          description:
-            defaultQuota === null
-              ? t('admin.quota_default_unlimited')
-              : t('admin.quota_default_of', { size: formatBytes(defaultQuota, lang) })
-        },
-        ...(unlimitedOffered
-          ? [
-              {
-                value: 'unlimited' as const,
-                title: t('admin.quota_unlimited'),
-                description: t('admin.quota_unlimited_desc')
-              }
-            ]
-          : []),
-        { value: 'custom', title: t('admin.quota_custom') }
-      ]}
-    />
-    {#if mode === 'custom'}
-      <Field label={t('admin.quota_size')} error={invalid ? t('admin.quota_invalid') : undefined}>
-        {#snippet children(control)}
-          <div class="flex gap-2">
-            <Input
-              {...control}
-              bind:value={amount}
-              inputmode="decimal"
-              autocomplete="off"
-              class="min-w-0 flex-1"
-            />
-            <Select
-              bind:value={unit}
-              aria-label={t('admin.quota_unit')}
-              options={QUOTA_UNITS.map((u) => ({ value: u, label: u }))}
-              class="w-24"
-            />
-          </div>
-        {/snippet}
-      </Field>
+    {#if unlimitedOffered}
+      <Toggle
+        bind:checked={unlimited}
+        label={t('admin.quota_unlimited')}
+        description={t('admin.quota_unlimited_desc')}
+      />
     {/if}
+    <fieldset disabled={unlimited} class="flex flex-col disabled:opacity-55">
+      <RadioCards
+        name="quota-mode-{uid}"
+        bind:value={mode}
+        options={[
+          {
+            value: 'default',
+            title: t('admin.quota_default'),
+            description:
+              defaultQuota === null
+                ? t('admin.quota_default_unlimited')
+                : t('admin.quota_default_of', { size: formatBytes(defaultQuota, lang) })
+          },
+          { value: 'custom', title: t('admin.quota_custom') }
+        ]}
+      />
+      {#if mode === 'custom'}
+        <Field label={t('admin.quota_size')} error={invalid ? t('admin.quota_invalid') : undefined}>
+          {#snippet children(control)}
+            <div class="flex gap-2">
+              <Input
+                {...control}
+                bind:value={amount}
+                inputmode="decimal"
+                autocomplete="off"
+                class="min-w-0 flex-1"
+              />
+              <Select
+                bind:value={unit}
+                aria-label={t('admin.quota_unit')}
+                options={QUOTA_UNITS.map((u) => ({ value: u, label: u }))}
+                class="w-24"
+              />
+            </div>
+          {/snippet}
+        </Field>
+      {/if}
+    </fieldset>
   </form>
   {#snippet footer()}
     <Button onclick={() => (open = false)} disabled={busy}>{t('common.cancel')}</Button>

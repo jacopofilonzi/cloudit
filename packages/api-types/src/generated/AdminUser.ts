@@ -43,13 +43,12 @@ approval_decided_by: string | null, created_at: string,
  */
 used_bytes: number, 
 /**
- * The account's own quota; `null` = the server default (or unlimited, see
- * `quota_unlimited`).
+ * The account's own quota; `null` = the server default. Kept while
+ * `quota_unlimited` is set (in force again once it is cleared).
  */
 quota_bytes: number | null, 
 /**
- * The account has no quota, whatever the server default (`quota_bytes` is then
- * `null`).
+ * The account has no quota, whatever its own quota and the server default.
  */
 quota_unlimited: boolean, 
 /**

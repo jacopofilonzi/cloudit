@@ -361,7 +361,8 @@ first and refuses to start if the backup fails. With PostgreSQL take a backup yo
 
 - **Unlimited per-user quota** (next server release): nothing required. A migration adds
   `users.quota_unlimited` (false for every existing account, so quotas are unchanged);
-  admin user entries gain `quota_unlimited` and `PATCH /admin/users/{id}` accepts it.
+  admin user entries gain `quota_unlimited` and `PATCH /admin/users/{id}` accepts it
+  (independent of `quota_bytes`, which it overrides without erasing).
 - **Separate app and server releases** (after 0.1.3): nothing required. The server and the
   desktop app now have their own versions and releases (tags `server-vX.Y.Z` and
   `app-vX.Y.Z`; Docker image tags stay `X.Y.Z`, `X.Y`, `latest`). A 0.1.x server reads

@@ -313,32 +313,20 @@ async fn unlimited_accounts_ignore_the_default() {
     assert_eq!(client.push_chunks(&chunks).await, 1);
     consistent(usage_of(&app, &t.scope).await);
 
-    // Both an unlimited flag and a size: refused, nothing changed.
+    // Unlimited and the own quota are independent: both at once keep both, the flag wins.
     let resp = patch_user(
         &app,
         &t.site_admin,
         &owner,
-        json!({ "quota_unlimited": true, "quota_bytes": 5000, "admin": true }),
+        json!({ "quota_unlimited": true, "quota_bytes": 5000 }),
     )
     .await;
-    resp.assert_error(StatusCode::UNPROCESSABLE_ENTITY, "validation_failed");
-    assert_eq!(resp.body["field"], "quota_unlimited");
-    let list = app
-        .get("/api/v1/admin/users?limit=200", &t.site_admin)
-        .await;
-    let e = entry(&list.body, &owner);
-    assert_eq!(e["quota_unlimited"], true);
-    assert_eq!(e["admin"], false, "validated before any write");
-
-    // `true` with `null` is unlimited too; `false` alone goes back to the default.
-    let resp = patch_user(
-        &app,
-        &t.site_admin,
-        &owner,
-        json!({ "quota_unlimited": true, "quota_bytes": null }),
-    )
-    .await;
+    resp.assert(StatusCode::OK);
     assert_eq!(resp.body["quota_unlimited"], true);
+    assert_eq!(resp.body["quota_bytes"], 5000);
+    assert_eq!(resp.body["effective_quota_bytes"], Value::Null);
+
+    // Unchecking it brings the own quota back.
     let resp = patch_user(
         &app,
         &t.site_admin,
@@ -348,9 +336,10 @@ async fn unlimited_accounts_ignore_the_default() {
     .await;
     resp.assert(StatusCode::OK);
     assert_eq!(resp.body["quota_unlimited"], false);
-    assert_eq!(resp.body["effective_quota_bytes"], 1000);
+    assert_eq!(resp.body["quota_bytes"], 5000);
+    assert_eq!(resp.body["effective_quota_bytes"], 5000);
 
-    // A custom size clears it; `false` alone then keeps the size.
+    // A size alone keeps the flag as it is.
     patch_user(
         &app,
         &t.site_admin,
@@ -360,28 +349,28 @@ async fn unlimited_accounts_ignore_the_default() {
     .await
     .assert(StatusCode::OK);
     let resp = patch_user(&app, &t.site_admin, &owner, json!({ "quota_bytes": 2000 })).await;
-    assert_eq!(resp.body["quota_unlimited"], false);
+    assert_eq!(resp.body["quota_unlimited"], true);
     assert_eq!(resp.body["quota_bytes"], 2000);
-    assert_eq!(resp.body["effective_quota_bytes"], 2000);
+    assert_eq!(resp.body["effective_quota_bytes"], Value::Null);
+    let list = app
+        .get("/api/v1/admin/users?limit=200", &t.site_admin)
+        .await;
+    let e = entry(&list.body, &owner);
+    assert_eq!(e["quota_bytes"], 2000, "stored, not only answered");
+    assert_eq!(e["quota_unlimited"], true);
+
+    // `null` (server default) keeps the flag too; unchecking then gives the default.
+    let resp = patch_user(&app, &t.site_admin, &owner, json!({ "quota_bytes": null })).await;
+    assert_eq!(resp.body["quota_unlimited"], true);
+    assert_eq!(resp.body["quota_bytes"], Value::Null);
+    assert_eq!(resp.body["effective_quota_bytes"], Value::Null);
     let resp = patch_user(
         &app,
         &t.site_admin,
         &owner,
-        json!({ "quota_unlimited": false }),
+        json!({ "quota_unlimited": false, "quota_bytes": null }),
     )
     .await;
-    assert_eq!(resp.body["quota_bytes"], 2000);
-
-    // `null` (server default) clears it too, and the default applies again.
-    patch_user(
-        &app,
-        &t.site_admin,
-        &owner,
-        json!({ "quota_unlimited": true }),
-    )
-    .await
-    .assert(StatusCode::OK);
-    let resp = patch_user(&app, &t.site_admin, &owner, json!({ "quota_bytes": null })).await;
     assert_eq!(resp.body["quota_unlimited"], false);
     assert_eq!(resp.body["quota_bytes"], Value::Null);
     assert_eq!(resp.body["effective_quota_bytes"], 1000);
