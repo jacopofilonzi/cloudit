@@ -152,4 +152,3 @@ jobs:
         env:
           META: ${{ steps.meta.outputs.json }}
         run: docker buildx imagetools inspect "$(jq -r '.tags[0]' <<< "$META")"
-
