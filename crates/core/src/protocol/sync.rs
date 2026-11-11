@@ -107,6 +107,30 @@ pub struct ChunkDownload {
     pub download: Transfer,
 }
 
+/// Answer of `POST /api/v1/folders/{id}/chunks/pack` (API level 2; the body is a chunk
+/// pack, see `pack`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct ChunkPackUploadResponse {
+    /// Records in the pack.
+    pub chunks: u32,
+    /// Of those, the chunks the scope didn't have before (the others were already
+    /// stored).
+    pub stored: u32,
+}
+
+/// `POST /api/v1/folders/{id}/chunks/pack/download` (viewer or more; API level 2): at
+/// most `pack::MAX_PACK_RECORDS` hashes. The answer is a chunk pack with the records of
+/// the requested chunks the scope has, sorted by hash, as many as fit
+/// `pack::MAX_PACK_BYTES`: a requested hash without a record is either not in the scope
+/// or didn't fit, and the client fetches it through `chunks/download`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct ChunkPackRequest {
+    pub hashes: Vec<ChunkHash>,
+}
+
 /// Answer of `POST /api/v1/folders/{id}/chunks/download` (both lists sorted by hash,
 /// without duplicates).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

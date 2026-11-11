@@ -105,6 +105,41 @@ impl ChunkError {
     }
 }
 
+/// A chunk pack (`pack`, a wire format) is malformed.
+#[derive(Debug, Error)]
+pub enum PackError {
+    #[error("chunk pack is empty (no version byte)")]
+    MissingVersion,
+    #[error("unsupported chunk pack version {0}")]
+    UnsupportedVersion(u8),
+    #[error("chunk pack ends inside the record at byte {0}")]
+    Truncated(usize),
+    #[error("chunk pack record {hash} has an invalid length {len}")]
+    BadLength { hash: ChunkHash, len: usize },
+    #[error("chunk pack has more than {0} records")]
+    TooManyRecords(usize),
+    #[error("chunk pack is too large ({0} bytes)")]
+    TooLarge(usize),
+    #[error("chunk pack lists {0} twice")]
+    Duplicate(ChunkHash),
+}
+
+impl PackError {
+    /// Stable machine-readable code.
+    #[must_use]
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::MissingVersion => "pack_missing_version",
+            Self::UnsupportedVersion(_) => "pack_unsupported_version",
+            Self::Truncated(_) => "pack_truncated",
+            Self::BadLength { .. } => "pack_bad_length",
+            Self::TooManyRecords(_) => "pack_too_many_records",
+            Self::TooLarge(_) => "pack_too_large",
+            Self::Duplicate(_) => "pack_duplicate",
+        }
+    }
+}
+
 /// Encoding, decoding or validating a manifest failed.
 #[derive(Debug, Error)]
 pub enum ManifestError {

@@ -10,6 +10,8 @@
 //! - [`manifest`]: the snapshot description (canonical JSON, hash, zstd), its validation
 //!   and diff.
 //! - [`path`]: validation of the relative paths a manifest may contain.
+//! - [`pack`]: chunk packs, many stored chunks in one HTTP body (a wire format only,
+//!   never stored).
 //!
 //! The chunking parameters, the chunk encoding, the manifest format and the hashing are
 //! **durable formats** (stored on servers): each module's top-level doc is their spec, and
@@ -22,6 +24,7 @@ pub mod chunk;
 pub mod error;
 pub mod hash;
 pub mod manifest;
+pub mod pack;
 pub mod path;
 pub mod protocol;
 pub mod version;
