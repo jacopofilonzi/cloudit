@@ -36,6 +36,12 @@ server (Docker); desktop Windows + Linux (macOS later).
   onto the simple version. Don't migrate without my approval.
 - When something is genuinely my decision (UX, user-visible naming, data formats, breaking changes), ask
   instead of guessing. Otherwise pick the sensible default and say what you picked.
+- **Flag breaking changes.** The app and the server are released separately and installed apps
+  lag behind: the desktop app should stay compatible with the previous versions of the server
+  and the server with the previous versions of the app. Breaking changes are allowed, but
+  whenever a change breaks compatibility with the previous release (API, `/health` levels,
+  sync formats, local or server data, config, update channel), tell me explicitly in the plan
+  and again in the final report: what breaks, for which versions, and the migration path.
 - Run commands from the repo root through the Makefile (`make help` lists them). A new recurring command
   goes into the Makefile too.
 - **While developing, use the framework's dev tools** (`make dev`: dev server, hot reload, `wails3 dev`, watch
