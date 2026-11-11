@@ -1,6 +1,7 @@
 <script lang="ts">
-  // Sets one account's storage quota: the server default, or a custom size.
-  import type { AdminUser } from '@cloudit/api-types';
+  // Sets one account's storage quota: the server default, unlimited (offered only when
+  // the default is limited) or a custom size.
+  import type { AdminUser, AdminUserUpdate } from '@cloudit/api-types';
   import {
     Banner,
     Button,
@@ -12,7 +13,16 @@
     formatBytes
   } from '@cloudit/ui';
   import { getLang, t } from '@cloudit/ui/i18n';
-  import { QUOTA_UNITS, splitBytes, toBytes, type QuotaUnit } from '#lib/admin.ts';
+  import {
+    QUOTA_UNITS,
+    offersUnlimited,
+    quotaModeOf,
+    quotaUpdate,
+    splitBytes,
+    toBytes,
+    type QuotaMode,
+    type QuotaUnit
+  } from '#lib/admin.ts';
   import { errorText } from '#lib/errors.ts';
 
   let {
@@ -25,10 +35,12 @@
     user: AdminUser | null;
     /** The server default (`null` = unlimited), shown as the meaning of "default". */
     defaultQuota: number | null;
-    onsave: (quota: number | null) => Promise<void>;
+    onsave: (update: Pick<AdminUserUpdate, 'quota_bytes' | 'quota_unlimited'>) => Promise<void>;
   } = $props();
 
-  let mode = $state<'default' | 'custom'>('default');
+  let mode = $state<QuotaMode>('default');
+  // Fixed when the dialog opens, so the choice doesn't vanish while picking another one.
+  let unlimitedOffered = $state(false);
   let amount = $state('');
   let unit = $state<QuotaUnit>('GB');
   let busy = $state(false);
@@ -39,12 +51,12 @@
     if (!open || !user) return;
     error = null;
     invalid = false;
+    mode = quotaModeOf(user);
+    unlimitedOffered = offersUnlimited(defaultQuota, mode);
     if (user.quota_bytes === null) {
-      mode = 'default';
       amount = '';
       unit = 'GB';
     } else {
-      mode = 'custom';
       ({ amount, unit } = splitBytes(user.quota_bytes));
     }
   });
@@ -63,7 +75,7 @@
     busy = true;
     error = null;
     try {
-      await onsave(quota);
+      await onsave(quotaUpdate(mode, quota));
       open = false;
     } catch (err) {
       error = errorText(err);
@@ -93,6 +105,15 @@
               ? t('admin.quota_default_unlimited')
               : t('admin.quota_default_of', { size: formatBytes(defaultQuota, lang) })
         },
+        ...(unlimitedOffered
+          ? [
+              {
+                value: 'unlimited' as const,
+                title: t('admin.quota_unlimited'),
+                description: t('admin.quota_unlimited_desc')
+              }
+            ]
+          : []),
         { value: 'custom', title: t('admin.quota_custom') }
       ]}
     />

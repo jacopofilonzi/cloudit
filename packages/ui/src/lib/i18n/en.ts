@@ -526,6 +526,8 @@ export const en = {
   'admin.quota_default': 'Server default',
   'admin.quota_default_unlimited': 'The server default is unlimited.',
   'admin.quota_default_of': 'The server default is {size}.',
+  'admin.quota_unlimited': 'Unlimited',
+  'admin.quota_unlimited_desc': 'No limit for this account, whatever the server default.',
   'admin.quota_custom': 'Custom size',
   'admin.quota_size': 'Size',
   'admin.quota_unit': 'Unit',

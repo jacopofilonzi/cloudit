@@ -2,12 +2,34 @@ import { describe, expect, it } from 'vitest';
 import {
   absoluteUrl,
   isProviderId,
+  offersUnlimited,
   parseIntIn,
   parseList,
+  quotaModeOf,
+  quotaUpdate,
   slugify,
   splitBytes,
   toBytes
 } from './admin';
+
+describe('quota modes', () => {
+  it('reads the mode of an account', () => {
+    expect(quotaModeOf({ quota_bytes: null, quota_unlimited: false })).toBe('default');
+    expect(quotaModeOf({ quota_bytes: 5, quota_unlimited: false })).toBe('custom');
+    expect(quotaModeOf({ quota_bytes: null, quota_unlimited: true })).toBe('unlimited');
+  });
+  it('offers unlimited only when the default is limited or already chosen', () => {
+    expect(offersUnlimited(1000, 'default')).toBe(true);
+    expect(offersUnlimited(null, 'default')).toBe(false);
+    expect(offersUnlimited(null, 'custom')).toBe(false);
+    expect(offersUnlimited(null, 'unlimited')).toBe(true);
+  });
+  it('builds the update body', () => {
+    expect(quotaUpdate('unlimited', 7)).toEqual({ quota_bytes: null, quota_unlimited: true });
+    expect(quotaUpdate('default', 7)).toEqual({ quota_bytes: null, quota_unlimited: false });
+    expect(quotaUpdate('custom', 7)).toEqual({ quota_bytes: 7, quota_unlimited: false });
+  });
+});
 
 describe('quota units', () => {
   it('converts decimal units', () => {

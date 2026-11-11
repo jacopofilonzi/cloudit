@@ -1,5 +1,32 @@
 // Pure helpers of the administration pages (units, links, list fields).
 
+import type { AdminUser, AdminUserUpdate } from '@cloudit/api-types';
+
+/** An account's quota choice: the server default, no limit, or its own size. */
+export type QuotaMode = 'default' | 'unlimited' | 'custom';
+
+export function quotaModeOf(user: Pick<AdminUser, 'quota_bytes' | 'quota_unlimited'>): QuotaMode {
+  if (user.quota_unlimited) return 'unlimited';
+  return user.quota_bytes === null ? 'default' : 'custom';
+}
+
+/**
+ * Whether "Unlimited" is offered: only when the server default is limited (otherwise
+ * the default already means unlimited), or when the account already is unlimited.
+ */
+export function offersUnlimited(defaultQuota: number | null, mode: QuotaMode): boolean {
+  return defaultQuota !== null || mode === 'unlimited';
+}
+
+/** The `PATCH /admin/users/{id}` body of a quota choice (`bytes` only for `custom`). */
+export function quotaUpdate(
+  mode: QuotaMode,
+  bytes: number | null
+): Pick<AdminUserUpdate, 'quota_bytes' | 'quota_unlimited'> {
+  if (mode === 'unlimited') return { quota_bytes: null, quota_unlimited: true };
+  return { quota_bytes: mode === 'custom' ? bytes : null, quota_unlimited: false };
+}
+
 export const QUOTA_UNITS = ['MB', 'GB', 'TB'] as const;
 export type QuotaUnit = (typeof QUOTA_UNITS)[number];
 

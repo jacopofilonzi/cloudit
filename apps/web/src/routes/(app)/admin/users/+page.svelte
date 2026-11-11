@@ -6,7 +6,12 @@
   import KeyRound from '@lucide/svelte/icons/key-round';
   import Mail from '@lucide/svelte/icons/mail';
   import Users from '@lucide/svelte/icons/users';
-  import type { AdminUser, ApprovalStatus, ProviderInfo } from '@cloudit/api-types';
+  import type {
+    AdminUser,
+    AdminUserUpdate,
+    ApprovalStatus,
+    ProviderInfo
+  } from '@cloudit/api-types';
   import {
     Banner,
     Button,
@@ -164,9 +169,9 @@
     );
   }
 
-  async function saveQuota(quota: number | null) {
+  async function saveQuota(update: Pick<AdminUserUpdate, 'quota_bytes' | 'quota_unlimited'>) {
     if (!quotaUser) return;
-    await updateUser(quotaUser.id, { quota_bytes: quota });
+    await updateUser(quotaUser.id, update);
     toast.success(t('admin.quota_saved'));
     await load();
   }
@@ -337,7 +342,7 @@
                   ? t('admin.unlimited')
                   : formatBytes(user.effective_quota_bytes, lang)}
               </span>
-              {#if user.quota_bytes !== null}
+              {#if user.quota_bytes !== null || user.quota_unlimited}
                 <Tag class="ms-1" variant="neutral">{t('admin.quota_own')}</Tag>
               {/if}
             </td>
