@@ -108,6 +108,16 @@ async fn health_endpoints_report_ok_and_version() {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["status"], "ok", "{uri}");
         assert_eq!(json["version"], env!("CARGO_PKG_VERSION"), "{uri}");
+        assert_eq!(
+            json["api_level"],
+            cloudit_core::protocol::API_LEVEL,
+            "{uri}"
+        );
+        assert_eq!(
+            json["min_client_version"],
+            crate::routes::health::MIN_CLIENT_VERSION,
+            "{uri}"
+        );
     }
 }
 

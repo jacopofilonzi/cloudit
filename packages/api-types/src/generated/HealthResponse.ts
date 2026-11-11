@@ -2,6 +2,9 @@
 
 /**
  * Liveness payload returned by `GET /health` and `GET /api/v1/health`.
+ *
+ * The compatibility fields default when missing, so a client reads an older server's
+ * answer too (level 1, no minimum app version).
  */
 export type HealthResponse = { 
 /**
@@ -9,6 +12,14 @@ export type HealthResponse = {
  */
 status: string, 
 /**
- * Server version (`x.y.z`), from the workspace `Cargo.toml`.
+ * Server version (`x.y.z`), from the server's `Cargo.toml`.
  */
-version: string, };
+version: string, 
+/**
+ * The API level the server implements ([`API_LEVEL`]).
+ */
+api_level: number, 
+/**
+ * The oldest app version (`x.y.z`) the server accepts; empty: no minimum.
+ */
+min_client_version: string, };

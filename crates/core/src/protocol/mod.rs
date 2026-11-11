@@ -61,23 +61,51 @@ use serde::{Deserialize, Serialize};
 
 use crate::hash::ChunkHash;
 
+/// The level of the `/api/v1` API this server implements, announced in
+/// [`HealthResponse::api_level`].
+///
+/// `/api/v1` changes are additive only (new endpoints, new optional fields). Bump this
+/// when the server adds something an app may come to rely on; the app then raises its
+/// own required level (`cloudit_client::compat::REQUIRED_API_LEVEL`) and tells the user
+/// when a server is older. Servers from before the field existed are level 1.
+pub const API_LEVEL: u32 = 1;
+
+/// [`HealthResponse::api_level`] of servers that don't send it (before it existed).
+const LEGACY_API_LEVEL: u32 = 1;
+
+fn legacy_api_level() -> u32 {
+    LEGACY_API_LEVEL
+}
+
 /// Liveness payload returned by `GET /health` and `GET /api/v1/health`.
+///
+/// The compatibility fields default when missing, so a client reads an older server's
+/// answer too (level 1, no minimum app version).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct HealthResponse {
     /// `"ok"` when the server can serve requests.
     pub status: String,
-    /// Server version (`x.y.z`), from the workspace `Cargo.toml`.
+    /// Server version (`x.y.z`), from the server's `Cargo.toml`.
     pub version: String,
+    /// The API level the server implements ([`API_LEVEL`]).
+    #[serde(default = "legacy_api_level")]
+    pub api_level: u32,
+    /// The oldest app version (`x.y.z`) the server accepts; empty: no minimum.
+    #[serde(default)]
+    pub min_client_version: String,
 }
 
 impl HealthResponse {
-    /// A healthy response carrying the given version.
+    /// A healthy response carrying the server version and the oldest app version it
+    /// accepts; the API level is [`API_LEVEL`].
     #[must_use]
-    pub fn ok(version: impl Into<String>) -> Self {
+    pub fn ok(version: impl Into<String>, min_client_version: impl Into<String>) -> Self {
         Self {
             status: "ok".to_owned(),
             version: version.into(),
+            api_level: API_LEVEL,
+            min_client_version: min_client_version.into(),
         }
     }
 }
@@ -320,11 +348,31 @@ mod tests {
 
     #[test]
     fn health_response_json_shape() {
-        let json = serde_json::to_value(HealthResponse::ok("1.2.3")).unwrap();
+        let json = serde_json::to_value(HealthResponse::ok("1.2.3", "0.1.0")).unwrap();
         assert_eq!(
             json,
-            serde_json::json!({ "status": "ok", "version": "1.2.3" })
+            serde_json::json!({
+                "status": "ok",
+                "version": "1.2.3",
+                "api_level": API_LEVEL,
+                "min_client_version": "0.1.0"
+            })
         );
+    }
+
+    #[test]
+    fn health_response_of_an_old_server_reads_with_defaults() {
+        let parsed: HealthResponse =
+            serde_json::from_str(r#"{"status":"ok","version":"0.1.0"}"#).unwrap();
+        assert_eq!(parsed.api_level, 1);
+        assert_eq!(parsed.min_client_version, "");
+        // Fields added later by newer servers are ignored.
+        let parsed: HealthResponse = serde_json::from_str(
+            r#"{"status":"ok","version":"9.0.0","api_level":7,"min_client_version":"2.0.0","x":1}"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.api_level, 7);
+        assert_eq!(parsed.min_client_version, "2.0.0");
     }
 
     #[test]
@@ -350,7 +398,7 @@ mod tests {
 
     #[test]
     fn health_response_round_trips() {
-        let original = HealthResponse::ok("0.1.0");
+        let original = HealthResponse::ok("0.1.0", "0.1.0");
         let text = serde_json::to_string(&original).unwrap();
         let parsed: HealthResponse = serde_json::from_str(&text).unwrap();
         assert_eq!(parsed, original);

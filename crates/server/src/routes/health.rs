@@ -15,10 +15,20 @@ use crate::state::AppState;
 /// Upper bound for each readiness check, so a hung dependency still gets an answer.
 const CHECK_TIMEOUT: Duration = Duration::from_secs(3);
 
+/// The oldest app version (`x.y.z`) this server works with, announced in `/health`.
+/// `/api/v1` changes are additive, so this moves only when the server removes or
+/// changes something older apps use: a breaking server release (the maintainer's
+/// decision; AGENTS.md "Invariants").
+pub const MIN_CLIENT_VERSION: &str = "0.1.0";
+
 /// Liveness: the process is up and serving HTTP. Never checks dependencies, so a
-/// slow database doesn't get the container restarted.
+/// slow database doesn't get the container restarted. Also tells apps the API level and
+/// the oldest app version this server accepts (constants: no I/O).
 pub async fn health() -> Json<HealthResponse> {
-    Json(HealthResponse::ok(env!("CARGO_PKG_VERSION")))
+    Json(HealthResponse::ok(
+        env!("CARGO_PKG_VERSION"),
+        MIN_CLIENT_VERSION,
+    ))
 }
 
 async fn check<F>(component: &'static str, fut: F) -> ComponentStatus
