@@ -8,11 +8,12 @@ use std::mem::Discriminant;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use cloudit_client::{FolderStatus, OpContext, Phase, Progress, SyncOptions, SyncReport};
+use cloudit_client::{Compat, FolderStatus, OpContext, Phase, Progress, SyncOptions, SyncReport};
 use tauri::{AppHandle, Manager};
 
 use crate::auto;
-use crate::error::CommandError;
+use crate::compat;
+use crate::error::{CommandError, ErrorDetails};
 use crate::events::{
     FOLDER_OP, FOLDER_PROGRESS, FOLDER_STATUS, FolderOpEvent, FolderStatusEvent, OpAction, OpStage,
     emit,
@@ -131,6 +132,14 @@ where
         auto,
         ended: auto::ended_of(&result),
     });
+    match &result {
+        Ok(_) => compat::update(app, Compat::Ok),
+        Err(CommandError {
+            details: Some(ErrorDetails::Compat { compat: learned }),
+            ..
+        }) => compat::update(app, learned.clone()),
+        Err(_) => {}
+    }
     match &result {
         Ok(outcome) => {
             notifications::observe(app, folder, outcome.status().state);

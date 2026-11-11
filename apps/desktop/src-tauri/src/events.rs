@@ -25,6 +25,8 @@ pub const APP_SETTINGS: &str = "app-settings";
 pub const UPDATE_STATE: &str = "update-state";
 /// The tray asks the UI to show a folder's page (`NavigateEvent`).
 pub const NAVIGATE: &str = "navigate";
+/// Whether the server works with this app changed (`Compat`).
+pub const COMPAT: &str = "compat";
 
 /// Which page of a folder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

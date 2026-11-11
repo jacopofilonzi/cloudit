@@ -3,4 +3,4 @@
 /**
  * Stable, machine-readable error kinds.
  */
-export type ErrorKind = "network" | "unauthorized" | "account_blocked" | "forbidden" | "not_found" | "quota_exceeded" | "conflict" | "rate_limited" | "server" | "protocol" | "scan_problems" | "local_changed" | "io" | "disk_full" | "cancelled" | "not_signed_in" | "not_linked" | "paused" | "link_refused" | "login_failed" | "token_store" | "state" | "invalid_input";
+export type ErrorKind = "network" | "unauthorized" | "account_blocked" | "forbidden" | "not_found" | "quota_exceeded" | "conflict" | "rate_limited" | "server" | "protocol" | "scan_problems" | "local_changed" | "io" | "disk_full" | "cancelled" | "not_signed_in" | "not_linked" | "paused" | "link_refused" | "login_failed" | "token_store" | "state" | "invalid_input" | "app_outdated" | "server_outdated";

@@ -8,7 +8,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
-use cloudit_client::{CancellationToken, Engine};
+use cloudit_client::{CancellationToken, Compat, Engine};
 use tracing_appender::non_blocking::WorkerGuard;
 
 use crate::auto::{self, AutoFolderState};
@@ -62,6 +62,8 @@ pub struct AppState {
     registry: Mutex<Registry>,
     /// The server stream: `Connection` as a number (the UI may load after the event).
     connection: AtomicU8,
+    /// Whether the server works with this app, as last learned (`compat.rs`).
+    compat: Mutex<Compat>,
     /// Keeps the log writer thread alive (flushes on drop).
     _log_guard: Option<WorkerGuard>,
 }
@@ -87,6 +89,7 @@ impl AppState {
             alerts: Mutex::new(alerts),
             registry: Mutex::new(Registry::default()),
             connection: AtomicU8::new(0),
+            compat: Mutex::new(Compat::Ok),
             _log_guard: log_guard,
         }
     }
@@ -127,6 +130,27 @@ impl AppState {
             2 => Connection::Offline,
             _ => Connection::Connecting,
         }
+    }
+
+    /// Whether the server works with this app (`Ok` until learned otherwise).
+    pub fn compat(&self) -> Compat {
+        self.compat
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Records the server's compatibility; whether it changed.
+    pub fn set_compat(&self, compat: Compat) -> bool {
+        let mut current = self
+            .compat
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *current == compat {
+            return false;
+        }
+        *current = compat;
+        true
     }
 
     /// Locks the registry (a poisoned lock still holds consistent data: only inserts

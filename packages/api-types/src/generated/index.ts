@@ -28,6 +28,7 @@ export type { ChunkSpec } from './ChunkSpec';
 export type { CodeChallengeMethod } from './CodeChallengeMethod';
 export type { CommandError } from './CommandError';
 export type { CommitResponse } from './CommitResponse';
+export type { Compat } from './Compat';
 export type { ComponentStatus } from './ComponentStatus';
 export type { ConflictEvent } from './ConflictEvent';
 export type { Connection } from './Connection';

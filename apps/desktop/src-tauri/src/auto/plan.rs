@@ -6,7 +6,8 @@
 //! Rules (STRUCTURE.md "Automatic sync"):
 //!
 //! - a folder runs only while [`Planner::active`] (signed in, the device-wide switch
-//!   on and no global pause: the single check point) and it is eligible (`auto_sync`
+//!   on, no global pause, no update installing, a compatible server: the single check
+//!   point) and it is eligible (`auto_sync`
 //!   on, not paused);
 //! - while paused nothing fires; the pause ends at its time ([`Planner::next_due`]
 //!   wakes the caller then, [`Planner::expire_pause`] ends it) and every eligible
@@ -21,7 +22,8 @@
 //!   meanwhile waits, and the exit runs it. A folder whose process state is still
 //!   unknown waits for the first poll;
 //! - a failure retries with [`BACKOFF`] (and on any trigger); a refused token stops
-//!   everything until the next sign-in; files that can't be read (a running game
+//!   everything until the next sign-in, an incompatible server (`app_outdated` /
+//!   `server_outdated`) until it is compatible again ([`Planner::set_compatible`]); files that can't be read (a running game
 //!   locks them) retry quietly, after the process exits when there is one;
 //! - a conflict is never retried by itself: it waits for the user or a new trigger.
 
@@ -156,6 +158,8 @@ pub struct Planner {
     paused_until: Option<Instant>,
     /// An app update is about to be installed: no new run starts (those running end).
     updating: bool,
+    /// The server doesn't work with this app (`app_outdated` / `server_outdated`).
+    incompatible: bool,
     /// The server stream connected at least once in this session (later `Connected`
     /// events are reconnects: changes may have been missed).
     connected: bool,
@@ -174,7 +178,17 @@ impl Planner {
     /// Whether automatic sync may run at all: the one check point.
     #[must_use]
     pub fn active(&self) -> bool {
-        self.signed_in && self.enabled && self.paused_until.is_none() && !self.updating
+        self.signed_in
+            && self.enabled
+            && self.paused_until.is_none()
+            && !self.updating
+            && !self.incompatible
+    }
+
+    /// Stops every automatic run while the server and this app don't work together
+    /// (`true`: they do again, every eligible folder runs at once).
+    pub fn set_compatible(&mut self, compatible: bool, now: Instant) {
+        self.update_active(now, |p| p.incompatible = !compatible);
     }
 
     /// Holds every automatic run while an app update installs (`false`: it failed,
@@ -388,6 +402,15 @@ impl Planner {
         } = ended
         {
             self.set_session(false, now);
+            return false;
+        }
+        if let Ended::Failed {
+            kind: ErrorKind::AppOutdated | ErrorKind::ServerOutdated,
+            ..
+        } = ended
+        {
+            // No retries: nothing works until the app or the server is updated.
+            self.set_compatible(false, now);
             return false;
         }
         let Some(slot) = self.slots.get_mut(&folder) else {
@@ -764,6 +787,32 @@ mod tests {
         assert!(due_now(&mut p).is_empty());
         p.set_session(true, Instant::now());
         assert_eq!(due_now(&mut p).len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_incompatible_server_stops_everything_without_retries() {
+        for kind in [ErrorKind::AppOutdated, ErrorKind::ServerOutdated] {
+            let mut p = planner(None);
+            p.trigger(1, Trigger::Remote, Instant::now());
+            due_now(&mut p);
+            // Not a failure streak to log or notify.
+            assert!(!p.finished(1, failed(kind), Instant::now()));
+            assert!(!p.active());
+            assert_eq!(p.next_due(), None);
+            advance(Duration::from_secs(3600)).await;
+            p.trigger(1, Trigger::Files, Instant::now());
+            p.trigger(1, Trigger::Remote, Instant::now());
+            assert!(due_now(&mut p).is_empty());
+            // Compatible again (the follower re-checked): everything runs at once.
+            p.set_compatible(true, Instant::now());
+            assert!(p.active());
+            assert_eq!(due_now(&mut p).len(), 1);
+        }
+        // Learned from the follower before any run failed.
+        let mut p = planner(None);
+        p.set_compatible(false, Instant::now());
+        p.trigger(1, Trigger::Remote, Instant::now());
+        assert!(due_now(&mut p).is_empty());
     }
 
     #[tokio::test(start_paused = true)]

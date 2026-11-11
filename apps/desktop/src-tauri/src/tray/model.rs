@@ -1,8 +1,8 @@
 //! What the tray shows, as a pure function of the linked folders, the session, the
-//! global pause and the language (tested without a GUI). `tray/mod.rs` turns a
+//! global pause, the server's compatibility and the language (tested without a GUI). `tray/mod.rs` turns a
 //! [`TrayModel`] into the real menu and rebuilds it only when the model changes.
 
-use cloudit_client::{LinkedFolder, SyncState};
+use cloudit_client::{Compat, LinkedFolder, SyncState};
 
 use crate::i18n::{Lang, Msg, text};
 
@@ -107,6 +107,8 @@ pub struct TrayInput<'a> {
     pub paused_until: Option<&'a str>,
     /// A newer app version the user can act on.
     pub update: Option<TrayUpdate<'a>>,
+    /// Whether the server works with this app (sync stops when it doesn't).
+    pub compat: &'a Compat,
     pub lang: Lang,
 }
 
@@ -190,7 +192,16 @@ fn item(action: MenuAction, label: String, enabled: bool) -> Item {
 #[must_use]
 pub fn build(input: TrayInput<'_>) -> TrayModel {
     let t = |msg| text(input.lang, msg);
-    let pending: Vec<(&LinkedFolder, FolderAction)> = if input.signed_in {
+    let incompatible = match input.compat {
+        _ if !input.signed_in => None,
+        Compat::Ok => None,
+        Compat::AppOutdated {
+            min_client_version, ..
+        } => Some(t(Msg::TrayAppOutdated(min_client_version))),
+        Compat::ServerOutdated { .. } => Some(t(Msg::TrayServerOutdated)),
+    };
+    // While incompatible no folder can sync: their actions would only fail.
+    let pending: Vec<(&LinkedFolder, FolderAction)> = if input.signed_in && incompatible.is_none() {
         input
             .folders
             .iter()
@@ -199,8 +210,11 @@ pub fn build(input: TrayInput<'_>) -> TrayModel {
     } else {
         Vec::new()
     };
+    let attention = !pending.is_empty() || incompatible.is_some();
     let headline = if !input.signed_in {
         t(Msg::TraySignedOut)
+    } else if let Some(headline) = incompatible {
+        headline
     } else if input.folders.is_empty() {
         t(Msg::TrayNoFolders)
     } else if pending.is_empty() {
@@ -245,7 +259,7 @@ pub fn build(input: TrayInput<'_>) -> TrayModel {
         None => format!("cloudit — {headline}"),
     };
     TrayModel {
-        attention: !pending.is_empty(),
+        attention,
         tooltip,
         status,
         sync: vec![item(MenuAction::SyncAll, t(Msg::SyncAll), can_sync), pause],
@@ -303,6 +317,7 @@ mod tests {
             folders,
             paused_until: paused,
             update: None,
+            compat: &Compat::Ok,
             lang: Lang::En,
         }
     }
@@ -424,6 +439,49 @@ mod tests {
             ..input(&[], None)
         });
         assert_eq!(model.open[0].label, "È disponibile la versione 0.3.0");
+    }
+
+    #[test]
+    fn an_incompatible_server_stops_everything_in_the_header() {
+        let folders = [folder(3, "Celeste", Some(SyncState::LocalChanges), false)];
+        let app_outdated = Compat::AppOutdated {
+            app_version: "0.1.0".into(),
+            min_client_version: "0.4.0".into(),
+        };
+        let model = build(TrayInput {
+            compat: &app_outdated,
+            ..input(&folders, None)
+        });
+        assert!(model.attention);
+        assert_eq!(
+            labels(&model.status),
+            vec!["Sync stopped: the server needs cloudit 0.4.0"]
+        );
+        assert_eq!(
+            model.tooltip,
+            "cloudit — Sync stopped: the server needs cloudit 0.4.0"
+        );
+        let server_outdated = Compat::ServerOutdated {
+            server_version: "0.1.0".into(),
+            api_level: 1,
+            required_api_level: 2,
+        };
+        let model = build(TrayInput {
+            compat: &server_outdated,
+            lang: Lang::It,
+            ..input(&folders, None)
+        });
+        assert_eq!(
+            labels(&model.status),
+            vec!["Sincronizzazione ferma: il server è troppo vecchio"]
+        );
+        // Signed out: that comes first.
+        let model = build(TrayInput {
+            compat: &server_outdated,
+            signed_in: false,
+            ..input(&folders, None)
+        });
+        assert_eq!(labels(&model.status), vec!["Not signed in"]);
     }
 
     #[test]

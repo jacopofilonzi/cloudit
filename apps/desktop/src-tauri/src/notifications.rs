@@ -7,7 +7,9 @@
 //!   the states known at startup count as already notified;
 //! - the first failure of an automatic retry streak (the scheduler says which one; the
 //!   quiet "files locked by the running program" case never starts a streak);
-//! - "sign in again" when the server refuses the token, once until the next sign-in.
+//! - "sign in again" when the server refuses the token, once until the next sign-in;
+//! - the server stopped working with this app (`app_outdated` / `server_outdated`), once
+//!   until it works again.
 //!
 //! The device-wide switch (`Engine::notifications_enabled`, default on) silences them,
 //! and nothing is shown while the main window is visible and focused (the UI already
@@ -16,7 +18,7 @@
 
 use std::collections::HashMap;
 
-use cloudit_client::SyncState;
+use cloudit_client::{Compat, SyncState};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_notification::NotificationExt as _;
 
@@ -33,6 +35,8 @@ pub enum Notice {
     SyncFailed { folder: i64 },
     /// The server refused this device's token.
     SignIn,
+    /// The server stopped working with this app (`AppState::compat` says why).
+    Incompatible,
 }
 
 /// The dedupe rules (see the module docs).
@@ -41,6 +45,7 @@ pub struct Alerts {
     /// Folders in a conflict state already notified (`true`: server conflict).
     conflicts: HashMap<i64, bool>,
     signed_out: bool,
+    incompatible: bool,
 }
 
 impl Alerts {
@@ -85,6 +90,13 @@ impl Alerts {
     pub fn signed_in(&mut self) {
         self.signed_out = false;
     }
+
+    /// The server's compatibility changed: a notice when it just became incompatible
+    /// (once until it works again).
+    pub fn compat(&mut self, compatible: bool) -> Option<Notice> {
+        let was = std::mem::replace(&mut self.incompatible, !compatible);
+        (!compatible && !was).then_some(Notice::Incompatible)
+    }
 }
 
 /// Shows `notice` if the switch is on and the window isn't in front.
@@ -126,6 +138,19 @@ pub fn show(app: &AppHandle, notice: Notice) {
             text(lang, Msg::SyncFailedBody),
         ),
         Notice::SignIn => (text(lang, Msg::SignInTitle), text(lang, Msg::SignInBody)),
+        Notice::Incompatible => match state.compat() {
+            Compat::Ok => return,
+            Compat::AppOutdated {
+                min_client_version, ..
+            } => (
+                text(lang, Msg::AppOutdatedTitle),
+                text(lang, Msg::AppOutdatedBody(&min_client_version)),
+            ),
+            Compat::ServerOutdated { server_version, .. } => (
+                text(lang, Msg::ServerOutdatedTitle),
+                text(lang, Msg::ServerOutdatedBody(&server_version)),
+            ),
+        },
     };
     send(app, &title, &body);
 }
@@ -196,5 +221,15 @@ mod tests {
         assert_eq!(a.signed_out(), None);
         a.signed_in();
         assert_eq!(a.signed_out(), Some(Notice::SignIn));
+    }
+
+    #[test]
+    fn incompatibility_is_notified_once_until_it_works_again() {
+        let mut a = Alerts::default();
+        assert_eq!(a.compat(true), None);
+        assert_eq!(a.compat(false), Some(Notice::Incompatible));
+        assert_eq!(a.compat(false), None);
+        assert_eq!(a.compat(true), None);
+        assert_eq!(a.compat(false), Some(Notice::Incompatible));
     }
 }

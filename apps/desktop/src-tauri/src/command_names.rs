@@ -12,6 +12,7 @@ pub const COMMANDS: &[&str] = &[
     "reopen_login_browser",
     "cancel_login",
     "sign_out",
+    "check_compat",
     "folders",
     "refresh_status",
     "refresh_all",

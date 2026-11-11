@@ -18,6 +18,7 @@
 
 mod auto;
 mod commands;
+mod compat;
 mod error;
 mod events;
 mod follower;
@@ -129,6 +130,7 @@ pub fn run() {
             commands::account::reopen_login_browser,
             commands::account::cancel_login,
             commands::account::sign_out,
+            commands::account::check_compat,
             commands::folders::folders,
             commands::folders::refresh_status,
             commands::folders::refresh_all,

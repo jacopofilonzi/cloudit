@@ -3,7 +3,7 @@
 //! carry (which path was refused, which files can't be synced…).
 
 use cloudit_client::scan::ScanProblem;
-use cloudit_client::{Error, ErrorKind, LinkRefusal, LoginFailure};
+use cloudit_client::{Compat, Error, ErrorKind, LinkRefusal, LoginFailure};
 use serde::Serialize;
 
 /// Structured details of an error.
@@ -21,6 +21,8 @@ pub enum ErrorDetails {
     LocalChanged { path: String },
     /// A server error: its API code (`name_taken`, …) and, for validation, the field.
     Api { code: String, field: Option<String> },
+    /// `app_outdated` / `server_outdated`: the versions involved.
+    Compat { compat: Compat },
 }
 
 /// A failed command.
@@ -72,6 +74,9 @@ impl From<Error> for CommandError {
                     .unwrap_or_default(),
                 field: body.field.clone(),
             }),
+            Error::AppOutdated { .. } | Error::ServerOutdated { .. } => {
+                error.compat().map(|compat| ErrorDetails::Compat { compat })
+            }
             _ => None,
         };
         Self {
@@ -104,5 +109,16 @@ mod tests {
         assert_eq!(plain.kind, ErrorKind::Unauthorized);
         assert!(plain.details.is_none());
         assert_eq!(CommandError::internal("x").kind, ErrorKind::State);
+        let outdated = CommandError::from(Error::AppOutdated {
+            app_version: "0.1.0".to_owned(),
+            min_client_version: "0.2.0".to_owned(),
+        });
+        assert_eq!(outdated.kind, ErrorKind::AppOutdated);
+        assert!(matches!(
+            outdated.details,
+            Some(ErrorDetails::Compat {
+                compat: Compat::AppOutdated { .. }
+            })
+        ));
     }
 }

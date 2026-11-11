@@ -1,11 +1,12 @@
 //! Account commands: app info, session, browser sign-in, sign-out.
 
-use cloudit_client::{Account, CancellationToken, OpContext, platform};
+use cloudit_client::{Account, CancellationToken, Compat, OpContext, platform};
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use super::open_url;
 use crate::auto::Input;
+use crate::compat;
 use crate::error::CommandError;
 use crate::events::{LOGIN_FINISHED, LoginEvent, emit};
 use crate::follower;
@@ -32,6 +33,9 @@ pub struct SessionState {
     pub token_warning: bool,
     /// The state of the server stream at this moment.
     pub connection: Connection,
+    /// Whether the server works with this app, as last learned (the `compat` event
+    /// reports changes).
+    pub compat: Compat,
 }
 
 /// A sign-in that started: the page the browser was sent to.
@@ -58,8 +62,21 @@ pub fn session(state: State<'_, AppState>) -> Result<SessionState, CommandError>
         token_warning: account.as_ref().is_some_and(Account::token_warning),
         signed_in: account.is_some() && state.engine.signed_in(),
         connection: state.connection(),
+        compat: state.compat(),
         account,
     })
+}
+
+/// Asks the server again whether it works with this app (e.g. after its administrator
+/// updated it); the answer also goes out as the `compat` event when it changed.
+#[tauri::command]
+pub async fn check_compat(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Compat, CommandError> {
+    let compat = state.engine.check_compatibility(&OpContext::new()).await?;
+    compat::update(&app, compat.clone());
+    Ok(compat)
 }
 
 #[tauri::command]
@@ -124,6 +141,8 @@ pub async fn start_login(
             match result {
                 Ok(account) => {
                     tracing::info!(device = %account.device_name, "signed in");
+                    // `begin_login` refused an incompatible server.
+                    compat::update(&app, Compat::Ok);
                     follower::start(&app);
                     state.auto.send(Input::Session(true));
                     emit(&app, LOGIN_FINISHED, &LoginEvent::Signed { account });
@@ -163,10 +182,12 @@ pub fn cancel_login(state: State<'_, AppState>) -> bool {
 /// Forgets the token and the account on this device; folder links stay for the next
 /// sign-in to the same account.
 #[tauri::command]
-pub async fn sign_out(state: State<'_, AppState>) -> Result<(), CommandError> {
+pub async fn sign_out(app: AppHandle, state: State<'_, AppState>) -> Result<(), CommandError> {
     state.auto.send(Input::Session(false));
     state.cancel_all();
     state.engine.logout().await?;
+    // Nothing to say about a server this device no longer uses.
+    compat::update(&app, Compat::Ok);
     Ok(())
 }
 

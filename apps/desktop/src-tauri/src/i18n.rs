@@ -60,6 +60,16 @@ pub enum Msg<'a> {
     SignInBody,
     TrayNoticeTitle,
     TrayNoticeBody,
+    /// The server needs this app at the named version or later (tray header).
+    TrayAppOutdated(&'a str),
+    /// The server is too old for this app (tray header).
+    TrayServerOutdated,
+    AppOutdatedTitle,
+    /// The minimum app version.
+    AppOutdatedBody(&'a str),
+    ServerOutdatedTitle,
+    /// The server's version.
+    ServerOutdatedBody(&'a str),
 }
 
 /// The text of `msg` in `lang`.
@@ -109,6 +119,16 @@ fn en(msg: Msg<'_>) -> String {
         Msg::TrayNoticeBody => {
             "cloudit keeps running in the tray. To close it, choose Quit from its menu.".into()
         }
+        Msg::TrayAppOutdated(min) => format!("Sync stopped: the server needs cloudit {min}"),
+        Msg::TrayServerOutdated => "Sync stopped: the server is too old".into(),
+        Msg::AppOutdatedTitle => "Update cloudit".into(),
+        Msg::AppOutdatedBody(min) => format!(
+            "This server needs cloudit {min} or later: sync is stopped until you update."
+        ),
+        Msg::ServerOutdatedTitle => "The server is too old".into(),
+        Msg::ServerOutdatedBody(version) => format!(
+            "The server runs {version}, too old for this app: ask its administrator to update it."
+        ),
     }
 }
 
@@ -150,6 +170,18 @@ fn it(msg: Msg<'_>) -> String {
         Msg::TrayNoticeBody => {
             "cloudit resta attivo nell'area di notifica. Per chiuderlo scegli Esci dal suo menu.".into()
         }
+        Msg::TrayAppOutdated(min) => {
+            format!("Sincronizzazione ferma: il server richiede cloudit {min}")
+        }
+        Msg::TrayServerOutdated => "Sincronizzazione ferma: il server è troppo vecchio".into(),
+        Msg::AppOutdatedTitle => "Aggiorna cloudit".into(),
+        Msg::AppOutdatedBody(min) => format!(
+            "Questo server richiede cloudit {min} o successiva: la sincronizzazione è ferma finché non aggiorni."
+        ),
+        Msg::ServerOutdatedTitle => "Il server è troppo vecchio".into(),
+        Msg::ServerOutdatedBody(version) => format!(
+            "Il server ha la versione {version}, troppo vecchia per questa app: chiedi al suo amministratore di aggiornarlo."
+        ),
     }
 }
 

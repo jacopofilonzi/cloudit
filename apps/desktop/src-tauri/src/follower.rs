@@ -1,12 +1,15 @@
 //! Follows the server's events while signed in, forwards them to the UI and to the
 //! automatic sync scheduler. A head or conflict change of a folder that isn't synced
-//! automatically refreshes its status (the scheduler syncs the automatic ones).
+//! automatically refreshes its status (the scheduler syncs the automatic ones). The
+//! server's compatibility, checked by the follower before every (re)connect, goes to
+//! `compat.rs`.
 
 use cloudit_client::CancellationToken;
 use cloudit_client::events::{self, RemoteEvent};
 use tauri::{AppHandle, Manager};
 
 use crate::auto::Input;
+use crate::compat;
 use crate::events::{OpAction, REMOTE, emit};
 use crate::ops;
 use crate::state::{AppState, Connection};
@@ -38,6 +41,13 @@ pub fn start(app: &AppHandle) {
                 RemoteEvent::SignedOut { error_kind } => {
                     tracing::warn!(?error_kind, "the server refused the token");
                     break;
+                }
+                RemoteEvent::Compatibility { compat } => {
+                    if !compat.is_ok() {
+                        // The follower holds no stream until it is compatible again.
+                        state.set_connection(Connection::Offline);
+                    }
+                    compat::update(&app, compat.clone());
                 }
                 RemoteEvent::FoldersChanged | RemoteEvent::UsageChanged => {}
             }

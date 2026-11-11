@@ -203,12 +203,14 @@ fn render(app: &AppHandle) {
             version,
             in_app: update.install == Install::InApp,
         });
+    let compat = state.compat();
     let model = model::build(TrayInput {
         signed_in: state.engine.signed_in(),
         has_account,
         folders: &folders,
         paused_until: paused.as_deref(),
         update: shown_update,
+        compat: &compat,
         lang: state.lang(),
     });
     let mut shown = tray

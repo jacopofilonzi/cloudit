@@ -14,6 +14,7 @@
     "allow-reopen-login-browser",
     "allow-cancel-login",
     "allow-sign-out",
+    "allow-check-compat",
     "allow-folders",
     "allow-refresh-status",
     "allow-refresh-all",
