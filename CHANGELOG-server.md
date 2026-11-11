@@ -7,6 +7,8 @@ version `X.Y.Z` is the git tag `server-vX.Y.Z` and the image tags `X.Y.Z`, `X.Y`
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-11
+
 ### Added
 
 - `/health` announces the server's API level and the oldest desktop app version it accepts, so

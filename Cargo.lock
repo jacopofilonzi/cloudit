@@ -1114,7 +1114,7 @@ dependencies = [
 
 [[package]]
 name = "cloudit-core"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "fastcdc",
  "hex",
@@ -1155,7 +1155,7 @@ dependencies = [
 
 [[package]]
 name = "cloudit-server"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "argon2",
