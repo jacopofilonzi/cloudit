@@ -1080,7 +1080,7 @@ dependencies = [
 
 [[package]]
 name = "cloudit-client"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "apple-native-keyring-store",
  "axum",
@@ -1128,7 +1128,7 @@ dependencies = [
 
 [[package]]
 name = "cloudit-desktop"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "cloudit-client",

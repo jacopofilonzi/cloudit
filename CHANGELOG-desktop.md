@@ -7,6 +7,8 @@ The desktop app (Windows and Linux) and its sync engine. The server has its own 
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-11
+
 ### Added
 
 - The app checks that it and the server are compatible (at sign-in, before syncing and on
