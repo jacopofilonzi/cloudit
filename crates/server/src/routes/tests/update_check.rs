@@ -13,7 +13,7 @@ use cloudit_core::protocol::{JobName, JobOutcome};
 use serde_json::{Value, json};
 
 use super::jobs::run_now;
-use super::support::TestApp;
+use super::support::{As, TestApp};
 use crate::accounts::settings;
 use crate::jobs::scheduler::{self, Attempt};
 use crate::jobs::update_check::SERVER_CHANGELOG_URL;
@@ -204,4 +204,147 @@ async fn disabled_checks_contact_nothing() {
             .unwrap()
             .is_none()
     );
+}
+
+/// Moves the job's last start `secs` seconds into the past.
+async fn started_ago(app: &TestApp, secs: i64) {
+    use sea_orm::sea_query::Expr;
+    use sea_orm::{ColumnTrait as _, EntityTrait as _, QueryFilter as _};
+    let at = crate::time::now() - chrono::Duration::seconds(secs);
+    crate::db::entities::jobs::Entity::update_many()
+        .col_expr(
+            crate::db::entities::jobs::Column::LastStartedAt,
+            Expr::value(at),
+        )
+        .filter(crate::db::entities::jobs::Column::Name.eq("update_check"))
+        .exec(&app.state.db)
+        .await
+        .unwrap();
+}
+
+async fn requested(app: &TestApp) -> bool {
+    crate::jobs::store::get(&app.state.db, JobName::UpdateCheck)
+        .await
+        .unwrap()
+        .is_some_and(|row| row.requested_at.is_some())
+}
+
+#[tokio::test]
+async fn the_summary_requests_a_check_at_most_every_ten_minutes() {
+    let fake = Shared::default();
+    let url = start(&fake).await;
+    let app = TestApp::with(&[("UPDATE_CHECK", "true"), ("UPDATE_CHECK_URL", &url)]).await;
+    let admin = app.setup_admin().await;
+    answer(&fake, 200, refs(&["refs/tags/server-v999.0.0"]));
+
+    // Never checked: reading the summary requests a check (and doesn't wait for it).
+    let resp = app.get("/api/v1/admin/summary", &admin).await;
+    resp.assert(StatusCode::OK);
+    assert_eq!(resp.body["update_check"]["enabled"], true);
+    assert_eq!(resp.body["update_check"]["pending"], true);
+    assert_eq!(resp.body["update_check"]["last_outcome"], json!(null));
+    assert!(requested(&app).await);
+    assert_eq!(fake.lock().unwrap().hits, 0);
+
+    // A scheduler runs it; then the summary shows the result and requests nothing.
+    run_now(&app.state, JobName::UpdateCheck).await;
+    let resp = app.get("/api/v1/admin/summary", &admin).await;
+    assert_eq!(resp.body["update_check"]["pending"], false);
+    assert_eq!(resp.body["update_check"]["last_outcome"], "succeeded");
+    assert!(resp.body["update_check"]["last_finished_at"].is_string());
+    assert_eq!(resp.body["update_available"], true);
+    assert!(!requested(&app).await);
+
+    // Within ten minutes of the last start: nothing; after: a new request.
+    started_ago(&app, 9 * 60).await;
+    app.get("/api/v1/admin/summary", &admin).await;
+    assert!(!requested(&app).await);
+    started_ago(&app, 10 * 60 + 1).await;
+    let resp = app.get("/api/v1/admin/summary", &admin).await;
+    assert_eq!(resp.body["update_check"]["pending"], true);
+    assert!(requested(&app).await);
+}
+
+#[tokio::test]
+async fn check_now_is_limited_to_once_a_minute() {
+    let fake = Shared::default();
+    let url = start(&fake).await;
+    let app = TestApp::with(&[("UPDATE_CHECK", "true"), ("UPDATE_CHECK_URL", &url)]).await;
+    let admin = app.setup_admin().await;
+    answer(&fake, 200, json!([]));
+
+    let resp = app
+        .post("/api/v1/admin/update-check", &admin, json!({}))
+        .await;
+    resp.assert(StatusCode::ACCEPTED);
+    assert_eq!(resp.body["update_check"]["pending"], true);
+    // Already requested: accepted again (the same check is coming).
+    app.post("/api/v1/admin/update-check", &admin, json!({}))
+        .await
+        .assert(StatusCode::ACCEPTED);
+
+    // Just ran: refused for the rest of the minute, here and through the jobs route.
+    run_now(&app.state, JobName::UpdateCheck).await;
+    started_ago(&app, 20).await;
+    let resp = app
+        .post("/api/v1/admin/update-check", &admin, json!({}))
+        .await;
+    resp.assert_error(StatusCode::TOO_MANY_REQUESTS, "rate_limited");
+    let retry: u64 = resp.headers["retry-after"]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!((39..=41).contains(&retry), "{retry}");
+    app.post("/api/v1/admin/jobs/update_check/run", &admin, json!({}))
+        .await
+        .assert_error(StatusCode::TOO_MANY_REQUESTS, "rate_limited");
+    assert!(!requested(&app).await);
+    // Other jobs are not limited.
+    app.post("/api/v1/admin/jobs/cleanup/run", &admin, json!({}))
+        .await
+        .assert(StatusCode::ACCEPTED);
+
+    started_ago(&app, 61).await;
+    app.post("/api/v1/admin/update-check", &admin, json!({}))
+        .await
+        .assert(StatusCode::ACCEPTED);
+    assert!(requested(&app).await);
+}
+
+#[tokio::test]
+async fn check_now_is_for_admins_only() {
+    let app = TestApp::with(&[
+        ("UPDATE_CHECK", "true"),
+        ("UPDATE_CHECK_URL", "http://127.0.0.1:9/x"),
+    ])
+    .await;
+    app.setup_admin().await;
+    let user = app.user("someone@example.test").await;
+    app.post("/api/v1/admin/update-check", &user, json!({}))
+        .await
+        .assert_error(StatusCode::FORBIDDEN, "forbidden");
+    app.post("/api/v1/admin/update-check", &As::Anon, json!({}))
+        .await
+        .assert_error(StatusCode::UNAUTHORIZED, "unauthorized");
+    app.get("/api/v1/admin/summary", &user)
+        .await
+        .assert_error(StatusCode::FORBIDDEN, "forbidden");
+    assert!(!requested(&app).await);
+}
+
+#[tokio::test]
+async fn disabled_checks_are_never_requested() {
+    let app = TestApp::with(&[("UPDATE_CHECK", "false")]).await;
+    let admin = app.setup_admin().await;
+    let resp = app.get("/api/v1/admin/summary", &admin).await;
+    assert_eq!(resp.body["update_check"]["enabled"], false);
+    assert_eq!(resp.body["update_check"]["pending"], false);
+    let resp = app
+        .post("/api/v1/admin/update-check", &admin, json!({}))
+        .await;
+    resp.assert(StatusCode::ACCEPTED);
+    assert_eq!(resp.body["update_check"]["enabled"], false);
+    assert_eq!(resp.body["update_check"]["pending"], false);
+    assert!(!requested(&app).await);
 }

@@ -2,7 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{ApprovalStatus, NewAccounts, Patch, RegistrationMode, Sensitive, TokenTtl};
+use super::{
+    ApprovalStatus, JobOutcome, NewAccounts, Patch, RegistrationMode, Sensitive, TokenTtl,
+};
 
 /// One account as seen by admins.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -229,6 +231,22 @@ pub struct AdminSummary {
     pub latest_release: Option<LatestRelease>,
     /// `latest_release` is newer than `server_version`.
     pub update_available: bool,
+    /// Where the update check stands (reading the summary may request one).
+    pub update_check: UpdateCheckStatus,
+}
+
+/// The `update_check` job as the admin UI needs it (`AdminSummary`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct UpdateCheckStatus {
+    /// `false` with `UPDATE_CHECK=false`: the server never checks.
+    pub enabled: bool,
+    /// A check is requested or running: read the summary again shortly.
+    pub pending: bool,
+    /// How the last finished check ended (`null`: none yet).
+    pub last_outcome: Option<JobOutcome>,
+    /// When it ended (RFC 3339).
+    pub last_finished_at: Option<String>,
 }
 
 /// The latest published cloudit server version (`update_check` job: the highest

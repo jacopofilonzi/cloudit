@@ -146,6 +146,7 @@ export type { TransferKind } from './TransferKind';
 export type { TrashEmptyResponse } from './TrashEmptyResponse';
 export type { TrashItem } from './TrashItem';
 export type { TrashItemKind } from './TrashItemKind';
+export type { UpdateCheckStatus } from './UpdateCheckStatus';
 export type { UpdateDeviceRequest } from './UpdateDeviceRequest';
 export type { UpdateFolderRequest } from './UpdateFolderRequest';
 export type { UpdateMeRequest } from './UpdateMeRequest';

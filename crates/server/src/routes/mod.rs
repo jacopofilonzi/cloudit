@@ -89,6 +89,7 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/users/{id}/approve", post(admin::approve_user))
         .route("/admin/users/{id}/reject", post(admin::reject_user))
         .route("/admin/summary", get(admin::summary))
+        .route("/admin/update-check", post(admin::check_updates))
         .route("/admin/jobs", get(jobs::list))
         .route("/admin/jobs/{name}/run", post(jobs::run))
         .route(

@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use anyhow::Context as _;
 use chrono::{DateTime, Utc};
 use cloudit_core::protocol::{JobName, JobOutcome, JobRunInfo};
-use sea_orm::sea_query::{Expr, OnConflict};
+use sea_orm::sea_query::{Expr, ExprTrait as _, OnConflict};
 use sea_orm::{
     ActiveValue::Set, ColumnTrait as _, ConnectionTrait, EntityTrait as _, QueryFilter as _,
     QueryOrder as _, QuerySelect as _,
@@ -62,6 +62,32 @@ pub async fn request(db: &impl ConnectionTrait, job: JobName) -> anyhow::Result<
         .await
         .context("requesting a job run")?;
     Ok(())
+}
+
+/// Asks for an immediate run unless one is already requested or the job started less
+/// than `gap` before `now`: one conditional UPDATE, so among concurrent callers on any
+/// instance at most one requests it. Returns whether this call did.
+pub async fn request_unless_recent(
+    db: &impl ConnectionTrait,
+    job: JobName,
+    gap: std::time::Duration,
+    now: DateTime<Utc>,
+) -> anyhow::Result<bool> {
+    ensure_rows(db).await?;
+    let gap = chrono::Duration::from_std(gap).context("job request gap")?;
+    let result = jobs::Entity::update_many()
+        .col_expr(jobs::Column::RequestedAt, Expr::value(now))
+        .filter(jobs::Column::Name.eq(job.as_str()))
+        .filter(jobs::Column::RequestedAt.is_null())
+        .filter(
+            jobs::Column::LastStartedAt
+                .is_null()
+                .or(jobs::Column::LastStartedAt.lte(now - gap)),
+        )
+        .exec(db)
+        .await
+        .context("requesting a job run")?;
+    Ok(result.rows_affected == 1)
 }
 
 /// Records the start of a run by `instance`: the job's `last_started_at`, the request

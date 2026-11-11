@@ -45,14 +45,19 @@ pub async fn list(
 }
 
 /// `POST /admin/jobs/{name}/run` → 202: an instance with jobs enabled runs it shortly
-/// (this one at once, if enabled here).
+/// (this one at once, if enabled here). `update_check` follows the "Check now" limit
+/// (`admin::request_update_check`: 429 within a minute of its last start).
 pub async fn run(
     State(state): State<AppState>,
     AdminUser(me): AdminUser,
     Path(name): Path<String>,
 ) -> Result<(StatusCode, Json<JobInfo>), ApiError> {
     let job = JobName::parse(&name).ok_or(ApiError::NotFound)?;
-    jobs::request(&state, job).await?;
+    if job == JobName::UpdateCheck {
+        super::admin::request_update_check(&state).await?;
+    } else {
+        jobs::request(&state, job).await?;
+    }
     tracing::info!(admin_id = %me.user.id, job = job.as_str(), "job run requested");
     let row = store::get(&state.db, job).await?;
     Ok((

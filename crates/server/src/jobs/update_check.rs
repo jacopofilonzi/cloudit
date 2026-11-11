@@ -17,14 +17,23 @@
 //!   (yet): nothing stored, the run succeeds. Any other failure (network, status, an
 //!   answer that isn't a ref list) fails the run and keeps the previous value; the
 //!   next run tries again.
+//!
+//! **When it runs**: daily (the scheduler's interval, a safety net), when an admin's
+//! web app loads the summary and the last start is older than [`AUTO_CHECK_GAP`], and
+//! on an admin's "Check now", at most once per [`MANUAL_CHECK_GAP`]. Both go through
+//! [`crate::jobs::request_unless_recent`]: one conditional UPDATE of the `jobs` row
+//! (shared by every instance), so the whole server asks GitHub at most once per gap
+//! however many admins and instances there are (GitHub allows 60 unauthenticated
+//! requests per hour and IP).
 
+use std::time::Duration;
 
 use anyhow::Context as _;
-use cloudit_core::protocol::LatestRelease;
+use cloudit_core::protocol::{JobName, JobOutcome, LatestRelease, UpdateCheckStatus};
 use cloudit_core::version::Version;
 use serde::Deserialize;
 
-use super::{Counts, RunContext};
+use super::{Counts, RunContext, store};
 use crate::accounts::settings;
 use crate::idp::http::HttpError;
 use crate::state::AppState;
@@ -35,6 +44,11 @@ const SERVER_TAG_PREFIX: &str = "refs/tags/server-v";
 /// The page stored with a found version: the server's release notes.
 pub const SERVER_CHANGELOG_URL: &str =
     "https://github.com/jacopofilonzi/cloudit/blob/main/CHANGELOG-server.md";
+
+/// A summary request asks for a check when the last one started longer ago than this.
+pub const AUTO_CHECK_GAP: Duration = Duration::from_secs(10 * 60);
+/// "Check now" is refused (429) when the last check started less than this ago.
+pub const MANUAL_CHECK_GAP: Duration = Duration::from_secs(60);
 
 /// The field read from the GitHub API's ref objects.
 #[derive(Debug, Deserialize)]
@@ -89,6 +103,25 @@ pub async fn run(state: &AppState, ctx: &RunContext, counts: &mut Counts) -> any
         tracing::info!(latest = %latest.version, "a newer cloudit server version is available");
     }
     Ok(())
+}
+
+/// Where the check stands, for the admin summary.
+pub async fn status(state: &AppState) -> anyhow::Result<UpdateCheckStatus> {
+    let row = store::get(&state.db, JobName::UpdateCheck).await?;
+    let runs = store::recent_runs(&state.db, JobName::UpdateCheck, 2).await?;
+    let running = runs
+        .first()
+        .is_some_and(|r| r.outcome == JobOutcome::Running.as_str());
+    let last = runs
+        .iter()
+        .filter_map(store::run_info)
+        .find(|r| r.outcome != JobOutcome::Running);
+    Ok(UpdateCheckStatus {
+        enabled: state.config.update_check,
+        pending: running || row.is_some_and(|r| r.requested_at.is_some()),
+        last_outcome: last.as_ref().map(|r| r.outcome),
+        last_finished_at: last.and_then(|r| r.finished_at),
+    })
 }
 
 #[cfg(test)]

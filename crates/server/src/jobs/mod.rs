@@ -120,3 +120,18 @@ pub async fn request(state: &AppState, job: JobName) -> anyhow::Result<()> {
     state.job_wakeup.notify_one();
     Ok(())
 }
+
+/// Like [`request`], unless a run is already requested or the job started less than
+/// `gap` ago (on any instance: see [`store::request_unless_recent`]). Returns whether
+/// this call requested it.
+pub async fn request_unless_recent(
+    state: &AppState,
+    job: JobName,
+    gap: std::time::Duration,
+) -> anyhow::Result<bool> {
+    let requested = store::request_unless_recent(&state.db, job, gap, crate::time::now()).await?;
+    if requested {
+        state.job_wakeup.notify_one();
+    }
+    Ok(requested)
+}

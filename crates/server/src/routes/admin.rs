@@ -1,6 +1,7 @@
 //! `/api/v1/admin/*` (web session of an effective admin): users (flags, approval),
 //! password resets, invites, settings (registration, sign-up approval, auto-link,
-//! public URL, retention defaults, trash retention, default quota), summary. User
+//! public URL, retention defaults, trash retention, default quota), summary and the
+//! update check ("Check now"). User
 //! entries carry their storage usage and quota.
 
 use std::time::Duration;
@@ -11,7 +12,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use cloudit_core::protocol::{
     AdminSummary, AdminUser as AdminUserInfo, AdminUserList, AdminUserUpdate, ApprovalStatus,
-    CreateInviteRequest, InviteInfo, InviteLink, PasswordResetLink, Patch, Sensitive,
+    CreateInviteRequest, InviteInfo, InviteLink, JobName, PasswordResetLink, Patch, Sensitive,
     ServerSettings, TokenTtl, UpdateSettingsRequest,
 };
 use serde::Deserialize;
@@ -22,6 +23,7 @@ use crate::accounts::{admin, invites, password_resets, settings, users};
 use crate::auth::extractors::AdminUser;
 use crate::db::entities::users as user_entity;
 use crate::errors::ApiError;
+use crate::jobs::{self, store, update_check};
 use crate::oauth::identities;
 use crate::state::AppState;
 use crate::sync::usage;
@@ -197,22 +199,74 @@ pub async fn reject_user(
     Ok(Json(user_view(&state, &decision.user).await?))
 }
 
-/// `GET /admin/summary`: counters for the admin UI.
+/// `GET /admin/summary`: counters for the admin UI. The admin shell reads it when the
+/// web app opens (and every minute), so it also requests an update check when the last
+/// one started more than [`update_check::AUTO_CHECK_GAP`] ago (database-coordinated:
+/// once per gap for the whole server); the answer doesn't wait for it
+/// (`update_check.pending` tells the UI to read the summary again shortly).
 pub async fn summary(
     State(state): State<AppState>,
     _admin: AdminUser,
 ) -> Result<Json<AdminSummary>, ApiError> {
+    if state.config.update_check {
+        jobs::request_unless_recent(&state, JobName::UpdateCheck, update_check::AUTO_CHECK_GAP)
+            .await?;
+    }
+    Ok(Json(summary_view(&state).await?))
+}
+
+/// `POST /admin/update-check` → 202 `AdminSummary`: "Check now". Refused with 429
+/// `rate_limited` when a check started less than [`update_check::MANUAL_CHECK_GAP`]
+/// ago (server-wide); a check already requested counts as accepted. With
+/// `UPDATE_CHECK=false` nothing is requested (`update_check.enabled` is false).
+pub async fn check_updates(
+    State(state): State<AppState>,
+    AdminUser(me): AdminUser,
+) -> Result<(StatusCode, Json<AdminSummary>), ApiError> {
+    if state.config.update_check {
+        request_update_check(&state).await?;
+        tracing::info!(admin_id = %me.user.id, "update check requested");
+    }
+    Ok((StatusCode::ACCEPTED, Json(summary_view(&state).await?)))
+}
+
+/// Requests an `update_check` run now, at most once per
+/// [`update_check::MANUAL_CHECK_GAP`] for the whole server (also used by `POST
+/// /admin/jobs/update_check/run`).
+pub async fn request_update_check(state: &AppState) -> Result<(), ApiError> {
+    let gap = update_check::MANUAL_CHECK_GAP;
+    if jobs::request_unless_recent(state, JobName::UpdateCheck, gap).await? {
+        return Ok(());
+    }
+    // Not requested by this call: either a run is already requested (fine: it comes),
+    // or the last one started too recently.
+    let row = store::get(&state.db, JobName::UpdateCheck).await?;
+    let Some(row) = row.filter(|r| r.requested_at.is_none()) else {
+        return Ok(());
+    };
+    let since = row
+        .last_started_at
+        .map_or(0, |at| (crate::time::now() - at).num_seconds());
+    let gap_secs = i64::try_from(gap.as_secs()).unwrap_or(i64::MAX);
+    let wait = u64::try_from(gap_secs.saturating_sub(since)).unwrap_or(0);
+    Err(ApiError::RateLimited {
+        retry_after: Duration::from_secs(wait.max(1)),
+    })
+}
+
+async fn summary_view(state: &AppState) -> Result<AdminSummary, ApiError> {
     let server_version = env!("CARGO_PKG_VERSION").to_owned();
     let latest_release = settings::latest_release(&state.db).await?;
     let update_available = latest_release
         .as_ref()
         .is_some_and(|r| cloudit_core::version::is_newer(&r.version, &server_version));
-    Ok(Json(AdminSummary {
+    Ok(AdminSummary {
         pending_users: users::count_pending(&state.db).await?,
         server_version,
         latest_release,
         update_available,
-    }))
+        update_check: update_check::status(state).await?,
+    })
 }
 
 /// `POST /admin/users/{id}/password-reset` → 201 with a 24-hour single-use link. Works
