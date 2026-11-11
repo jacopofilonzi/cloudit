@@ -1,0 +1,172 @@
+name: Release server
+
+# Builds and publishes the server only for `server-vX.Y.Z` tags or a manual run, never
+# on a plain push. The desktop app has its own workflow (release-app.yml): a server
+# release never rebuilds the app, and the other way round.
+#
+# - Tag `server-vX.Y.Z`: checks the tag against the server versions
+#   (scripts/versions.mjs: crates/core, crates/server, apps/web, packages/*, the root
+#   package.json); pushes the Docker image to ghcr.io for linux/amd64 and linux/arm64
+#   (each built natively on its own runner, pushed by digest, then joined into one
+#   multi-arch image tagged `X.Y.Z`, `X.Y`, `latest` and the commit sha: no `server-`
+#   prefix); then creates a GitHub Release for the tag with `--latest=false`, because
+#   installed desktop apps look for updates at releases/latest/download/latest.json:
+#   the repository's "latest" release must stay an app release. The server's own
+#   `update_check` job finds server releases by their `server-v` tag instead.
+# - Manual run without a tag: builds the Docker image (tagged with the sha only); no
+#   release.
+on:
+  push:
+    tags: ['server-v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    name: Tag matches the version
+    if: startsWith(github.ref, 'refs/tags/server-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: node scripts/check-release-version.mjs "${{ github.ref_name }}"
+
+  # One native build per platform (no QEMU: emulating a Rust release build takes hours),
+  # each pushed by digest only; `docker-manifest` then tags the multi-arch image.
+  docker:
+    name: Docker image (${{ matrix.platform }})
+    needs: version
+    # A manual run has no version check (skipped): build anyway.
+    if: ${{ !failure() && !cancelled() }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Platform slug
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: echo "PLATFORM_PAIR=${PLATFORM//\//-}" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          tags: ghcr.io/${{ github.repository }}
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=docker-${{ env.PLATFORM_PAIR }}
+          cache-to: type=gha,mode=max,scope=docker-${{ env.PLATFORM_PAIR }}
+
+      - name: Export the digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: digests-${{ env.PLATFORM_PAIR }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  docker-manifest:
+    name: Docker image (multi-arch tags)
+    needs: docker
+    # `version` is skipped on a manual run: without this the skip would propagate here.
+    if: ${{ !failure() && !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The git tag is `server-vX.Y.Z`, not semver, so `type=semver` would produce
+      # nothing: `type=match` (only on tag pushes) takes the version out of it. `latest`
+      # is explicit (flavor latest=false) so it comes only with a server tag.
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+          flavor: |
+            latest=false
+          tags: |
+            type=match,pattern=^server-v(\d+\.\d+\.\d+)$,group=1
+            type=match,pattern=^server-v(\d+\.\d+)\.\d+$,group=1
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/server-v') }}
+            type=sha
+
+      - name: Create the manifest list
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+          META: ${{ steps.meta.outputs.json }}
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$META") \
+            $(printf "$IMAGE@sha256:%s " *)
+
+      - name: Inspect
+        env:
+          META: ${{ steps.meta.outputs.json }}
+        run: docker buildx imagetools inspect "$(jq -r '.tags[0]' <<< "$META")"
+
+  release:
+    name: GitHub Release
+    needs: docker-manifest
+    if: startsWith(github.ref, 'refs/tags/server-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # `--latest=false`: releases/latest must stay the newest app release (the desktop
+      # updater reads latest.json from it).
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" --repo "${{ github.repository }}" \
+            --title "cloudit server ${TAG#server-}" --generate-notes --latest=false

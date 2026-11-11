@@ -1,6 +1,6 @@
 name: CI
 
-# Checks and tests only: no artifacts are built or published here (see release.yml).
+# Checks and tests only: no artifacts are built or published here (see release-app.yml and release-server.yml).
 on:
   push:
   pull_request:

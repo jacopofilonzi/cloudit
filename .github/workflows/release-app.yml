@@ -1,0 +1,130 @@
+name: Release app
+
+# Builds and publishes the desktop app only for `app-vX.Y.Z` tags or a manual run, never
+# on a plain push. The server has its own workflow (release-server.yml): an app release
+# never rebuilds the server, and the other way round.
+#
+# - Tag `app-vX.Y.Z`: checks the tag against the app versions (scripts/versions.mjs:
+#   crates/client, apps/desktop, tauri.conf.json), creates a draft GitHub Release, builds
+#   the desktop installers into it (Windows NSIS, Linux AppImage + deb, their updater
+#   signatures and `latest.json`), then publishes it as the repository's **latest**
+#   release: installed apps look for updates at
+#   https://github.com/jacopofilonzi/cloudit/releases/latest/download/latest.json, so the
+#   "latest" release must always be an app release (server releases are published with
+#   `--latest=false`).
+# - Manual run without a tag: builds the same installers (unsigned for the updater) as
+#   workflow artifacts; no release.
+#
+# Secrets: TAURI_SIGNING_PRIVATE_KEY (the updater signing key, see README "Releases")
+# and, if the key has one, TAURI_SIGNING_PRIVATE_KEY_PASSWORD.
+on:
+  push:
+    tags: ['app-v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    name: Tag matches the version
+    if: startsWith(github.ref, 'refs/tags/app-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: node scripts/check-release-version.mjs "${{ github.ref_name }}"
+
+  draft:
+    name: Draft release
+    needs: version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      id: ${{ steps.create.outputs.id }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: create
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # Created through the API so the id comes from the answer itself (a draft is
+          # not reliably listed right after its creation).
+          id=$(gh api "repos/${{ github.repository }}/releases" \
+            -f tag_name="$TAG" -f name="cloudit app ${TAG#app-}" \
+            -F draft=true -F generate_release_notes=true --jq .id)
+          test -n "$id"
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+  desktop:
+    name: Desktop installers (${{ matrix.os }})
+    needs: draft
+    # A manual run has no draft (the jobs before are skipped): build anyway.
+    if: ${{ !failure() && !cancelled() }}
+    strategy:
+      fail-fast: true
+      # One at a time: each job rewrites latest.json in the release.
+      max-parallel: 1
+      matrix:
+        # 22.04: an older glibc, so the AppImage and the deb run on more distributions.
+        os: [ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+
+      # Tauri 2 build prerequisites, plus what the AppImage bundler runs (patchelf, file).
+      - name: Tauri system libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev librsvg2-dev libsoup-3.0-dev libgtk-3-dev libayatana-appindicator3-dev libssl-dev libxdo-dev patchelf file
+
+      # Version comes from `packageManager` in package.json.
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/desktop
+          tauriScript: pnpm tauri
+          # Releases also build the signed updater packages (tauri.updater.conf.json).
+          args: ${{ needs.draft.outputs.id && '--config src-tauri/tauri.updater.conf.json' || '' }}
+          releaseId: ${{ needs.draft.outputs.id }}
+          releaseBody: cloudit app ${{ github.ref_name }}
+          uploadUpdaterJson: true
+          uploadWorkflowArtifacts: ${{ !needs.draft.outputs.id }}
+
+  publish:
+    name: Publish release
+    needs: [draft, desktop]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # `--latest`: the updater endpoint is releases/latest/download/latest.json.
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ github.ref_name }}" --repo "${{ github.repository }}" --draft=false --latest

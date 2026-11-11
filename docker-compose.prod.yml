@@ -1,5 +1,5 @@
 # Production, single instance: the released image from GitHub Container Registry
-# (built by .github/workflows/release.yml on every vX.Y.Z tag). SQLite database and
+# (built by .github/workflows/release-server.yml on every server-vX.Y.Z tag; image tags X.Y.Z). SQLite database and
 # filesystem blobs under ./data (/data in the container); settings in .env (see
 # .env.example: at least PUBLIC_URL, plus TRUST_PROXY_HEADERS=true behind a reverse proxy).
 #
