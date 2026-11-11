@@ -7,6 +7,12 @@ with other users.
 
 **Status: early development (0.1.x releases).** Don't use it for real data yet.
 
+**Release notes**: [CHANGELOG-desktop.md](CHANGELOG-desktop.md) for the desktop app (also on
+each [GitHub Release](https://github.com/jacopofilonzi/cloudit/releases), which are the app's
+only) and [CHANGELOG-server.md](CHANGELOG-server.md) for the server, web UI and Docker image
+(`ghcr.io/jacopofilonzi/cloudit`; a server version is a `server-vX.Y.Z` tag and an image tag,
+not a GitHub Release).
+
 - **Server** (Linux, Docker): one container with SQLite and local files, or several instances
   with PostgreSQL and S3-compatible storage. Password accounts, invites, admin approval of new
   accounts, sign-in with OIDC / GitHub / Discord, storage quotas, maintenance jobs.
@@ -190,8 +196,10 @@ Background jobs run on any instance, one at a time per job (a lease in the datab
 **retention** (every 15 minutes), **gc** (unreferenced chunks and manifests, hourly),
 **orphan_sweep** (stored objects without a database row, daily), **trash_purge** (hourly and
 right after a permanent delete), **cleanup** (expired sessions, codes and tokens, hourly) and
-**update_check** (daily: the latest cloudit server release on GitHub, tagged `server-vX.Y.Z`; admins see a notice in the
-administration when the server is older; `UPDATE_CHECK=false` never contacts GitHub,
+**update_check** (the latest cloudit server version, from the `server-vX.Y.Z` tags on GitHub:
+daily, when an admin opens the web app if the last check is older than 10 minutes, and with
+**Check now** in the administration, at most once a minute; admins see a notice with a link to
+the server changelog when the server is older; `UPDATE_CHECK=false` never contacts GitHub,
 `UPDATE_CHECK_URL` points it elsewhere).
 Admins see their runs and can start one in the web administration (Maintenance).
 `JOBS_ENABLED=false` keeps an instance out of the
@@ -313,24 +321,28 @@ of one never rebuilds the other.
 
 **Desktop app** (`crates/client`, `apps/desktop`):
 
-1. `make version-app V=x.y.z` (their `Cargo.toml`, `package.json` and `tauri.conf.json`), commit.
+1. `make version-app V=x.y.z` (their `Cargo.toml`, `package.json` and `tauri.conf.json`; it also
+   moves the `[Unreleased]` entries of `CHANGELOG-desktop.md` under the new version: review
+   them), commit.
 2. Tag and push the tag: `git tag app-vx.y.z && git push origin app-vx.y.z`.
 3. The **Release app** workflow checks the tag against those versions, builds the Windows
    installer and the Linux AppImage + deb with their updater signatures and `latest.json`, and
-   publishes the GitHub Release `app-vx.y.z` as the **latest** release. A manual run (no tag)
+   publishes the GitHub Release `app-vx.y.z` as the **latest** release, with the version's
+   changelog section as its notes (a tag without one fails). A manual run (no tag)
    only builds the installers, as workflow artifacts.
 
 **Server** (`crates/core`, `crates/server`, `apps/web`, `packages/*`):
 
-1. `make version-server V=x.y.z`, commit.
+1. `make version-server V=x.y.z` (also moves `[Unreleased]` of `CHANGELOG-server.md`), commit.
 2. `git tag server-vx.y.z && git push origin server-vx.y.z`.
-3. The **Release server** workflow checks the tag, pushes the Docker image
-   `ghcr.io/jacopofilonzi/cloudit` tagged `x.y.z`, `x.y` and `latest`, and creates the GitHub
-   Release `server-vx.y.z` **not** marked as latest. A manual run only builds the image
-   (tagged with the commit).
+3. The **Release server** workflow checks the tag (and that `CHANGELOG-server.md` has the
+   version) and pushes the Docker image `ghcr.io/jacopofilonzi/cloudit` tagged `x.y.z`, `x.y`
+   and `latest`. It creates no GitHub Release. A manual run only builds the image (tagged with
+   the commit).
 
-GitHub's "latest release" must always be an app release: installed apps look for updates in
-`releases/latest/download/latest.json`. Servers find their own releases by the `server-v` tag.
+GitHub Releases are the desktop app's only, and the "latest" one must always be an app release:
+installed apps look for updates in `releases/latest/download/latest.json`. Servers find newer
+versions from the `server-v` tags.
 
 The repository secrets `TAURI_SIGNING_PRIVATE_KEY` (the content of the updater signing key)
 and, if the key has a password, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` sign the updates; the
@@ -355,8 +367,10 @@ first and refuses to start if the backup fails. With PostgreSQL take a backup yo
   `app-vX.Y.Z`; Docker image tags stay `X.Y.Z`, `X.Y`, `latest`). A 0.1.x server reads
   GitHub's "latest release", which is now a desktop app release, so its update notice in the
   administration may point at an app release until the server is updated to a release that
-  looks for `server-v` tags. If you set `UPDATE_CHECK_URL` to the GitHub "latest release"
-  endpoint, change it to the "list releases" one (see `.env.example`) or unset it. The desktop
+  looks for `server-v` tags. If you set `UPDATE_CHECK_URL`, unset it or change it to the
+  "list matching references" endpoint for the `server-v` tags (see `.env.example`): the old
+  "list releases" endpoint finds nothing, since server versions no longer get a GitHub
+  Release. The update notice now links to the server changelog. The desktop
   app no longer says whether the server is out of date.
 - **0.1.3:** nothing required. A desktop folder with an associated program no longer syncs at
   all while the program runs; before, it kept uploading and only held back downloads.

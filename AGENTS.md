@@ -411,14 +411,21 @@ and align this project's copies with it:
   tag `app-vx.y.z`: `release-app.yml` checks the tag against the app versions
   (`scripts/check-release-version.mjs`), drafts the GitHub Release, builds the installers with
   `tauri-apps/tauri-action@v1` (`uploadUpdaterJson`, `releaseId`; one OS at a time because each job
-  rewrites `latest.json`) and publishes it with `--latest`. A **server release** =
-  `make version-server V=x.y.z`, commit, push `server-vx.y.z`: `release-server.yml` checks the tag,
-  pushes the multi-arch Docker image (tags `x.y.z`, `x.y`, `latest`, sha: no prefix) and creates a
-  GitHub Release with `--latest=false`.
-- **GitHub's "latest" release must always be an app release**: installed apps fetch
-  `releases/latest/download/latest.json`, so a server release marked latest would break their update
-  check. The server's `update_check` job lists the releases and picks the highest `server-v*` tag
-  instead.
+  rewrites `latest.json`) and publishes it with `--latest`; its notes are the version's section of
+  `CHANGELOG-desktop.md` (`scripts/changelog.mjs section`). A **server release** =
+  `make version-server V=x.y.z`, commit, push `server-vx.y.z`: `release-server.yml` checks the tag
+  and pushes the multi-arch Docker image (tags `x.y.z`, `x.y`, `latest`, sha: no prefix); it creates
+  **no GitHub Release** (its notes are `CHANGELOG-server.md`).
+- **GitHub Releases are the desktop app's only**: installed apps fetch
+  `releases/latest/download/latest.json`, so the "latest" release must always be an app release. The
+  server's `update_check` job finds server versions from the `server-vX.Y.Z` git tags
+  (`git/matching-refs/tags/server-v`), never from releases.
+- **Changelogs**: `CHANGELOG-server.md` (server, web UI, Docker image) and `CHANGELOG-desktop.md`
+  (desktop app, client engine), Keep a Changelog style. Every user-visible change adds a line under
+  `## [Unreleased]` of the right changelog (both if it touches both) in the same commit, written for
+  users and operators (concise, no internal file names; breaking changes and required steps say
+  so). `make version-app` / `make version-server` move that side's `[Unreleased]` entries under
+  `## [x.y.z] - <today>`; `check-release-version.mjs` fails a tag whose version has no section.
 - **The updater signing key** signs every desktop update; installed apps trust only its public half
   (`plugins.updater.pubkey` in `tauri.conf.json`). The private key lives outside the repo (repository
   secret `TAURI_SIGNING_PRIVATE_KEY`, plus `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` if it has one): never

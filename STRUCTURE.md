@@ -43,17 +43,23 @@ repo/
 │   └── ui/               `@cloudit/ui` — shared Svelte components, theme tokens, i18n EN/IT
 ├── scripts/              node scripts used by the Makefile (dev, types, set-version, help, clean, test-ha)
 │                         and by the release workflows (check-release-version: the tag matches the
-│                         versions of its side); versions.mjs lists the version files of each side
-│                         (server: core, server, web, packages, root package.json; app: client,
-│                         desktop, tauri.conf.json)
+│                         versions of its side and its changelog has the version's section);
+│                         versions.mjs lists the version files of each side (server: core, server,
+│                         web, packages, root package.json; app: client, desktop, tauri.conf.json);
+│                         changelog.mjs reads the changelogs (`section`: one version's notes, the
+│                         app's GitHub Release body; `release`: [Unreleased] → a version, run by
+│                         set-version)
+├── CHANGELOG-server.md   release notes of the server, web UI and Docker image (Keep a Changelog)
+├── CHANGELOG-desktop.md  release notes of the desktop app and the client engine
 ├── .cargo/config.toml    ts-rs env (`TS_RS_EXPORT_DIR`, `TS_RS_LARGE_INT`)
 ├── .github/workflows/    ci.yml (make check on ubuntu + windows; server tests with PostgreSQL/Garage/Valkey),
-│                         release-app.yml (app-v*.*.* tags: version check, draft release, desktop
+│                         release-app.yml (app-v*.*.* tags: version check, draft release with the
+│                         CHANGELOG-desktop.md section as notes, desktop
 │                         installers + updater signatures + latest.json via tauri-action, publish
 │                         as the latest release; a manual run builds the installers as workflow
 │                         artifacts only), release-server.yml (server-v*.*.* tags: version check,
-│                         multi-arch ghcr image tagged x.y.z / x.y / latest / sha, a GitHub Release
-│                         with --latest=false; a manual run builds the image tagged by sha only)
+│                         multi-arch ghcr image tagged x.y.z / x.y / latest / sha; no GitHub
+│                         Release; a manual run builds the image tagged by sha only)
 ├── Cargo.toml            Cargo workspace (edition 2024, clippy lints; each crate has its own version)
 ├── package.json          pnpm workspace root (lint/format tooling, `packageManager`)
 ├── Dockerfile            stages: web (node, pnpm build) → server (rust, release build) → runtime (debian trixie-slim)
@@ -92,7 +98,7 @@ crates/core/src/
 │   ├── admin.rs      AdminUser, AdminUserList, AdminUserUpdate, PasswordResetLink,
 │   │                 CreateInviteRequest, InviteLink, InviteStatus, InviteInfo, ServerSettings,
 │   │                 UpdateSettingsRequest, AdminSummary (+ server_version, latest_release,
-│   │                 update_available), LatestRelease
+│   │                 update_available, update_check), LatestRelease, UpdateCheckStatus
 │   ├── providers.rs  ProviderKind (+ as_str/parse), ProviderProtocol, ProviderPreset,
 │   │                 ProviderInfo, CreateProviderRequest, UpdateProviderRequest, ProviderTestResult
 │   ├── oauth.rs      OAuthPurpose, OAuthStartRequest, OAuthStartResponse, IdentityInfo,
@@ -182,7 +188,8 @@ crates/server/src/
 │   ├── trash_purge.rs purge_scope (rows, then objects by prefix), purge_folder, run
 │   ├── cleanup.rs    expired sessions, codes, flows, pending sign-ups, resets, old unused
 │   │                 invites, old job runs
-│   └── update_check.rs newest server-v release (UPDATE_CHECK_URL) → the latest_release setting
+│   └── update_check.rs highest server-v tag (UPDATE_CHECK_URL) → the latest_release setting;
+│                     AUTO_CHECK_GAP (10 min) / MANUAL_CHECK_GAP (1 min), status (summary)
 ├── crypto/           server key and encryption of stored secrets
 │   ├── mod.rs        SecretBox: XChaCha20-Poly1305, `[1][nonce 24][ciphertext+tag]`, AAD per value
 │   ├── key.rs        SecretKey (32 bytes, base64); resolve: SECRET_KEY, else <DATA_DIR>/secret.key
@@ -340,7 +347,8 @@ crates/server/src/
 │                     archive, quota, presign (live S3 with TEST_S3_*), events (SSE
 │                     reader, recipients, revocation, limits, Redis fan-out), jobs
 │                     (scheduler, leases, cleanup), retention, gc (forced races with
-│                     hooks), trash_purge, update_check (fake release endpoint on 127.0.0.1),
+│                     hooks), trash_purge, update_check (fake tag endpoint on 127.0.0.1;
+│                     summary-triggered checks, Check now limits),
 │                     packs (chunk pack upload / download, limits, quota, roles)
 ├── logging.rs        tracing subscriber (env filter; pretty or json)
 ├── shutdown.rs       Ctrl+C / SIGTERM future (OS-specific, like platform.rs)
@@ -400,7 +408,8 @@ Bearer cld_…`); **admin** (session of an effective admin); **onboarding** (the
 | `PATCH /admin/users/{id}` | admin | `AdminUserUpdate {admin?, disabled?, quota_bytes? (null = server default), quota_unlimited?}` → `AdminUser`; `quota_unlimited: true` clears `quota_bytes`, a sent `quota_bytes` (null included) clears `quota_unlimited`, `false` alone moves an unlimited account to the server default, `true` + a number → 422 `validation_failed` (`field` `quota_unlimited`), validated before any write; disabling deletes the web sessions |
 | `POST /admin/users/{id}/approve` | admin | → `AdminUser`; pending or rejected (lifts the ban) → approved; already approved: unchanged |
 | `POST /admin/users/{id}/reject` | admin | → `AdminUser`; pending or approved → rejected, web sessions deleted; own account → 403 `forbidden`; 409 `last_admin`; already rejected: unchanged |
-| `GET /admin/summary` | admin | `AdminSummary {pending_users, server_version, latest_release? {version, url, checked_at} (the `update_check` job's last find; null: never checked, disabled or no release), update_available}` |
+| `GET /admin/summary` | admin | `AdminSummary {pending_users, server_version, latest_release? {version, url (the server changelog), checked_at} (the `update_check` job's last find; null: never checked, disabled or no server tag), update_available, update_check: UpdateCheckStatus {enabled, pending (requested or running), last_outcome?, last_finished_at?}}`; with checks enabled it also requests an `update_check` run when the job last started more than 10 minutes ago (one conditional UPDATE of the `jobs` row: once per 10 minutes for the whole server), without waiting for it |
+| `POST /admin/update-check` | admin | → 202 `AdminSummary` ("Check now"): requests an `update_check` run; a run already requested counts as accepted; 429 `rate_limited` (`Retry-After`) when the job started less than a minute ago (server-wide, through the `jobs` row); with `UPDATE_CHECK=false` nothing is requested (`update_check.enabled` false) |
 | `POST /admin/users/{id}/password-reset` | admin | → 201 `PasswordResetLink {token, path: "/reset-password/<token>", expires_at}`; older unused resets of the user stop working |
 | `GET /admin/invites` | admin | `InviteInfo[]` (newest first, no tokens) |
 | `POST /admin/invites` | admin | `CreateInviteRequest {email?, expires_in?}` (default 7d; `forever` → 422) → 201 `InviteLink {id, token, path: "/invite/<token>", expires_at}` |
@@ -451,7 +460,7 @@ Bearer cld_…`); **admin** (session of an effective admin); **onboarding** (the
 | `GET /events` | any | `text/event-stream` (see "Real-time events"); 20 open streams per user and instance, more → 429 `rate_limited` |
 | `GET /sync/heads` | any | `SyncHeads {folders: [{scope_id, folder_id, head_snapshot_id, head_created_at, unresolved_conflicts}]}`: every visible folder outside the trash, by folder id; `ETag` (hash of the body), `If-None-Match` → 304 |
 | `GET /admin/jobs` | admin | `JobInfo[] {name, interval_secs, requested_at, last_started_at, recent_runs: JobRunInfo[] {id, job, instance_id, started_at, finished_at, outcome, counts, error}}` (≤ 10 runs, newest first; outcome `running` / `succeeded` / `failed` / `interrupted`), in the order retention, gc, orphan_sweep, trash_purge, cleanup, update_check |
-| `POST /admin/jobs/{name}/run` | admin | → 202 `JobInfo`: sets `requested_at`; a scheduler runs it shortly (this instance at once if its jobs are enabled); unknown name → 404 |
+| `POST /admin/jobs/{name}/run` | admin | → 202 `JobInfo`: sets `requested_at`; a scheduler runs it shortly (this instance at once if its jobs are enabled); unknown name → 404; `update_check` has the limit of `POST /admin/update-check` (429 within a minute of its last start) |
 
 Scope routes: "viewer", "editor", "admin", "owner" is the minimum scope role; a scope or
 folder the caller can't see answers 404 `not_found` (also with a device token), a visible one
@@ -845,15 +854,21 @@ request and 409 for head conflicts), `payload_too_large` 413. The callback carri
   (locks the folder row) deleting its snapshots' `snapshot_chunks`, its snapshots and the
   folder; its chunks and manifests are left to `gc` (they may be shared with other
   folders of the scope) and a `gc` run is requested. `folder_changed deleted`.
-- **update_check** (`jobs/update_check.rs`): with `UPDATE_CHECK=false` it contacts nothing
-  (counts `disabled`); else `GET UPDATE_CHECK_URL` (GitHub API "list releases", newest first,
-  one page of 30) through the shared outgoing client (`idp::http`: 5 s / 15 s timeouts, no
-  redirects, 1 MiB, `User-Agent: cloudit-server/<v>`), picks the highest published (not draft,
-  not pre-release) release tagged exactly `server-vX.Y.Z` (app releases, which GitHub marks
-  "latest", and other tags are ignored) and stores its version and `html_url` (http(s)) as the
-  `latest_release` setting with the check time; no server release in the list, or a 404,
-  succeeds storing nothing; any other failure fails the run and keeps the old value. Counts `checked`,
-  `newer`, `no_release`, `disabled`.
+- **update_check** (`jobs/update_check.rs`): server versions are git tags (a server release
+  creates no GitHub Release). With `UPDATE_CHECK=false` it contacts nothing (counts
+  `disabled`); else one `GET UPDATE_CHECK_URL` (GitHub API "list matching references" for
+  `tags/server-v`: every matching ref, `[{ref, node_id, url, object}]`) through the shared
+  outgoing client (`idp::http`: 5 s / 15 s timeouts, no redirects, 1 MiB, `User-Agent:
+  cloudit-server/<v>`), keeps the refs named exactly `refs/tags/server-vX.Y.Z`, and stores the
+  highest version as the `latest_release` setting with the server changelog
+  (`https://github.com/jacopofilonzi/cloudit/blob/main/CHANGELOG-server.md`) as its `url` and
+  the check time; no matching tag, or a 404, succeeds storing nothing; any other failure fails
+  the run and keeps the old value. Counts `checked`, `newer`, `no_release`, `disabled`.
+  Besides the daily interval it is requested by `GET /admin/summary` (last start older than
+  10 minutes) and by "Check now" (`POST /admin/update-check`, at most once a minute), both
+  through `jobs::request_unless_recent` (one conditional UPDATE: `requested_at` set only when
+  unset and `last_started_at` is older than the gap), so the server asks GitHub at most about
+  6 times an hour (GitHub allows 60 unauthenticated requests per hour and IP).
 - **cleanup**: expired sessions, device codes and OAuth flows; expired pending sign-ups no
   flow references; used or expired password resets; unused invites that expired or were
   revoked more than 30 days ago (**used invites are kept**: they record who invited whom);
@@ -997,8 +1012,8 @@ Read once at startup (`config/mod.rs`); empty values count as unset. Documented 
 | `REDIS_URL` | unset | `redis://…` (secret), Redis or Valkey; optional, never fatal; `rediss://` unsupported |
 | `JOBS_ENABLED` | `true` | Run the background jobs scheduler on this instance (jobs stay lease-guarded: one instance at a time) |
 | `GC_GRACE` | `24h` | Age (at least `1h`) before unreferenced chunk / manifest rows and objects without row may be deleted |
-| `UPDATE_CHECK` | `true` | The daily `update_check` job asks `UPDATE_CHECK_URL` for the latest server release (admins see a notice); `false` never contacts it (tests set `false`) |
-| `UPDATE_CHECK_URL` | `https://api.github.com/repos/jacopofilonzi/cloudit/releases?per_page=30` | GitHub API "list releases" endpoint (`http(s)://`); the highest `server-vX.Y.Z` tag counts |
+| `UPDATE_CHECK` | `true` | The `update_check` job (daily, when an admin opens the web app at most every 10 minutes, "Check now" at most once a minute) asks `UPDATE_CHECK_URL` for the latest server version (admins see a notice); `false` never contacts it (tests set `false`) |
+| `UPDATE_CHECK_URL` | `https://api.github.com/repos/jacopofilonzi/cloudit/git/matching-refs/tags/server-v` | GitHub API "list matching references" endpoint (`http(s)://`); the highest `refs/tags/server-vX.Y.Z` counts |
 | `TEST_DATABASE_URL`, `TEST_S3_*`, `TEST_REDIS_URL` | unset | Tests only (`make test-ha`, CI): run the server tests against PostgreSQL / S3 / Redis instead of SQLite and skipping |
 | `PUID` / `PGID` | `10001` | Docker only, read by the entrypoint (not the server): user/group the server runs as and owner of `DATA_DIR` |
 
@@ -1249,26 +1264,27 @@ server proxies `/api`, `/health`, `/ready` to `http://localhost:8080`. `#lib/*` 
 | `routes/(app)/devices` | desktop devices (rename, revoke; "never expires", revoked / expired status) and web sessions (current marked, sign out others) |
 | `routes/(app)/trash` | trash: restore (a `name_taken` opens a rename prompt), delete now, empty trash (confirms), who deleted (members of the scope), the space note |
 | `routes/(app)/profile` | name / email (current password when the email changes), language + theme (`Segmented`, function bindings), password (set / change), linked identities (unlink, `last_login_method` shown; link buttons start `purpose: link` with `return_to` = the profile), storage per owned scope |
-| `routes/(app)/admin/+layout.svelte`, `+page.ts` | administration: admins only (anyone else is sent to `/`), title + `Tabs` as navigation (Users with the pending badge, Invites, Sign-in providers, Settings, Maintenance); a `Banner` "cloudit X is available (this server runs Y)" + release link when `AdminSummary.update_available`; `/admin` redirects to `/admin/users` |
+| `routes/(app)/admin/+layout.svelte`, `+page.ts` | administration: admins only (anyone else is sent to `/`), title + `Tabs` as navigation (Users with the pending badge, Invites, Sign-in providers, Settings, Maintenance); a `Banner` "cloudit X is available (this server runs Y)" + "What’s new" (the server changelog) + "Check now" (`UpdateCheckButton`, when checks are enabled) when `AdminSummary.update_available`; `/admin` redirects to `/admin/users` |
 | `routes/(app)/admin/users` | filter All / Pending (n) / Rejected (`Segmented` with a function binding), 25 per page; pending view: sign-up source (provider icon, "email and password", "invite") + requested time, Approve / Reject (confirm); full view: role (admin from groups), status, used / effective quota, linked providers, Reject (ban), ⋯ menu (make / remove admin, quota, password-reset link, disable / enable); rejected: "Revoke ban" (= approve). Refreshes the sidebar badge after each decision; no admin rights / disable / reject on one's own row |
 | `routes/(app)/admin/invites` | invites (for, created by, expires, status), "New invite" (optional email, duration 1h–1y) → `LinkModal` with the full link, revoke (confirm) |
 | `routes/(app)/admin/providers` | providers in position order, up / down (PATCH `position` of the providers whose index changes), Test (inline result), Edit, Delete (confirm; identities kept, id not reusable), "no public URL" banner, `ProviderModal` (preset grid, then the preset's fields; groups only when `supports_groups`; callback URL computed from the effective public URL while creating) |
 | `routes/(app)/admin/settings` | registration (invite / open), approval of email sign-ups, auto-link by email, public URL (read-only when `public_url_from_env`), default quota, retention defaults, trash days; client-side checks plus per-field server errors; refreshes `session.config` (login page) |
-| `routes/(app)/admin/maintenance` | the jobs with description, interval, last run (outcome, counts, error), "Run now"; polls `GET /admin/jobs` every 3 s while a run is requested or running |
+| `routes/(app)/admin/maintenance` | the jobs with description, interval, last run (outcome, counts, error), "Run now" (the update check: `UpdateCheckButton`, or a note when checks are disabled); polls `GET /admin/jobs` every 3 s while a run is requested or running |
 | `lib/api.ts` | the only API module: `APP_ROOT`/`API_BASE` from `resolve('')`, one typed function per endpoint, `credentials: 'same-origin'`, `ApiError` (`code`, `status`, `field`, `headSnapshotId`, `hashes`, `detail`, `retryAfter`), `SignupResult` (201 signed in / 202 pending), `archiveUrl`, `eventsUrl` |
 | `lib/errors.ts` | exhaustive map code → i18n key; `codeMessageKey` (codes from URLs), `errorText` (rate limits with the wait), `formError` (`validation_failed` + `field` under the input, the rest to the form banner) |
 | `lib/session.svelte.ts` | `session`: `status`, `config` (`AuthConfig`), `user` (`GET /me`; 401 / `setup_required` / `account_*` = signed out), `load`, `refreshConfig` (login configuration only; after admin changes and sign-out), `signedInAs`, `signedOut` |
 | `lib/guard.ts` | pure route guard (tested): setup pending → `/setup`; guest pages (`/login`, `/register`, `/invite/…`) send a signed-in user to a safe `return_to` or `/`; open pages (`/reset-password/…`, `/onboarding`, `/pending`) never redirect; everything else (app, `/device`) needs a session → `/login?return_to=<path+query>`; `safeReturnTo` |
 | `lib/device.ts` | `/device` query parsing and checks (as the server), `cancelUrl` (tested) |
 | `lib/fields.ts` | `inviteToken` (token or full link), `osName`, `isEmail`, `browserLabel` (user agent → "Chrome · Windows") (tested) |
-| `lib/app.svelte.ts` | `app`: scopes, usage, pending users and the admin `summary` shared by the pages; `load*` for direct use after a change, `schedule*` (coalesced) for live events |
+| `lib/app.svelte.ts` | `app`: scopes, usage, pending users and the admin `summary` shared by the pages; `load*` for direct use after a change, `schedule*` (coalesced) for live events; while the summary says an update check is pending it is read again every 3 s (at most 20 times); `checkUpdates` ("Check now": `POST /admin/update-check`, then summary reads until done) and `checkingUpdates` |
+| `lib/update-check.ts` | `checkResult` (newer / up to date / failed / slow / disabled from a summary), `waitForCheck` (tested) |
 | `lib/live.svelte.ts` | `live` + `onLive(listener)`: one `EventSource` on `/events` while signed in; on every (re)connect fetches `/sync/heads` (ETag) and emits `resync` (not the first time); with `realtime: local` polls every 5 min and emits `folder_head` / `history_changed` / `folder_changed` for what changed; toasts a new conflict; a closed stream re-checks the session |
 | `lib/admin.ts` | pure helpers of the admin pages: quota units (`toBytes`, `splitBytes`, decimal MB / GB / TB), quota modes (`quotaModeOf`, `offersUnlimited`, `quotaUpdate`), `absoluteUrl` (links from the effective public URL, else `location.origin`), provider id rules and `slugify`, `parseList` / `formatList`, `parseIntIn` (tested) |
 | `lib/coalesce.ts` | `coalesced(run, delay)`: bursts of refreshes become few runs, never stale (tested) |
 | `lib/manifest.ts` | `diffManifests` (added / removed / modified / unchanged by chunk hashes, the conflict "Compare"), `filterEntries`, `splitPath`, `mtimeOf` (tested) |
 | `lib/roles.ts`, `lib/plural.ts`, `lib/scope-text.ts` | `atLeast(role, min)`; `tn('base', count)` over `base_one` / `base_other` keys; `joinNames` (`Intl.ListFormat`) |
 | `lib/lang.ts` | initial language (localStorage, else browser) and persisted switching |
-| `lib/components/` | `AuthCard` (centred card: logo or custom header, title, subtitle), `ProviderButtons` ("Continue with …", busy state), `LanguageSwitch`, `AppShell` (250px sidebar: brand, `nav` snippet, storage meter, user; main column; a drawer opened from a top bar below `md`), `ShellNavItem`, `ShellNavLabel`; app: `ScopeCreateModal`, `PromptModal` (one text field: rename, label, restore under a new name; errors stay in the dialog), `FolderCard`, `FolderCreateModal` (name + emoji), `FolderPanel` (details grid + tabs; `tab` and `inspect` are bound by the page so "Compare" can open Files on a snapshot) with `HistoryTab` (UTC-day groups, hover / focus / touch actions: restore with `expected_head`, ZIP link, pin, label, files; "older" by cursor; keeps the loaded length on refresh), `FilesTab` (manifest list with filter, or the diff of a conflict snapshot against the head) and `FolderSettingsTab` (rename + emoji: editor; retention + trash: admin; read-only below), `ConflictBanner` (Compare / Keep server = `resolve` / Keep <device> = `restore` with `expected_head`; `conflict` → refresh and tell the user), `ShareModal` (owner: add by email + role, role selects, remove, role explanations); admin: `CopyField` (read-only text + copy button), `LinkModal` (one-time link to copy: invites, resets), `QuotaModal` (server default, "Unlimited" when the server default is limited, or custom size), `InviteCreateModal`, `ProviderModal` |
+| `lib/components/` | `AuthCard` (centred card: logo or custom header, title, subtitle), `ProviderButtons` ("Continue with …", busy state), `LanguageSwitch`, `AppShell` (250px sidebar: brand, `nav` snippet, storage meter, user; main column; a drawer opened from a top bar below `md`), `ShellNavItem`, `ShellNavLabel`; app: `ScopeCreateModal`, `PromptModal` (one text field: rename, label, restore under a new name; errors stay in the dialog), `FolderCard`, `FolderCreateModal` (name + emoji), `FolderPanel` (details grid + tabs; `tab` and `inspect` are bound by the page so "Compare" can open Files on a snapshot) with `HistoryTab` (UTC-day groups, hover / focus / touch actions: restore with `expected_head`, ZIP link, pin, label, files; "older" by cursor; keeps the loaded length on refresh), `FilesTab` (manifest list with filter, or the diff of a conflict snapshot against the head) and `FolderSettingsTab` (rename + emoji: editor; retention + trash: admin; read-only below), `ConflictBanner` (Compare / Keep server = `resolve` / Keep <device> = `restore` with `expected_head`; `conflict` → refresh and tell the user), `ShareModal` (owner: add by email + role, role selects, remove, role explanations); admin: `CopyField` (read-only text + copy button), `LinkModal` (one-time link to copy: invites, resets), `QuotaModal` (server default, "Unlimited" when the server default is limited, or custom size), `InviteCreateModal`, `ProviderModal`, `UpdateCheckButton` ("Check now" with the result as a toast: the admin layout's update banner, Maintenance) |
 
 **`/device` query contract** (desktop client, milestone 6): the app opens
 `<server>/device?code_challenge=<43 base64url chars>&code_challenge_method=S256&redirect_uri=http://127.0.0.1:<port>/<path>&state=<1..512 chars>&device_name=<name>&os=<windows|linux|macos>`
