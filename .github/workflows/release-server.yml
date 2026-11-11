@@ -9,12 +9,11 @@ name: Release server
 #   package.json); pushes the Docker image to ghcr.io for linux/amd64 and linux/arm64
 #   (each built natively on its own runner, pushed by digest, then joined into one
 #   multi-arch image tagged `X.Y.Z`, `X.Y`, `latest` and the commit sha: no `server-`
-#   prefix); then creates a GitHub Release for the tag with `--latest=false`, because
-#   installed desktop apps look for updates at releases/latest/download/latest.json:
-#   the repository's "latest" release must stay an app release. The server's own
-#   `update_check` job finds server releases by their `server-v` tag instead.
-# - Manual run without a tag: builds the Docker image (tagged with the sha only); no
-#   release.
+#   prefix). No GitHub Release: the repository's releases are the desktop app's (the
+#   installed apps' updater reads the "latest" one); server release notes live in
+#   CHANGELOG-server.md, and the server's `update_check` job finds new versions by their
+#   `server-vX.Y.Z` tags.
+# - Manual run without a tag: builds the Docker image (tagged with the sha only).
 on:
   push:
     tags: ['server-v*.*.*']
@@ -154,19 +153,3 @@ jobs:
           META: ${{ steps.meta.outputs.json }}
         run: docker buildx imagetools inspect "$(jq -r '.tags[0]' <<< "$META")"
 
-  release:
-    name: GitHub Release
-    needs: docker-manifest
-    if: startsWith(github.ref, 'refs/tags/server-v')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      # `--latest=false`: releases/latest must stay the newest app release (the desktop
-      # updater reads latest.json from it).
-      - env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          gh release create "$TAG" --repo "${{ github.repository }}" \
-            --title "cloudit server ${TAG#server-}" --generate-notes --latest=false
