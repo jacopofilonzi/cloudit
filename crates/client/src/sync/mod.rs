@@ -5,6 +5,7 @@
 //! The orchestration (which of these to run, the conflict flow, locks, activity) lives
 //! in [`crate::engine`].
 
+pub mod pack;
 pub mod plan;
 pub mod pull;
 pub mod push;

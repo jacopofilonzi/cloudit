@@ -15,11 +15,17 @@
 //! Chunk transfers ([`cloudit_core::protocol::Transfer`]): `proxy` URLs get the bearer
 //! token (only when they point at the server's own origin), `presigned` URLs never get
 //! any credential; relative URLs (`/api/v1/…`) are resolved against the server URL.
+//! Servers at API level 2 or later also take chunk packs (`chunks/pack`,
+//! `chunks/pack/download`: many small chunks per request); the level comes from the
+//! compatibility check's `/health` ([`Api::set_api_level`]), so an older server gets
+//! single transfers only.
 
 mod endpoints;
 
 pub use endpoints::{CommitResult, FetchedManifest};
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -168,7 +174,13 @@ pub struct Api {
     base: Url,
     token: Option<Secret>,
     retry: RetryPolicy,
+    /// The server's API level as its `/health` last announced it (shared by the clones
+    /// of one session; 1 until known): decides whether chunk packs are used.
+    api_level: Arc<AtomicU32>,
 }
+
+/// The API level that added chunk packs (`cloudit_core::pack`).
+pub const PACK_API_LEVEL: u32 = 2;
 
 impl std::fmt::Debug for Api {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -193,7 +205,19 @@ impl Api {
             base,
             token,
             retry,
+            api_level: Arc::new(AtomicU32::new(1)),
         }
+    }
+
+    /// Records the API level the server announced (every clone of this client sees it).
+    pub fn set_api_level(&self, level: u32) {
+        self.api_level.store(level, Ordering::Relaxed);
+    }
+
+    /// Whether the server takes chunk packs (API level 2 or later).
+    #[must_use]
+    pub fn supports_packs(&self) -> bool {
+        self.api_level.load(Ordering::Relaxed) >= PACK_API_LEVEL
     }
 
     /// The server's base URL (with a trailing `/`).

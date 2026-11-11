@@ -33,19 +33,26 @@ pub struct Server {
     pub http: reqwest::Client,
     cookie: String,
     health: HealthOverride,
+    requests: RequestLog,
     task: tokio::task::JoinHandle<()>,
     _dir: TempDir,
 }
 
 /// A replacement body for the health endpoints (see [`Server::set_health`]).
 type HealthOverride = Arc<Mutex<Option<Value>>>;
+/// `"<METHOD> <path>"` of every request served (see [`Server::requests`]).
+type RequestLog = Arc<Mutex<Vec<String>>>;
 
 async fn override_health(
-    State(health): State<HealthOverride>,
+    State((health, requests)): State<(HealthOverride, RequestLog)>,
     request: Request,
     next: Next,
 ) -> Response {
     let path = request.uri().path();
+    requests
+        .lock()
+        .unwrap()
+        .push(format!("{} {path}", request.method()));
     if path == "/health" || path == "/api/v1/health" {
         let body = health.lock().unwrap().clone();
         if let Some(body) = body {
@@ -91,8 +98,9 @@ impl Server {
                 .unwrap();
         let state = AppState::init(config).await.unwrap();
         let health = HealthOverride::default();
+        let requests = RequestLog::default();
         let app = router(state.clone()).layer(axum::middleware::from_fn_with_state(
-            health.clone(),
+            (health.clone(), requests.clone()),
             override_health,
         ));
         let task = tokio::spawn(async move {
@@ -136,6 +144,7 @@ impl Server {
             http,
             cookie,
             health,
+            requests,
             task,
             _dir: dir,
         }
@@ -145,6 +154,11 @@ impl Server {
     /// e.g. to play an older or newer server.
     pub fn set_health(&self, body: Option<Value>) {
         *self.health.lock().unwrap() = body;
+    }
+
+    /// Takes the log of the requests served so far (`"<METHOD> <path>"`).
+    pub fn take_requests(&self) -> Vec<String> {
+        std::mem::take(&mut *self.requests.lock().unwrap())
     }
 
     /// A JSON call with the admin's web session; the status and the body.

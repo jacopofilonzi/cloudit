@@ -1,16 +1,19 @@
 //! Typed API calls.
 
+use std::collections::{HashMap, HashSet};
+
 use bytes::Bytes;
 use cloudit_core::chunk::codec::decode_chunk;
 use cloudit_core::hash::{ChunkHash, ManifestHash};
 use cloudit_core::manifest::codec::DEFAULT_MAX_MANIFEST_BYTES;
 use cloudit_core::manifest::{Manifest, decode_manifest};
+use cloudit_core::pack::{MAX_PACK_BYTES, PACK_CONTENT_TYPE, decode_pack};
 use cloudit_core::protocol::{
-    ChunkCheckRequest, ChunkCheckResponse, ChunkDownloadRequest, ChunkDownloadResponse, ChunkSpec,
-    CommitResponse, CreateFolderRequest, CreateScopeRequest, DeviceTokenRequest,
-    DeviceTokenResponse, FolderInfo, HealthResponse, MAX_STORED_CHUNK_BYTES,
-    RestoreSnapshotRequest, ScopeInfo, SnapshotInfo, SnapshotKind, SyncHeads, Transfer,
-    TransferKind, UserProfile,
+    ChunkCheckRequest, ChunkCheckResponse, ChunkDownloadRequest, ChunkDownloadResponse,
+    ChunkPackRequest, ChunkPackUploadResponse, ChunkSpec, CommitResponse, CreateFolderRequest,
+    CreateScopeRequest, DeviceTokenRequest, DeviceTokenResponse, FolderInfo, HealthResponse,
+    MAX_STORED_CHUNK_BYTES, RestoreSnapshotRequest, ScopeInfo, SnapshotInfo, SnapshotKind,
+    SyncHeads, Transfer, TransferKind, UserProfile,
 };
 use reqwest::header::{ETAG, IF_NONE_MATCH};
 use reqwest::{Method, Response, StatusCode};
@@ -340,6 +343,68 @@ impl Api {
     ) -> Result<()> {
         let call = self.transfer_call(transfer, Method::PUT)?.raw(stored);
         self.call_empty(&call, ctx).await
+    }
+
+    /// `POST /folders/{id}/chunks/pack` (API level 2) with a pack body (`PackWriter`).
+    pub async fn upload_pack(
+        &self,
+        folder: &str,
+        pack: Bytes,
+        ctx: &OpContext,
+    ) -> Result<ChunkPackUploadResponse> {
+        let call = Call::new(
+            Method::POST,
+            self.url(&format!("folders/{folder}/chunks/pack"))?,
+        )
+        .header("content-type", PACK_CONTENT_TYPE)
+        .raw(pack)
+        .timeout(TRANSFER_TIMEOUT);
+        self.call_json(&call, ctx).await
+    }
+
+    /// `POST /folders/{id}/chunks/pack/download` (API level 2): the requested chunks the
+    /// answer carried, each decoded against its hash (corrupt data, or a record nobody
+    /// asked for, is an error). Requested hashes the answer left out are not in the map:
+    /// the caller fetches them one by one.
+    pub async fn download_pack(
+        &self,
+        folder: &str,
+        hashes: &[ChunkHash],
+        ctx: &OpContext,
+    ) -> Result<HashMap<ChunkHash, Vec<u8>>> {
+        let call = Call::new(
+            Method::POST,
+            self.url(&format!("folders/{folder}/chunks/pack/download"))?,
+        )
+        .json(&ChunkPackRequest {
+            hashes: hashes.to_vec(),
+        })?
+        .timeout(TRANSFER_TIMEOUT);
+        let response = self.send(&call, ctx).await?;
+        if !response.status().is_success() {
+            return Err(error_of(response).await);
+        }
+        let body = read_bounded(response, MAX_PACK_BYTES).await?;
+        let wanted: HashSet<ChunkHash> = hashes.iter().copied().collect();
+        tokio::task::spawn_blocking(move || {
+            let entries =
+                decode_pack(&body).map_err(|e| Error::Protocol(format!("chunk pack: {e}")))?;
+            let mut out = HashMap::with_capacity(entries.len());
+            for entry in entries {
+                if !wanted.contains(&entry.hash) {
+                    return Err(Error::Protocol(format!(
+                        "chunk pack carries {}, which was not requested",
+                        entry.hash
+                    )));
+                }
+                let data = decode_chunk(&body[entry.range], &entry.hash)
+                    .map_err(|e| Error::Protocol(format!("chunk {}: {e}", entry.hash)))?;
+                out.insert(entry.hash, data);
+            }
+            Ok(out)
+        })
+        .await
+        .map_err(|e| Error::Protocol(format!("decoding a chunk pack: {e}")))?
     }
 
     /// Downloads one chunk through its transfer and decodes it against `hash`

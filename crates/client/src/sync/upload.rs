@@ -2,7 +2,9 @@
 //! [`MAX_CHUNKS_PER_REQUEST`], then the missing chunks read back from the local files
 //! (verified against the scanned hash: a file that changed since the scan stops the
 //! upload with [`Error::LocalChanged`]), encoded with `encode_chunk` and sent through
-//! their transfer, [`UPLOAD_CONCURRENCY`] at a time.
+//! their transfer, [`UPLOAD_CONCURRENCY`] requests at a time. With a server at API
+//! level 2 the small chunks go in packs instead ([`super::pack`]: one request per pack,
+//! retried whole); the large ones keep their transfer.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
@@ -13,15 +15,17 @@ use bytes::Bytes;
 use cloudit_core::chunk::codec::encode_chunk;
 use cloudit_core::hash::ChunkHash;
 use cloudit_core::manifest::Manifest;
+use cloudit_core::pack::PackWriter;
 use cloudit_core::protocol::{ChunkSpec, MAX_CHUNKS_PER_REQUEST, MissingChunk};
 use futures::StreamExt as _;
 
+use super::pack;
 use super::stage::local_path;
 use crate::api::Api;
 use crate::error::{Error, Result};
 use crate::progress::{OpContext, Phase};
 
-/// Chunks uploaded at the same time.
+/// Upload requests (single chunks or packs) at the same time.
 pub const UPLOAD_CONCURRENCY: usize = 6;
 
 /// What an upload sent.
@@ -136,12 +140,28 @@ impl<'a> Uploader<'a> {
                 total_chunks,
             },
         );
-        let mut uploads = futures::stream::iter(missing.into_iter().map(|m| self.upload_one(m)))
-            .buffer_unordered(UPLOAD_CONCURRENCY);
+        // Small chunks go in packs when the server takes them (whatever their transfer
+        // says: a pack goes through the server even with presigned URLs).
+        let (packs, singles) = if self.api.supports_packs() {
+            pack::group(missing, |m| specs.get(&m.hash).copied().unwrap_or(u32::MAX))
+        } else {
+            (Vec::new(), missing)
+        };
+        let jobs = packs
+            .into_iter()
+            .map(Job::Pack)
+            .chain(singles.into_iter().map(Job::One));
+        let mut uploads = futures::stream::iter(jobs.map(|job| async move {
+            match job {
+                Job::Pack(group) => self.upload_pack(group).await,
+                Job::One(missing) => Ok((1, u64::from(self.upload_one(missing).await?))),
+            }
+        }))
+        .buffer_unordered(UPLOAD_CONCURRENCY);
         while let Some(result) = uploads.next().await {
-            let size = result?;
-            stats.chunks += 1;
-            stats.bytes += u64::from(size);
+            let (chunks, bytes) = result?;
+            stats.chunks += chunks;
+            stats.bytes += bytes;
             self.ctx.report(
                 self.folder,
                 Phase::Uploading {
@@ -155,14 +175,64 @@ impl<'a> Uploader<'a> {
         Ok(stats)
     }
 
+    /// Where a missing chunk is in the local files.
+    fn source(&self, hash: &ChunkHash) -> Result<(String, u64, u32)> {
+        self.local.get(hash).cloned().ok_or_else(|| {
+            Error::Protocol(format!(
+                "the server lacks chunk {hash}, which no local file has"
+            ))
+        })
+    }
+
+    /// Reads, encodes and uploads small chunks as one pack; the chunks and uncompressed
+    /// bytes sent.
+    async fn upload_pack(&self, group: Vec<MissingChunk>) -> Result<(u64, u64)> {
+        let mut sources = Vec::with_capacity(group.len());
+        for missing in &group {
+            let (path, offset, size) = self.source(&missing.hash)?;
+            sources.push((
+                local_path(self.root, &path),
+                path,
+                offset,
+                size,
+                missing.hash,
+            ));
+        }
+        let bytes: u64 = sources.iter().map(|s| u64::from(s.3)).sum();
+        let count = sources.len() as u64;
+        let body = self
+            .ctx
+            .run(async move {
+                tokio::task::spawn_blocking(move || {
+                    let mut writer = PackWriter::new();
+                    for (full, path, offset, size, hash) in &sources {
+                        let stored = read_encoded(full, path, *offset, *size, *hash)?;
+                        writer
+                            .push(hash, &stored)
+                            .map_err(|e| Error::Protocol(format!("building a chunk pack: {e}")))?;
+                    }
+                    Ok::<_, Error>(writer.finish())
+                })
+                .await
+                .map_err(|e| Error::Protocol(format!("reading chunks: {e}")))?
+            })
+            .await?;
+        let answer = self
+            .api
+            .upload_pack(self.folder_id, Bytes::from(body), self.ctx)
+            .await?;
+        if u64::from(answer.chunks) != count {
+            return Err(Error::Protocol(format!(
+                "the server read {} chunks of a pack of {count}",
+                answer.chunks
+            )));
+        }
+        Ok((count, bytes))
+    }
+
     /// Reads, encodes and uploads one chunk; its uncompressed size.
     async fn upload_one(&self, missing: MissingChunk) -> Result<u32> {
-        let Some((path, offset, size)) = self.local.get(&missing.hash).cloned() else {
-            return Err(Error::Protocol(format!(
-                "the server lacks chunk {}, which no local file has",
-                missing.hash
-            )));
-        };
+        let (path, offset, size) = self.source(&missing.hash)?;
         let full = local_path(self.root, &path);
         let hash = missing.hash;
         let stored = self
@@ -178,6 +248,12 @@ impl<'a> Uploader<'a> {
             .await?;
         Ok(size)
     }
+}
+
+/// One upload request: a pack of small chunks or one chunk through its transfer.
+enum Job {
+    Pack(Vec<MissingChunk>),
+    One(MissingChunk),
 }
 
 /// One chunk of a local file, verified and encoded for storage.

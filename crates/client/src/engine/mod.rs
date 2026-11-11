@@ -224,7 +224,10 @@ impl Engine {
     /// Asks the signed-in server's `/health` whether it works with this app, and
     /// remembers the answer for the next operations.
     pub async fn check_compatibility(&self, ctx: &OpContext) -> Result<Compat> {
-        let health = self.api()?.health(ctx).await?;
+        let api = self.api()?;
+        let health = api.health(ctx).await?;
+        // Shared with every clone of the session's client: enables chunk packs.
+        api.set_api_level(health.api_level);
         let compat = compat::decide(&health, compat::APP_VERSION, compat::REQUIRED_API_LEVEL);
         if !compat.is_ok() {
             tracing::warn!(?compat, "the server and this app are not compatible");
