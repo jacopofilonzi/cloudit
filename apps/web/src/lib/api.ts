@@ -420,6 +420,7 @@ export const rejectUser = (id: string) => post<AdminUser>(`/admin/users/${seg(id
 export const createPasswordReset = (id: string) =>
   post<PasswordResetLink>(`/admin/users/${seg(id)}/password-reset`);
 export const getAdminSummary = () => get<AdminSummary>('/admin/summary');
+export const checkForUpdates = () => post<AdminSummary>('/admin/update-check');
 export const listInvites = () => get<InviteInfo[]>('/admin/invites');
 export const createInvite = (body: CreateInviteRequest) => post<InviteLink>('/admin/invites', body);
 export const revokeInvite = (id: string) => del(`/admin/invites/${seg(id)}`);

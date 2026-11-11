@@ -462,7 +462,15 @@ export const en = {
   'admin.title': 'Administration',
   'admin.subtitle': 'Accounts, sign-in methods and the server itself.',
   'admin.update_available': 'cloudit {latest} is available (this server runs {current}).',
-  'admin.update_link': 'See the release',
+  'admin.update_link': 'What’s new',
+  'admin.update_check_now': 'Check now',
+  'admin.update_check_newer': 'cloudit {latest} is available.',
+  'admin.update_check_up_to_date': 'This server runs the latest version ({current}).',
+  'admin.update_check_failed': 'The update check failed: see the error under Maintenance.',
+  'admin.update_check_slow':
+    'The check is taking longer than usual: its result will show up here when it ends.',
+  'admin.update_check_disabled':
+    'Update checks are turned off on this server (UPDATE_CHECK=false).',
   'admin.tab_users': 'Users',
   'admin.tab_invites': 'Invites',
   'admin.tab_providers': 'Sign-in providers',
@@ -670,7 +678,7 @@ export const en = {
     'Removes expired sessions, codes, sign-in attempts and old job history.',
   'admin.job_update_check': 'Update check',
   'admin.job_update_check_desc':
-    'Looks up the latest cloudit release, so you know when this server can be updated.',
+    'Looks up the latest cloudit server version, so you know when this server can be updated.',
   'admin.job_run': 'Run now',
   'admin.job_requested': 'The run was requested.',
   'admin.job_queued': 'Waiting to start',

@@ -1,6 +1,7 @@
 <script lang="ts">
   // Background jobs: what ran last, and "run now". While a run is requested or running
-  // the list refreshes every few seconds, then stops.
+  // the list refreshes every few seconds, then stops. The update check has "Check now"
+  // instead (UpdateCheckButton: rate limited, tells the result).
   import { onMount } from 'svelte';
   import Play from '@lucide/svelte/icons/play';
   import type { JobInfo, JobName, JobOutcome, JobRunInfo } from '@cloudit/api-types';
@@ -20,6 +21,8 @@
   } from '@cloudit/ui';
   import { getLang, t, type MessageKey } from '@cloudit/ui/i18n';
   import { listJobs, runJob } from '#lib/api.ts';
+  import { app } from '#lib/app.svelte.ts';
+  import UpdateCheckButton from '#lib/components/UpdateCheckButton.svelte';
   import { errorText } from '#lib/errors.ts';
 
   const POLL_MS = 3000;
@@ -181,15 +184,27 @@
                   : t('admin.job_outcome_running')}
               </span>
             {/if}
-            <Button
-              size="sm"
-              disabled={busy}
-              loading={starting === job.name}
-              onclick={() => run(job)}
-            >
-              <Play size={13} aria-hidden="true" />{t('admin.job_run')}
-            </Button>
+            {#if job.name === 'update_check'}
+              <!-- Limited to once a minute by the server; it also tells the result. -->
+              {#if app.summary?.update_check.enabled !== false}
+                <UpdateCheckButton onchecked={load} />
+              {/if}
+            {:else}
+              <Button
+                size="sm"
+                disabled={busy}
+                loading={starting === job.name}
+                onclick={() => run(job)}
+              >
+                <Play size={13} aria-hidden="true" />{t('admin.job_run')}
+              </Button>
+            {/if}
           </div>
+          {#if job.name === 'update_check' && app.summary?.update_check.enabled === false}
+            <p class="basis-full text-xs text-muted" data-update-check-disabled>
+              {t('admin.update_check_disabled')}
+            </p>
+          {/if}
         </Card>
       </li>
     {/each}

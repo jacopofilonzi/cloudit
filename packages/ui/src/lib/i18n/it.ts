@@ -472,7 +472,16 @@ export const it: Dictionary = {
   'admin.title': 'Amministrazione',
   'admin.subtitle': 'Account, metodi di accesso e il server stesso.',
   'admin.update_available': 'È disponibile cloudit {latest} (questo server usa la {current}).',
-  'admin.update_link': 'Vedi la versione',
+  'admin.update_link': 'Novità',
+  'admin.update_check_now': 'Controlla ora',
+  'admin.update_check_newer': 'È disponibile cloudit {latest}.',
+  'admin.update_check_up_to_date': 'Questo server usa l’ultima versione ({current}).',
+  'admin.update_check_failed':
+    'Il controllo degli aggiornamenti non è riuscito: l’errore è in Manutenzione.',
+  'admin.update_check_slow':
+    'Il controllo sta durando più del solito: il risultato comparirà qui quando finisce.',
+  'admin.update_check_disabled':
+    'I controlli degli aggiornamenti sono disattivati su questo server (UPDATE_CHECK=false).',
   'admin.tab_users': 'Utenti',
   'admin.tab_invites': 'Inviti',
   'admin.tab_providers': 'Provider di accesso',
@@ -683,7 +692,7 @@ export const it: Dictionary = {
     'Rimuove sessioni, codici e tentativi di accesso scaduti e la cronologia vecchia dei processi.',
   'admin.job_update_check': 'Controllo aggiornamenti',
   'admin.job_update_check_desc':
-    'Cerca l’ultima versione di cloudit pubblicata, per sapere quando aggiornare questo server.',
+    'Cerca l’ultima versione del server cloudit pubblicata, per sapere quando aggiornare questo server.',
   'admin.job_run': 'Avvia ora',
   'admin.job_requested': 'L’esecuzione è stata richiesta.',
   'admin.job_queued': 'In attesa di partire',
