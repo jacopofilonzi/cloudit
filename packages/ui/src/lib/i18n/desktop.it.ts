@@ -350,14 +350,21 @@ export const desktopIt: { readonly [K in DesktopKey]: string } = {
   // Compatibilità con il server
   'desktop.compat.app_outdated':
     'Questo server richiede una versione più recente di cloudit ({min} o successiva)',
-  'desktop.compat.app_outdated_body':
-    'La sincronizzazione è ferma finché non aggiorni questa app (questa è la versione {version}).',
   'desktop.compat.server_outdated':
     'Il server ha la versione {version}, troppo vecchia per questa app: chiedi al suo amministratore di aggiornarlo.',
   'desktop.compat.server_outdated_body':
     'La sincronizzazione è ferma finché il server non viene aggiornato.',
-  'desktop.compat.check_updates': 'Controlla aggiornamenti',
   'desktop.compat.check_again': 'Controlla di nuovo',
+  'desktop.required.title': 'Aggiorna cloudit per continuare',
+  'desktop.required.body':
+    "Questo server richiede una versione più recente dell'app. Nulla viene sincronizzato finché non la aggiorni; le tue cartelle e i loro file non vengono toccati.",
+  'desktop.required.this_version': 'Questa app',
+  'desktop.required.min_version': 'Richiesta dal server',
+  'desktop.required.checking': 'Ricerca di una nuova versione…',
+  'desktop.required.none': "Non c'è ancora una versione più recente. Riprova più tardi.",
+  'desktop.required.tray':
+    "cloudit resta nell'area di notifica; la sincronizzazione riparte dopo l'aggiornamento.",
+  'desktop.required.other_server': 'Usi un altro server?',
   'desktop.compat.still_outdated': 'Il server è ancora troppo vecchio per questa app.',
 
   // Errors by engine kind

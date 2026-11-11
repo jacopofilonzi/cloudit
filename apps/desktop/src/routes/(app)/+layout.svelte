@@ -1,6 +1,7 @@
 <script lang="ts">
   // The signed-in shell: sidebar (navigation with the attention badge, server state,
   // account), the server compatibility, app update and global pause banners, and the page.
+  // An app too old for its server shows only the "update required" screen instead.
   import Clock from '@lucide/svelte/icons/clock';
   import FolderSync from '@lucide/svelte/icons/folder-sync';
   import SettingsIcon from '@lucide/svelte/icons/settings';
@@ -12,8 +13,10 @@
   import { reportError } from '#lib/actions.ts';
   import CompatBanner from '#lib/components/CompatBanner.svelte';
   import UpdateBanner from '#lib/components/UpdateBanner.svelte';
+  import UpdateRequired from '#lib/components/UpdateRequired.svelte';
   import { app } from '#lib/app.svelte.ts';
   import { tn } from '#lib/plural.ts';
+  import { updateRequired } from '#lib/update.ts';
 
   let { children }: { children: Snippet } = $props();
 
@@ -42,70 +45,75 @@
     )
   );
   const current = (href: string) => page.url.pathname.startsWith(resolve(href as '/(app)/folders'));
+  const required = $derived(updateRequired(app.compat));
 </script>
 
-<div class="flex h-screen">
-  <aside
-    class="flex w-[200px] flex-none flex-col gap-0.5 border-r border-border bg-surface px-2.5 py-3.5"
-  >
-    <div class="flex items-center gap-2 px-2 pb-3 text-[15px] font-bold">
-      <Logo size={24} />
-      {t('app.name')}
-    </div>
-    <nav class="flex flex-col gap-0.5">
-      {#each items as item (item.href)}
-        {@const Icon = item.icon}
-        <a
-          href={resolve(item.href)}
-          class={[
-            'flex items-center gap-2.5 rounded-lg px-2.5 py-[7px] no-underline',
-            current(item.href)
-              ? 'bg-primary-soft font-semibold text-primary-fg'
-              : 'text-text hover:bg-surface-alt'
-          ]}
-          aria-current={current(item.href) ? 'page' : undefined}
-        >
-          <Icon size={16} />
-          {t(item.label)}
-          {#if item.href === '/(app)/folders' && app.attention > 0}
-            <span
-              class="ms-auto rounded-full bg-warning px-1.5 text-[10px] text-on-primary"
-              title={tn('desktop.shell.attention', app.attention)}
-            >
-              {app.attention}
-            </span>
-          {/if}
-        </a>
-      {/each}
-    </nav>
-    <div class="flex-1"></div>
-    <div class="flex items-center gap-1.5 px-2 pb-1.5 text-xs text-muted" title={connectionText}>
-      <StatusDot status={dot} />
-      <span class="truncate">{host}</span>
-    </div>
-    {#if app.account}
-      <div class="mt-1 flex items-center gap-2 border-t border-border px-1.5 pt-2.5">
-        <Avatar name={app.account.display_name} key={app.account.user_id} size={26} />
-        <div class="min-w-0">
-          <b class="block truncate">{app.account.display_name}</b>
-          <span class="block truncate text-xs text-muted">{app.account.device_name}</span>
-        </div>
+{#if required}
+  <UpdateRequired appVersion={required.appVersion} minVersion={required.minVersion} />
+{:else}
+  <div class="flex h-screen">
+    <aside
+      class="flex w-[200px] flex-none flex-col gap-0.5 border-r border-border bg-surface px-2.5 py-3.5"
+    >
+      <div class="flex items-center gap-2 px-2 pb-3 text-[15px] font-bold">
+        <Logo size={24} />
+        {t('app.name')}
       </div>
-    {/if}
-  </aside>
-  <main class="min-w-0 flex-1 overflow-auto px-5 py-[18px]">
-    <CompatBanner />
-    <UpdateBanner />
-    {#if app.pausedUntil}
-      <Banner variant="info" class="mb-3">
-        {t('desktop.pause.banner', { time: formatTime(app.pausedUntil, getLang()) })}
-        {#snippet actions()}
-          <Button size="sm" onclick={() => app.resume().catch(reportError)}>
-            {t('desktop.pause.resume')}
-          </Button>
-        {/snippet}
-      </Banner>
-    {/if}
-    {@render children()}
-  </main>
-</div>
+      <nav class="flex flex-col gap-0.5">
+        {#each items as item (item.href)}
+          {@const Icon = item.icon}
+          <a
+            href={resolve(item.href)}
+            class={[
+              'flex items-center gap-2.5 rounded-lg px-2.5 py-[7px] no-underline',
+              current(item.href)
+                ? 'bg-primary-soft font-semibold text-primary-fg'
+                : 'text-text hover:bg-surface-alt'
+            ]}
+            aria-current={current(item.href) ? 'page' : undefined}
+          >
+            <Icon size={16} />
+            {t(item.label)}
+            {#if item.href === '/(app)/folders' && app.attention > 0}
+              <span
+                class="ms-auto rounded-full bg-warning px-1.5 text-[10px] text-on-primary"
+                title={tn('desktop.shell.attention', app.attention)}
+              >
+                {app.attention}
+              </span>
+            {/if}
+          </a>
+        {/each}
+      </nav>
+      <div class="flex-1"></div>
+      <div class="flex items-center gap-1.5 px-2 pb-1.5 text-xs text-muted" title={connectionText}>
+        <StatusDot status={dot} />
+        <span class="truncate">{host}</span>
+      </div>
+      {#if app.account}
+        <div class="mt-1 flex items-center gap-2 border-t border-border px-1.5 pt-2.5">
+          <Avatar name={app.account.display_name} key={app.account.user_id} size={26} />
+          <div class="min-w-0">
+            <b class="block truncate">{app.account.display_name}</b>
+            <span class="block truncate text-xs text-muted">{app.account.device_name}</span>
+          </div>
+        </div>
+      {/if}
+    </aside>
+    <main class="min-w-0 flex-1 overflow-auto px-5 py-[18px]">
+      <CompatBanner />
+      <UpdateBanner />
+      {#if app.pausedUntil}
+        <Banner variant="info" class="mb-3">
+          {t('desktop.pause.banner', { time: formatTime(app.pausedUntil, getLang()) })}
+          {#snippet actions()}
+            <Button size="sm" onclick={() => app.resume().catch(reportError)}>
+              {t('desktop.pause.resume')}
+            </Button>
+          {/snippet}
+        </Banner>
+      {/if}
+      {@render children()}
+    </main>
+  </div>
+{/if}

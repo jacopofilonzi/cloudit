@@ -1472,17 +1472,22 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
   `@cloudit/api-types` next to the server types.
 - **UI** (`src/`): `lib/api.ts` (the only module calling `invoke`), `events.ts`, `app.svelte.ts` (store),
   `status.ts` (state to tag / action, tested), `errors.ts` (exhaustive kind / refusal / problem maps),
-  `actions.ts`; routes: `welcome` (server URL, device name, browser sign-in, waiting), `(app)/folders`
+  `actions.ts` (also `confirmSignOut`), `update.ts` (pure: `updateRequired`, `requiredUpdate`,
+  `checkOnEntry`, `downloadPercent`; tested); routes: `welcome` (server URL, device name, browser sign-in, waiting), `(app)/folders`
   (list + detail), `link` (3-step wizard), `folders/[id]/conflict` (first stores this computer's version as
   a conflict snapshot through `sync`, then keep this computer / keep the server / decide later),
   `folders/[id]/settings`, `activity`, `settings`. A conflict left on the server by another device points
   to the history on the web. Folder settings: automatic sync toggle, quiet period (10 s – 5 min chips),
   associated program (free input or a filtered picker of the running ones, clear); the app settings hold
   autostart, the device-wide switch, "Pause for 1 hour" / Resume and notifications, and About (this
-  app's, the server's and the latest app version, "Check for updates"). The app shell shows
-  `CompatBanner` while the server is incompatible ("This server needs a newer version of cloudit (X or
-  later)" with the updater's Update / Download when a version is out, else "Check for updates"; or "The
-  server runs X, too old for this app: ask its administrator to update it" with "Check again"),
+  app's, the server's and the latest app version, "Check for updates"). While the server needs a newer
+  app (`app_outdated`) the `(app)` layout replaces the whole shell (sidebar, pages, banners) with
+  `UpdateRequired`: "Update cloudit to continue", this version and the server's minimum, the updater's
+  state (Update with download progress / installing / failed with retry; Download for a .deb; a note
+  for dev builds; with no version known a check runs on entering the screen, then "Check again") and
+  Sign out (to use another server); the tray keeps running. Otherwise the app shell shows
+  `CompatBanner` while the server is too old ("The server runs X, too old for this app: ask its
+  administrator to update it" with "Check again"),
   `UpdateBanner` (an available version with its notes and Update, or Download for a .deb, a note for
   dev builds; then waiting / download progress / installing / failed with retry) and "Automatic sync
   is paused until HH:MM" with Resume while paused. The root layout sends the language to

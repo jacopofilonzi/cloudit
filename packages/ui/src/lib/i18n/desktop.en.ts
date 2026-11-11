@@ -337,13 +337,19 @@ export const desktopEn = {
 
   // Compatibility with the server
   'desktop.compat.app_outdated': 'This server needs a newer version of cloudit ({min} or later)',
-  'desktop.compat.app_outdated_body':
-    'Sync is stopped until you update this app (this is version {version}).',
   'desktop.compat.server_outdated':
     'The server runs {version}, too old for this app: ask its administrator to update it.',
   'desktop.compat.server_outdated_body': 'Sync is stopped until the server is updated.',
-  'desktop.compat.check_updates': 'Check for updates',
   'desktop.compat.check_again': 'Check again',
+  'desktop.required.title': 'Update cloudit to continue',
+  'desktop.required.body':
+    'This server needs a newer version of the app. Nothing syncs until you update it; your folders and their files are not touched.',
+  'desktop.required.this_version': 'This app',
+  'desktop.required.min_version': 'Required by the server',
+  'desktop.required.checking': 'Looking for a new version…',
+  'desktop.required.none': 'No newer version is available yet. Try again later.',
+  'desktop.required.tray': 'cloudit stays in the tray; sync starts again after the update.',
+  'desktop.required.other_server': 'Using another server?',
   'desktop.compat.still_outdated': 'The server is still too old for this app.',
 
   // Errors by engine kind

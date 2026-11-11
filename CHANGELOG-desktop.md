@@ -11,6 +11,8 @@ The desktop app (Windows and Linux) and its sync engine. The server has its own 
 
 - The app checks that it and the server are compatible (at sign-in, before syncing and on
   reconnects); when one of them is too old it stops syncing and says which one to update.
+  When the app is the one too old, the window shows only an "update required" screen with
+  the update (or a sign-out, to use another server) until the app is updated.
 - With servers that support it, many small files are uploaded and downloaded in packs, which
   makes syncing folders with many small files much faster.
 

@@ -7,6 +7,7 @@
   import { reportError } from '#lib/actions.ts';
   import * as api from '#lib/api.ts';
   import { app } from '#lib/app.svelte.ts';
+  import { downloadPercent } from '#lib/update.ts';
 
   const update = $derived(app.update);
   const version = $derived(update?.latest_version ?? '');
@@ -14,9 +15,7 @@
     !!update?.latest_version &&
       ['available', 'waiting', 'downloading', 'installing', 'failed'].includes(update.phase)
   );
-  const percent = $derived(
-    update?.total ? Math.min(100, Math.round((update.downloaded / update.total) * 100)) : null
-  );
+  const percent = $derived(update ? downloadPercent(update) : null);
   let notesOpen = $state(false);
 </script>
 

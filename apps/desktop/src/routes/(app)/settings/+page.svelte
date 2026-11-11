@@ -7,7 +7,6 @@
     Button,
     Segmented,
     Toggle,
-    confirmAction,
     formatDate,
     formatTime,
     getThemeMode,
@@ -16,7 +15,7 @@
     type ThemeMode
   } from '@cloudit/ui';
   import { LANGUAGES, getLang, t, type Lang } from '@cloudit/ui/i18n';
-  import { reportError } from '#lib/actions.ts';
+  import { confirmSignOut, reportError } from '#lib/actions.ts';
   import * as api from '#lib/api.ts';
   import { app } from '#lib/app.svelte.ts';
   import { changeLang } from '#lib/lang.ts';
@@ -61,22 +60,6 @@
     value: l,
     label: l === 'en' ? 'English' : 'Italiano'
   }));
-
-  async function signOut() {
-    const ok = await confirmAction({
-      title: t('desktop.settings.sign_out_title'),
-      message: t('desktop.settings.sign_out_body'),
-      confirmLabel: t('desktop.settings.sign_out'),
-      danger: true
-    });
-    if (!ok) return;
-    try {
-      await api.signOut();
-      app.signedOut();
-    } catch (error) {
-      reportError(error);
-    }
-  }
 </script>
 
 <div class="mx-auto max-w-[620px]">
@@ -102,7 +85,7 @@
               : t('desktop.settings.token_forever')}
           </span>
         </div>
-        <Button variant="danger" size="sm" class="ms-auto" onclick={signOut}>
+        <Button variant="danger" size="sm" class="ms-auto" onclick={confirmSignOut}>
           {t('desktop.settings.sign_out')}
         </Button>
       </div>

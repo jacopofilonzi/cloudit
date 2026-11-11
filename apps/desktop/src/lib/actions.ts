@@ -1,7 +1,7 @@
-// User-level actions shared by several screens: syncing a folder with its toast, and
-// the navigation helpers (typed routes through `resolve`).
+// User-level actions shared by several screens: syncing a folder with its toast, signing
+// out, and the navigation helpers (typed routes through `resolve`).
 import type { LinkedFolder, SyncReport } from '@cloudit/api-types';
-import { toast } from '@cloudit/ui';
+import { confirmAction, toast } from '@cloudit/ui';
 import { t } from '@cloudit/ui/i18n';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
@@ -54,6 +54,23 @@ export function reportError(error: unknown): void {
     toast.info(t('desktop.result.cancelled'));
   } else {
     toast.error(errorText(error));
+  }
+}
+
+/** Signs this computer out after the user confirms (linked folders stay untouched). */
+export async function confirmSignOut(): Promise<void> {
+  const ok = await confirmAction({
+    title: t('desktop.settings.sign_out_title'),
+    message: t('desktop.settings.sign_out_body'),
+    confirmLabel: t('desktop.settings.sign_out'),
+    danger: true
+  });
+  if (!ok) return;
+  try {
+    await api.signOut();
+    app.signedOut();
+  } catch (error) {
+    reportError(error);
   }
 }
 
