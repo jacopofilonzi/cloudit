@@ -222,7 +222,7 @@ crates/server/src/
 │   ├── keys.rs       scopes/{scope}/chunks/{hash}, scopes/{scope}/manifests/{hash}
 │   ├── objects.rs    the writer/collector protocol (scope lock, race argument in the docs):
 │   │                 Kind, parse_key, lock_scope, row_exists, Stored, ensure_present
-│   ├── usage.rs      effective_quota, owner_quota, used_by(_many), ensure_room (estimate),
+│   ├── usage.rs      effective_quota (+ quota_with_default), owner_quota, used_by(_many), ensure_room (estimate),
 │   │                 insert_charged (scope lock, object check, row + scopes.stored_bytes in
 │   │                 one transaction, exact quota under an owner lock → Charged), recompute
 │   ├── chunks.rs     sizes / exists (batched IN lists), decode (blocking pool), adopt (verify an
@@ -277,7 +277,8 @@ crates/server/src/
 │   │                 (scopes, scope_members, folders), 000008 sync (chunks, manifests,
 │   │                 snapshots, snapshot_chunks, scopes.stored_bytes, users.quota_bytes),
 │   │                 000009 jobs and gc (jobs, job_runs, object_deletions,
-│   │                 scopes/folders.purge_requested_at), 000010 folder emoji
+│   │                 scopes/folders.purge_requested_at), 000010 folder emoji,
+│   │                 000011 users.quota_unlimited
 │   ├── entities/     SeaORM 2 models (`#[sea_orm::model]`, no relations), one file per table
 │   │                 (none for setup_state: its plaintext token is read as a Secret);
 │   │                 oauth_flows keeps verifier and nonce in `Hidden` (Debug prints `***`)
@@ -385,8 +386,8 @@ Bearer cld_…`); **admin** (session of an effective admin); **onboarding** (the
 | `GET /devices` | session | `DeviceInfo[]` (revoked and expired included) |
 | `PATCH /devices/{id}` | session | `UpdateDeviceRequest` → `DeviceInfo` |
 | `DELETE /devices/{id}` | session | → 204 (revoke, soft) |
-| `GET /admin/users?limit=&offset=&approval_status=` | admin | `AdminUserList` (oldest first; limit 1..=200, default 50; optional filter `approved` / `pending` / `rejected`, `total` counts the matches; each with `identity_providers`, `has_password`, `approval_status`, `signup_source`, `approval_decided_at`, `approval_decided_by`, `used_bytes`, `quota_bytes` (own), `effective_quota_bytes`) |
-| `PATCH /admin/users/{id}` | admin | `AdminUserUpdate {admin?, disabled?, quota_bytes? (null = server default)}` → `AdminUser`; disabling deletes the web sessions |
+| `GET /admin/users?limit=&offset=&approval_status=` | admin | `AdminUserList` (oldest first; limit 1..=200, default 50; optional filter `approved` / `pending` / `rejected`, `total` counts the matches; each with `identity_providers`, `has_password`, `approval_status`, `signup_source`, `approval_decided_at`, `approval_decided_by`, `used_bytes`, `quota_bytes` (own), `quota_unlimited`, `effective_quota_bytes`) |
+| `PATCH /admin/users/{id}` | admin | `AdminUserUpdate {admin?, disabled?, quota_bytes? (null = server default), quota_unlimited?}` → `AdminUser`; `quota_unlimited: true` clears `quota_bytes`, a sent `quota_bytes` (null included) clears `quota_unlimited`, `false` alone moves an unlimited account to the server default, `true` + a number → 422 `validation_failed` (`field` `quota_unlimited`), validated before any write; disabling deletes the web sessions |
 | `POST /admin/users/{id}/approve` | admin | → `AdminUser`; pending or rejected (lifts the ban) → approved; already approved: unchanged |
 | `POST /admin/users/{id}/reject` | admin | → `AdminUser`; pending or approved → rejected, web sessions deleted; own account → 403 `forbidden`; 409 `last_admin`; already rejected: unchanged |
 | `GET /admin/summary` | admin | `AdminSummary {pending_users, server_version, latest_release? {version, url, checked_at} (the `update_check` job's last find; null: never checked, disabled or no release), update_available}` |
@@ -724,8 +725,9 @@ request and 409 for head conflicts), `payload_too_large` 413. The callback carri
 - **Usage and quotas**: `scopes.stored_bytes` = stored sizes of the scope's chunk and manifest
   rows, incremented in the transaction that inserts the row (only if inserted: concurrent
   duplicates count once). A user's usage = the sum over the scopes it owns (trashed
-  included): members' uploads count against the owner. Effective quota = `users.quota_bytes`,
-  else the `default_quota_bytes` setting, else unlimited. Estimates fail early (`check`:
+  included): members' uploads count against the owner. Effective quota = none if
+  `users.quota_unlimited`, else `users.quota_bytes`, else the `default_quota_bytes` setting,
+  else unlimited. Estimates fail early (`check`:
   usage + uncompressed sizes of the missing chunks; uploads: usage + the stored size before
   storing the object); the charge itself is exact: with a quota, `insert_charged` first
   writes the owner's `users` row (serializing that owner's charges), inserts, increments and
@@ -891,7 +893,8 @@ request and 409 for head conflicts), `payload_too_large` 413. The callback carri
     retention_max_versions?, retention_max_per_day? (integer), emoji? (text), created_by → users,
     created_at, updated_at, deleted_at?, deleted_by? → users)` (UNIQUE (scope_id, active_key));
   - `scopes.stored_bytes` (bigint, default 0: the usage counter) and `users.quota_bytes?`
-    (bigint; NULL = the server default);
+    (bigint; NULL = the server default), `users.quota_unlimited` (bool, default false: no
+    quota at all; `quota_bytes` stays NULL while set);
   - `chunks(scope_id → scopes, hash (hex text), size (int, uncompressed), stored_size
     (bigint), created_at)` (PK (scope_id, hash));
   - `manifests(scope_id → scopes, hash, stored_size, created_at)` (PK (scope_id, hash));
@@ -1226,12 +1229,12 @@ server proxies `/api`, `/health`, `/ready` to `http://localhost:8080`. `#lib/*` 
 | `lib/fields.ts` | `inviteToken` (token or full link), `osName`, `isEmail`, `browserLabel` (user agent → "Chrome · Windows") (tested) |
 | `lib/app.svelte.ts` | `app`: scopes, usage, pending users and the admin `summary` shared by the pages; `load*` for direct use after a change, `schedule*` (coalesced) for live events |
 | `lib/live.svelte.ts` | `live` + `onLive(listener)`: one `EventSource` on `/events` while signed in; on every (re)connect fetches `/sync/heads` (ETag) and emits `resync` (not the first time); with `realtime: local` polls every 5 min and emits `folder_head` / `history_changed` / `folder_changed` for what changed; toasts a new conflict; a closed stream re-checks the session |
-| `lib/admin.ts` | pure helpers of the admin pages: quota units (`toBytes`, `splitBytes`, decimal MB / GB / TB), `absoluteUrl` (links from the effective public URL, else `location.origin`), provider id rules and `slugify`, `parseList` / `formatList`, `parseIntIn` (tested) |
+| `lib/admin.ts` | pure helpers of the admin pages: quota units (`toBytes`, `splitBytes`, decimal MB / GB / TB), quota modes (`quotaModeOf`, `offersUnlimited`, `quotaUpdate`), `absoluteUrl` (links from the effective public URL, else `location.origin`), provider id rules and `slugify`, `parseList` / `formatList`, `parseIntIn` (tested) |
 | `lib/coalesce.ts` | `coalesced(run, delay)`: bursts of refreshes become few runs, never stale (tested) |
 | `lib/manifest.ts` | `diffManifests` (added / removed / modified / unchanged by chunk hashes, the conflict "Compare"), `filterEntries`, `splitPath`, `mtimeOf` (tested) |
 | `lib/roles.ts`, `lib/plural.ts`, `lib/scope-text.ts` | `atLeast(role, min)`; `tn('base', count)` over `base_one` / `base_other` keys; `joinNames` (`Intl.ListFormat`) |
 | `lib/lang.ts` | initial language (localStorage, else browser) and persisted switching |
-| `lib/components/` | `AuthCard` (centred card: logo or custom header, title, subtitle), `ProviderButtons` ("Continue with …", busy state), `LanguageSwitch`, `AppShell` (250px sidebar: brand, `nav` snippet, storage meter, user; main column; a drawer opened from a top bar below `md`), `ShellNavItem`, `ShellNavLabel`; app: `ScopeCreateModal`, `PromptModal` (one text field: rename, label, restore under a new name; errors stay in the dialog), `FolderCard`, `FolderCreateModal` (name + emoji), `FolderPanel` (details grid + tabs; `tab` and `inspect` are bound by the page so "Compare" can open Files on a snapshot) with `HistoryTab` (UTC-day groups, hover / focus / touch actions: restore with `expected_head`, ZIP link, pin, label, files; "older" by cursor; keeps the loaded length on refresh), `FilesTab` (manifest list with filter, or the diff of a conflict snapshot against the head) and `FolderSettingsTab` (rename + emoji: editor; retention + trash: admin; read-only below), `ConflictBanner` (Compare / Keep server = `resolve` / Keep <device> = `restore` with `expected_head`; `conflict` → refresh and tell the user), `ShareModal` (owner: add by email + role, role selects, remove, role explanations); admin: `CopyField` (read-only text + copy button), `LinkModal` (one-time link to copy: invites, resets), `QuotaModal` (server default or custom size; the API has no per-account "unlimited"), `InviteCreateModal`, `ProviderModal` |
+| `lib/components/` | `AuthCard` (centred card: logo or custom header, title, subtitle), `ProviderButtons` ("Continue with …", busy state), `LanguageSwitch`, `AppShell` (250px sidebar: brand, `nav` snippet, storage meter, user; main column; a drawer opened from a top bar below `md`), `ShellNavItem`, `ShellNavLabel`; app: `ScopeCreateModal`, `PromptModal` (one text field: rename, label, restore under a new name; errors stay in the dialog), `FolderCard`, `FolderCreateModal` (name + emoji), `FolderPanel` (details grid + tabs; `tab` and `inspect` are bound by the page so "Compare" can open Files on a snapshot) with `HistoryTab` (UTC-day groups, hover / focus / touch actions: restore with `expected_head`, ZIP link, pin, label, files; "older" by cursor; keeps the loaded length on refresh), `FilesTab` (manifest list with filter, or the diff of a conflict snapshot against the head) and `FolderSettingsTab` (rename + emoji: editor; retention + trash: admin; read-only below), `ConflictBanner` (Compare / Keep server = `resolve` / Keep <device> = `restore` with `expected_head`; `conflict` → refresh and tell the user), `ShareModal` (owner: add by email + role, role selects, remove, role explanations); admin: `CopyField` (read-only text + copy button), `LinkModal` (one-time link to copy: invites, resets), `QuotaModal` (server default, "Unlimited" when the server default is limited, or custom size), `InviteCreateModal`, `ProviderModal` |
 
 **`/device` query contract** (desktop client, milestone 6): the app opens
 `<server>/device?code_challenge=<43 base64url chars>&code_challenge_method=S256&redirect_uri=http://127.0.0.1:<port>/<path>&state=<1..512 chars>&device_name=<name>&os=<windows|linux|macos>`

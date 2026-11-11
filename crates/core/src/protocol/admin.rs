@@ -37,9 +37,14 @@ pub struct AdminUser {
     pub created_at: String,
     /// Stored bytes of the scopes the account owns (trashed ones included).
     pub used_bytes: u64,
-    /// The account's own quota; `null` = the server default.
+    /// The account's own quota; `null` = the server default (or unlimited, see
+    /// `quota_unlimited`).
     pub quota_bytes: Option<u64>,
-    /// The quota in force (own, else server default); `null` = unlimited.
+    /// The account has no quota, whatever the server default (`quota_bytes` is then
+    /// `null`).
+    pub quota_unlimited: bool,
+    /// The quota in force (none if unlimited, else own, else server default); `null` =
+    /// unlimited.
     pub effective_quota_bytes: Option<u64>,
 }
 
@@ -64,10 +69,18 @@ pub struct AdminUserUpdate {
     #[serde(default)]
     #[cfg_attr(test, ts(optional))]
     pub disabled: Option<bool>,
-    /// Storage quota in bytes. Omitted: unchanged; `null`: the server default.
+    /// Storage quota in bytes. Omitted: unchanged; `null`: the server default. Sent
+    /// (`null` included) without `quota_unlimited: true`, it clears `quota_unlimited`.
     #[serde(default, skip_serializing_if = "Patch::is_missing")]
     #[cfg_attr(test, ts(as = "Option<Option<u64>>", optional))]
     pub quota_bytes: Patch<u64>,
+    /// `true`: no quota at all (clears `quota_bytes`); `false`: not unlimited (an
+    /// unlimited account goes back to the server default unless `quota_bytes` is
+    /// sent). `true` with a number in `quota_bytes` is refused (`validation_failed`,
+    /// field `quota_unlimited`).
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
+    pub quota_unlimited: Option<bool>,
 }
 
 /// A single-use password-reset link (valid 24 hours). The UI builds the full URL from

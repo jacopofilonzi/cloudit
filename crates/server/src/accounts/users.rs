@@ -53,6 +53,7 @@ pub async fn insert(db: &impl ConnectionTrait, new: NewUser) -> Result<users::Mo
         created_at: Set(now),
         updated_at: Set(now),
         quota_bytes: Set(None),
+        quota_unlimited: Set(false),
     };
     match users::Entity::insert(model).exec_with_returning(db).await {
         Ok(user) => Ok(user),
@@ -220,16 +221,45 @@ pub async fn find_many(
     Ok(list.into_iter().map(|u| (u.id, u)).collect())
 }
 
-/// Sets the account's own storage quota (`None` = the server default).
+/// An account's own storage quota setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuotaSetting {
+    /// The server default.
+    Default,
+    /// Its own limit, in bytes.
+    Bytes(i64),
+    /// No limit, whatever the server default.
+    Unlimited,
+}
+
+impl QuotaSetting {
+    /// The stored `(quota_bytes, quota_unlimited)`.
+    #[must_use]
+    pub fn columns(self) -> (Option<i64>, bool) {
+        match self {
+            Self::Default => (None, false),
+            Self::Bytes(v) => (Some(v), false),
+            Self::Unlimited => (None, true),
+        }
+    }
+}
+
+/// Sets the account's own storage quota: both columns in one statement, so
+/// `quota_unlimited` and `quota_bytes` are never set together.
 pub async fn set_quota(
     db: &impl ConnectionTrait,
     id: Uuid,
-    quota: Option<i64>,
+    quota: QuotaSetting,
 ) -> anyhow::Result<()> {
+    let (bytes, unlimited) = quota.columns();
     users::Entity::update_many()
         .col_expr(
             users::Column::QuotaBytes,
-            sea_orm::sea_query::Expr::value(quota),
+            sea_orm::sea_query::Expr::value(bytes),
+        )
+        .col_expr(
+            users::Column::QuotaUnlimited,
+            sea_orm::sea_query::Expr::value(unlimited),
         )
         .col_expr(
             users::Column::UpdatedAt,

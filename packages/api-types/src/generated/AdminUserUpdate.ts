@@ -5,6 +5,14 @@
  */
 export type AdminUserUpdate = { admin?: boolean, disabled?: boolean, 
 /**
- * Storage quota in bytes. Omitted: unchanged; `null`: the server default.
+ * Storage quota in bytes. Omitted: unchanged; `null`: the server default. Sent
+ * (`null` included) without `quota_unlimited: true`, it clears `quota_unlimited`.
  */
-quota_bytes?: number | null, };
+quota_bytes?: number | null, 
+/**
+ * `true`: no quota at all (clears `quota_bytes`); `false`: not unlimited (an
+ * unlimited account goes back to the server default unless `quota_bytes` is
+ * sent). `true` with a number in `quota_bytes` is refused (`validation_failed`,
+ * field `quota_unlimited`).
+ */
+quota_unlimited?: boolean, };

@@ -173,7 +173,7 @@ pinned, labelled or downloaded as a ZIP.
 **Storage quotas** count the stored bytes of every scope a user owns (shared scopes count
 against their owner, also for members' uploads; scopes in the trash still count). Admins set
 a server default (unlimited until they do) and per-user quotas in the web administration
-(Settings and Users); each user sees their usage in the sidebar and in the profile. Space is given back when old versions are
+(Settings and Users), where a user can also be made unlimited while the default is limited; each user sees their usage in the sidebar and in the profile. Space is given back when old versions are
 deleted (retention, trash) and the garbage collector removes the data nothing uses any more
 (after `GC_GRACE`, default 24 hours).
 
@@ -347,6 +347,9 @@ The server applies database migrations when it starts. With SQLite it backs up t
 first and refuses to start if the backup fails. With PostgreSQL take a backup yourself
 (`pg_dump`) before upgrading.
 
+- **Unlimited per-user quota** (next server release): nothing required. A migration adds
+  `users.quota_unlimited` (false for every existing account, so quotas are unchanged);
+  admin user entries gain `quota_unlimited` and `PATCH /admin/users/{id}` accepts it.
 - **Separate app and server releases** (after 0.1.3): nothing required. The server and the
   desktop app now have their own versions and releases (tags `server-vX.Y.Z` and
   `app-vX.Y.Z`; Docker image tags stay `X.Y.Z`, `X.Y`, `latest`). A 0.1.x server reads

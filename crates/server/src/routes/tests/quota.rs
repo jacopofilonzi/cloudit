@@ -21,6 +21,16 @@ async fn set_quota(app: &TestApp, admin: &As, user: &str, quota: Value) {
     .assert(StatusCode::OK);
 }
 
+async fn patch_user(app: &TestApp, admin: &As, user: &str, body: Value) -> super::support::Resp {
+    app.call(
+        "PATCH",
+        &format!("/api/v1/admin/users/{user}"),
+        admin,
+        Some(body),
+    )
+    .await
+}
+
 async fn used(app: &TestApp, who: &As) -> u64 {
     let resp = app.get("/api/v1/me/usage", who).await;
     resp.assert(StatusCode::OK);
@@ -238,4 +248,148 @@ async fn default_and_per_user_quotas() {
     let me = app.get("/api/v1/me/usage", &t.owner).await;
     assert_eq!(me.body["scopes"][0]["trashed"], true);
     assert!(me.body["used_bytes"].as_u64().unwrap() > used_now);
+}
+
+fn entry(list: &Value, id: &str) -> Value {
+    list["users"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["id"] == id)
+        .unwrap()
+        .clone()
+}
+
+#[tokio::test]
+async fn unlimited_accounts_ignore_the_default() {
+    let app = TestApp::new().await;
+    let t = team(&app).await;
+    let owner = app.user_id(&t.owner).await;
+    let editor = app.user_id(&t.editor).await;
+    let client = SyncClient::new(&app, &t.editor, &t.folder);
+    client.sync(&Tree::sample(), None).await;
+    app.call(
+        "PATCH",
+        "/api/v1/admin/settings",
+        &t.site_admin,
+        Some(json!({ "default_quota_bytes": 1000 })),
+    )
+    .await
+    .assert(StatusCode::OK);
+    let mut tree = Tree::sample();
+    tree.file("more.bin", pseudo_random(5, 5000));
+    let (_, chunks) = tree.manifest();
+    client
+        .check(&chunks)
+        .await
+        .assert_error(StatusCode::INSUFFICIENT_STORAGE, "quota_exceeded");
+
+    // Unlimited: no quota in force, the upload beyond the default goes through.
+    let resp = patch_user(
+        &app,
+        &t.site_admin,
+        &owner,
+        json!({ "quota_unlimited": true }),
+    )
+    .await;
+    resp.assert(StatusCode::OK);
+    assert_eq!(resp.body["quota_unlimited"], true);
+    assert_eq!(resp.body["quota_bytes"], Value::Null);
+    assert_eq!(resp.body["effective_quota_bytes"], Value::Null);
+    let me = app.get("/api/v1/me/usage", &t.owner).await;
+    assert_eq!(me.body["quota_bytes"], Value::Null, "unlimited");
+    let list = app
+        .get("/api/v1/admin/users?limit=200", &t.site_admin)
+        .await;
+    let e = entry(&list.body, &owner);
+    assert_eq!(e["quota_unlimited"], true);
+    assert_eq!(e["effective_quota_bytes"], Value::Null);
+    let other = entry(&list.body, &editor);
+    assert_eq!(other["quota_unlimited"], false);
+    assert_eq!(
+        other["effective_quota_bytes"], 1000,
+        "others keep the default"
+    );
+    assert_eq!(client.push_chunks(&chunks).await, 1);
+    consistent(usage_of(&app, &t.scope).await);
+
+    // Both an unlimited flag and a size: refused, nothing changed.
+    let resp = patch_user(
+        &app,
+        &t.site_admin,
+        &owner,
+        json!({ "quota_unlimited": true, "quota_bytes": 5000, "admin": true }),
+    )
+    .await;
+    resp.assert_error(StatusCode::UNPROCESSABLE_ENTITY, "validation_failed");
+    assert_eq!(resp.body["field"], "quota_unlimited");
+    let list = app
+        .get("/api/v1/admin/users?limit=200", &t.site_admin)
+        .await;
+    let e = entry(&list.body, &owner);
+    assert_eq!(e["quota_unlimited"], true);
+    assert_eq!(e["admin"], false, "validated before any write");
+
+    // `true` with `null` is unlimited too; `false` alone goes back to the default.
+    let resp = patch_user(
+        &app,
+        &t.site_admin,
+        &owner,
+        json!({ "quota_unlimited": true, "quota_bytes": null }),
+    )
+    .await;
+    assert_eq!(resp.body["quota_unlimited"], true);
+    let resp = patch_user(
+        &app,
+        &t.site_admin,
+        &owner,
+        json!({ "quota_unlimited": false }),
+    )
+    .await;
+    resp.assert(StatusCode::OK);
+    assert_eq!(resp.body["quota_unlimited"], false);
+    assert_eq!(resp.body["effective_quota_bytes"], 1000);
+
+    // A custom size clears it; `false` alone then keeps the size.
+    patch_user(
+        &app,
+        &t.site_admin,
+        &owner,
+        json!({ "quota_unlimited": true }),
+    )
+    .await
+    .assert(StatusCode::OK);
+    let resp = patch_user(&app, &t.site_admin, &owner, json!({ "quota_bytes": 2000 })).await;
+    assert_eq!(resp.body["quota_unlimited"], false);
+    assert_eq!(resp.body["quota_bytes"], 2000);
+    assert_eq!(resp.body["effective_quota_bytes"], 2000);
+    let resp = patch_user(
+        &app,
+        &t.site_admin,
+        &owner,
+        json!({ "quota_unlimited": false }),
+    )
+    .await;
+    assert_eq!(resp.body["quota_bytes"], 2000);
+
+    // `null` (server default) clears it too, and the default applies again.
+    patch_user(
+        &app,
+        &t.site_admin,
+        &owner,
+        json!({ "quota_unlimited": true }),
+    )
+    .await
+    .assert(StatusCode::OK);
+    let resp = patch_user(&app, &t.site_admin, &owner, json!({ "quota_bytes": null })).await;
+    assert_eq!(resp.body["quota_unlimited"], false);
+    assert_eq!(resp.body["quota_bytes"], Value::Null);
+    assert_eq!(resp.body["effective_quota_bytes"], 1000);
+    let mut tree = Tree::sample();
+    tree.file("again.bin", pseudo_random(6, 5000));
+    let (_, chunks) = tree.manifest();
+    client
+        .check(&chunks)
+        .await
+        .assert_error(StatusCode::INSUFFICIENT_STORAGE, "quota_exceeded");
 }

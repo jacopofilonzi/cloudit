@@ -17,6 +17,7 @@ use cloudit_core::protocol::{
 use serde::Deserialize;
 
 use super::extract::{ApiJson, Storage, admin_user, invite_info, parse_id};
+use crate::accounts::users::QuotaSetting;
 use crate::accounts::{admin, invites, password_resets, settings, users};
 use crate::auth::extractors::AdminUser;
 use crate::db::entities::users as user_entity;
@@ -69,7 +70,7 @@ pub async fn list_users(
             .map(|u| {
                 let storage = Storage {
                     used_bytes: used.get(&u.id).copied().unwrap_or(0),
-                    effective_quota: u.quota_bytes.map(usage::bytes).or(default_quota),
+                    effective_quota: usage::quota_with_default(u, default_quota),
                 };
                 admin_user(u, providers.remove(&u.id).unwrap_or_default(), storage)
             })
@@ -78,8 +79,43 @@ pub async fn list_users(
     }))
 }
 
-/// `PATCH /admin/users/{id}` `{admin?, disabled?, quota_bytes?}`; `last_admin` if it
-/// would leave no enabled admin. `quota_bytes: null` = the server default.
+/// The quota change a `PATCH /admin/users/{id}` asks for, validated before any write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QuotaChange {
+    None,
+    Set(QuotaSetting),
+    /// `quota_unlimited: false` alone: an unlimited account goes back to the server
+    /// default, any other keeps its quota.
+    NotUnlimited,
+}
+
+fn quota_change(body: &AdminUserUpdate) -> Result<QuotaChange, ApiError> {
+    let bytes = match body.quota_bytes {
+        Patch::Missing => None,
+        Patch::Null => Some(QuotaSetting::Default),
+        Patch::Value(v) => {
+            Some(QuotaSetting::Bytes(i64::try_from(v).map_err(|_| {
+                ApiError::validation("quota_bytes", "too large")
+            })?))
+        }
+    };
+    Ok(match (body.quota_unlimited, bytes) {
+        (Some(true), Some(QuotaSetting::Bytes(_))) => {
+            return Err(ApiError::validation(
+                "quota_unlimited",
+                "an unlimited account has no quota_bytes",
+            ));
+        }
+        (Some(true), _) => QuotaChange::Set(QuotaSetting::Unlimited),
+        (_, Some(setting)) => QuotaChange::Set(setting),
+        (Some(false), None) => QuotaChange::NotUnlimited,
+        (None, None) => QuotaChange::None,
+    })
+}
+
+/// `PATCH /admin/users/{id}` `{admin?, disabled?, quota_bytes?, quota_unlimited?}`;
+/// `last_admin` if it would leave no enabled admin. `quota_bytes: null` = the server
+/// default; `quota_unlimited: true` = no quota (rules in `AdminUserUpdate`).
 pub async fn update_user(
     State(state): State<AppState>,
     AdminUser(me): AdminUser,
@@ -87,15 +123,7 @@ pub async fn update_user(
     ApiJson(body): ApiJson<AdminUserUpdate>,
 ) -> Result<Json<AdminUserInfo>, ApiError> {
     let id = parse_id(&id)?;
-    let quota = match body.quota_bytes {
-        Patch::Missing => None,
-        Patch::Null => Some(None),
-        Patch::Value(v) => {
-            Some(Some(i64::try_from(v).map_err(|_| {
-                ApiError::validation("quota_bytes", "too large")
-            })?))
-        }
-    };
+    let change = quota_change(&body)?;
     let mut user = if body.admin.is_some() || body.disabled.is_some() {
         let user = admin::update_flags(&state.db, id, body.admin, body.disabled).await?;
         tracing::info!(
@@ -111,10 +139,15 @@ pub async fn update_user(
             .await?
             .ok_or(ApiError::NotFound)?
     };
-    if let Some(quota) = quota {
-        users::set_quota(&state.db, id, quota).await?;
-        tracing::info!(admin_id = %me.user.id, user_id = %id, quota = ?quota, "storage quota changed");
-        user.quota_bytes = quota;
+    let setting = match change {
+        QuotaChange::None => None,
+        QuotaChange::Set(setting) => Some(setting),
+        QuotaChange::NotUnlimited => user.quota_unlimited.then_some(QuotaSetting::Default),
+    };
+    if let Some(setting) = setting {
+        users::set_quota(&state.db, id, setting).await?;
+        tracing::info!(admin_id = %me.user.id, user_id = %id, quota = ?setting, "storage quota changed");
+        (user.quota_bytes, user.quota_unlimited) = setting.columns();
     }
     Ok(Json(user_view(&state, &user).await?))
 }

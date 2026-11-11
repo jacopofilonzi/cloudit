@@ -7,8 +7,9 @@
 //!   rebuilds the value from the rows (consistency checks).
 //! - **Usage** of a user = the sum over the scopes it **owns**, trashed ones included:
 //!   uploads by the members of a shared scope count against its owner.
-//! - **Quota** = `users.quota_bytes`, else the `default_quota_bytes` setting, else
-//!   unlimited ([`effective_quota`]). Exceeding it gives `quota_exceeded`.
+//! - **Quota** = none if `users.quota_unlimited`, else `users.quota_bytes`, else the
+//!   `default_quota_bytes` setting, else unlimited ([`effective_quota`]). Exceeding it
+//!   gives `quota_exceeded`.
 //!
 //! Enforcement is exact: with a quota, [`insert_charged`] (after the scope lock of
 //! `sync::objects`, always taken first) writes the owner's `users` row (a lock: on
@@ -49,11 +50,24 @@ pub fn bytes(value: i64) -> u64 {
     u64::try_from(value).unwrap_or(0)
 }
 
-/// The effective quota of `user`: its own, else the server default; `None` = unlimited.
+/// The effective quota of `user` given the server default: none if the account is
+/// unlimited, else its own, else the default; `None` = unlimited.
+#[must_use]
+pub fn quota_with_default(user: &user_entity::Model, default: Option<u64>) -> Option<u64> {
+    if user.quota_unlimited {
+        return None;
+    }
+    user.quota_bytes.map(bytes).or(default)
+}
+
+/// The effective quota of `user` ([`quota_with_default`] with the server default).
 pub async fn effective_quota(
     db: &impl ConnectionTrait,
     user: &user_entity::Model,
 ) -> anyhow::Result<Option<u64>> {
+    if user.quota_unlimited {
+        return Ok(None);
+    }
     match user.quota_bytes {
         Some(own) => Ok(Some(bytes(own))),
         None => settings::default_quota_bytes(db).await,

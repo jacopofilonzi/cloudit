@@ -32,6 +32,9 @@ pub struct Model {
     pub updated_at: DateTimeUtc,
     /// Storage quota in bytes; NULL = the server default (`sync::usage`).
     pub quota_bytes: Option<i64>,
+    /// No quota at all, whatever the server default (wins over `quota_bytes`, which
+    /// is kept NULL while set).
+    pub quota_unlimited: bool,
 }
 
 impl ActiveModelBehavior for ActiveModel {}

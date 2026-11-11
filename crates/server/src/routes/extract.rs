@@ -67,7 +67,7 @@ pub fn profile(user: &users::Model) -> UserProfile {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Storage {
     pub used_bytes: u64,
-    /// The effective quota (own, else the server default).
+    /// The effective quota (none if unlimited, else own, else the server default).
     pub effective_quota: Option<u64>,
 }
 
@@ -95,6 +95,7 @@ pub fn admin_user(
         created_at: rfc3339(user.created_at),
         used_bytes: storage.used_bytes,
         quota_bytes: user.quota_bytes.map(crate::sync::usage::bytes),
+        quota_unlimited: user.quota_unlimited,
         effective_quota_bytes: storage.effective_quota,
     }
 }
