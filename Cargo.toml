@@ -68,6 +68,11 @@ unsafe_code = "forbid"
 unwrap_used = "deny"
 expect_used = "deny"
 
+# Incremental caches took ~50 GB under target/debug/incremental; full crate rebuilds of
+# the workspace members are fast enough without them.
+[profile.dev]
+incremental = false
+
 [profile.release]
 lto = "thin"
 strip = true
