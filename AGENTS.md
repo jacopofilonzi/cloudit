@@ -131,6 +131,12 @@ and align this project's copies with it:
   is decoded with `cloudit-core` (bounded, hash verified) before its row exists; the object is
   stored first, the row second (an object without a row is an orphan for GC). Objects
   uploaded through presigned URLs get their row only when a commit verifies them.
+- **Chunk packs are a wire format only, never stored** (`cloudit_core::pack`, API level 2):
+  the server verifies every record of an uploaded pack before storing any, then stores
+  each chunk as its own object and row through `sync::chunks::store_verified`, the same
+  path as a single `PUT`; never add a second write path or store a pack as an object.
+  Clients use packs only when `/health` announced `api_level >= 2` and decode every
+  record against the hash they asked for.
 - **The scope lock guards rows against object deletion** (`sync::objects`): every
   transaction that inserts a `chunks` / `manifests` row (`usage::insert_charged`) or deletes
   objects of a scope (GC, orphan sweep, invalid adoptions) starts with
@@ -494,6 +500,10 @@ and align this project's copies with it:
   (`db::testing::TestDb`). SQLite allows one writer: keep write transactions short, hash
   passwords before `begin()`, and make the first statement of a writing transaction a write (a
   transaction that read first fails with `SQLITE_BUSY` instead of waiting).
+- One request must not run many write transactions concurrently on SQLite: a chunk pack
+  with 8 parallel `insert_charged` starved other writers past the 5 s busy timeout
+  (`database is locked`, 500). Parallelize the object I/O, keep the rows of one request
+  sequential (`routes/chunks.rs::upload_pack`).
 - SQLite can't add a foreign key to an existing table (`folders.head_snapshot_id` has none;
   only the commit / restore statements set it). New tables can carry composite foreign keys
   (`snapshots → manifests`, `snapshot_chunks → chunks`).

@@ -106,6 +106,7 @@ crates/core/src/
 │   │                 UpdateFolderRequest, Patch<T> (omitted / null / value)
 │   ├── sync.rs       ChunkSpec, ChunkCheckRequest/Response, MissingChunk, Transfer (+ TransferKind
 │   │                 proxy | presigned), ChunkDownloadRequest/Response, ChunkDownload,
+│   │                 ChunkPackUploadResponse, ChunkPackRequest,
 │   │                 MAX_CHUNKS_PER_REQUEST (10 000), MAX_STORED_CHUNK_BYTES (1 MiB + 1 + 64 KiB)
 │   ├── snapshots.rs  SnapshotKind, SnapshotInfo, CommitResponse, SnapshotList,
 │   │                 UpdateSnapshotRequest, RestoreSnapshotRequest
@@ -115,9 +116,13 @@ crates/core/src/
 │   │                 ChangeKind, FolderChangedEvent, ScopeChangedEvent,
 │   │                 MembershipChangedEvent, UsageChangedEvent, SyncHead, SyncHeads
 │   └── jobs.rs       JobName (ALL, as_str/parse), JobOutcome, JobRunInfo, JobInfo
-├── error.rs          HashParseError, PathError, ChunkerError, ChunkError, ManifestError (thiserror;
-│                     variants are stable kinds, `code()` gives a stable snake_case string)
+├── error.rs          HashParseError, PathError, ChunkerError, ChunkError, PackError,
+│                     ManifestError (thiserror; variants are stable kinds, `code()` gives a
+│                     stable snake_case string)
 ├── hash.rs           ChunkHash, ManifestHash: SHA-256 newtypes, strict lowercase-hex FromStr/Display/serde
+├── pack.rs           chunk packs (wire format only, never stored; "Chunk packs"): decode_pack,
+│                     PackWriter, record_header, PACK_CONTENT_TYPE, MAX_PACK_RECORDS (1000),
+│                     MAX_PACK_BYTES (16 MiB)
 ├── path.rs           validate_path: portable relative path rules (security-critical)
 ├── version.rs        Version (major.minor.patch; leading `v` and -/+ suffixes ignored), is_newer
 ├── chunk/
@@ -225,7 +230,10 @@ crates/server/src/
 │   ├── usage.rs      effective_quota (+ quota_with_default), owner_quota, used_by(_many), ensure_room (estimate),
 │   │                 insert_charged (scope lock, object check, row + scopes.stored_bytes in
 │   │                 one transaction, exact quota under an owner lock → Charged), recompute
-│   ├── chunks.rs     sizes / exists (batched IN lists), decode (blocking pool), adopt (verify an
+│   ├── chunks.rs     sizes / stored_sizes / exists (batched IN lists), decode / decode_many
+│   │                 (blocking pool), store_verified = put_verified + charge_verified (the
+│   │                 one proxy write path, single or packed: object, then insert_charged),
+│   │                 adopt (verify an
 │   │                 object without row: HEAD, bounded GET, decode, then insert_charged with
 │   │                 the HEAD metadata; invalid → deleted under the scope lock)
 │   ├── manifests.rs  decode (bounded, blocking pool), exists, store, stored_bytes, load
@@ -317,7 +325,8 @@ crates/server/src/
 │   ├── trash.rs      /trash, /trash/scopes/{id}, /trash/folders/{id}, /trash/empty
 │   ├── events.rs     /events (SSE stream, credential re-check at each keep-alive), /sync/heads
 │   ├── jobs.rs       /admin/jobs, /admin/jobs/{name}/run
-│   ├── chunks.rs     /folders/{id}/chunks/check, /download, /{hash} (proxy PUT / GET)
+│   ├── chunks.rs     /folders/{id}/chunks/check, /download, /{hash} (proxy PUT / GET),
+│   │                 /pack (upload), /pack/download (streamed)
 │   ├── snapshots.rs  /folders/{id}/snapshots (commit, history), /snapshots/{id} (get, patch),
 │   │                 /manifest, /restore, /resolve, /archive
 │   └── tests/        router tests (tower `oneshot`, real AppState; PostgreSQL with
@@ -331,7 +340,8 @@ crates/server/src/
 │                     archive, quota, presign (live S3 with TEST_S3_*), events (SSE
 │                     reader, recipients, revocation, limits, Redis fan-out), jobs
 │                     (scheduler, leases, cleanup), retention, gc (forced races with
-│                     hooks), trash_purge, update_check (fake release endpoint on 127.0.0.1)
+│                     hooks), trash_purge, update_check (fake release endpoint on 127.0.0.1),
+│                     packs (chunk pack upload / download, limits, quota, roles)
 ├── logging.rs        tracing subscriber (env filter; pretty or json)
 ├── shutdown.rs       Ctrl+C / SIGTERM future (OS-specific, like platform.rs)
 └── healthcheck.rs    HTTP/1.0 GET /health on 127.0.0.1:$PORT, std only (Docker HEALTHCHECK)
@@ -343,7 +353,7 @@ Probes at the root (not under the base path):
 
 - `GET /health` → `HealthResponse {status: "ok", version, api_level, min_client_version}`:
   liveness, never checks dependencies (constants only). `api_level` = `protocol::API_LEVEL`
-  (core, 1), `min_client_version` = the oldest app version the server accepts
+  (core, 2: level 2 added the chunk packs), `min_client_version` = the oldest app version the server accepts
   (`MIN_CLIENT_VERSION` in `routes/health.rs`, `0.1.0`); the app checks both ("Client engine",
   compatibility). Older servers sent neither: clients read them as level 1, no minimum
   (`#[serde(default)]`). `/api/v1/health` answers the same.
@@ -423,6 +433,8 @@ Bearer cld_…`); **admin** (session of an effective admin); **onboarding** (the
 | `PUT /folders/{id}/chunks/{hash}` | any; editor | body = stored chunk (≤ `MAX_STORED_CHUNK_BYTES`, else 413) → 204; 422 `chunk_invalid` unless it decodes to `hash`; 507 `quota_exceeded`; idempotent |
 | `POST /folders/{id}/chunks/download` | any; viewer | `ChunkDownloadRequest {hashes}` (≤ 10 000) → `ChunkDownloadResponse {chunks: [{hash, download: Transfer}], missing}` |
 | `GET /folders/{id}/chunks/{hash}` | any; viewer | the stored chunk bytes (`application/octet-stream`); 404 unless the scope has it |
+| `POST /folders/{id}/chunks/pack` | any; editor; API level 2 | body = chunk pack (`application/vnd.cloudit.chunk-pack`, ≤ 16 MiB else 413, ≤ 1000 records; "Chunk packs") → `ChunkPackUploadResponse {chunks, stored}` (records, newly stored); malformed pack → 400 `bad_request`; any record that doesn't decode to its hash → 422 `chunk_invalid` (`hashes`) and nothing stored; 507 `quota_exceeded` (estimate over the new chunks, then exact per chunk: chunks stored before a refused charge stay); idempotent |
+| `POST /folders/{id}/chunks/pack/download` | any; viewer; API level 2 | `ChunkPackRequest {hashes}` (≤ 1000, else 422) → a chunk pack (streamed) of the requested chunks the scope has, by hash, as many as fit 16 MiB; hashes without a record (unknown or past the limit) are fetched through `chunks/download` |
 | `POST /folders/{id}/snapshots?parent=<id\|none>&kind=normal\|conflict` | any; editor | body = stored manifest (≤ 64 MiB) → 201 `CommitResponse {unchanged: false, snapshot}`, or 200 `{unchanged: true, snapshot: head}`; 409 `conflict` (+ `head_snapshot_id`), 422 `manifest_invalid` (+ `detail`), `chunk_missing` / `chunk_invalid` (+ `hashes`), `validation_failed` (`parent` not a snapshot id or a snapshot of another folder, `kind` restore), 507 `quota_exceeded`; an unknown `parent` id (e.g. deleted by retention) → 409 `conflict` for `normal`, kept as a dangling `parent_id` for `conflict` |
 | `GET /folders/{id}/snapshots?cursor=&limit=&kind=&unresolved=` | any; viewer | `SnapshotList {snapshots, next_cursor}` (newest first; limit 1..=200, default 50) |
 | `GET /snapshots/{id}` | any; viewer | `SnapshotInfo` (with `author_name` and `device_name`, looked up in two batched queries per page) |
@@ -701,7 +713,10 @@ request and 409 for head conflicts), `payload_too_large` 413. The callback carri
   3. upload each missing chunk's `encode_chunk` bytes with the transfer: `proxy` = `PUT` to
      the server with the usual credentials; `presigned` = `PUT` to S3 **without** cloudit
      credentials (verified at commit). URLs are absolute when the server knows its public URL,
-     else paths (`/api/v1/…`) to resolve against the server URL;
+     else paths (`/api/v1/…`) to resolve against the server URL. With a server at API level
+     2, chunks under 256 KiB go instead in packs (`POST /folders/{id}/chunks/pack`, up to
+     8 MiB uncompressed and 1000 records each, through the server even when transfers are
+     presigned); larger ones keep their transfer;
   4. `POST /folders/{id}/snapshots?parent=<last synced head | none>` with the stored manifest:
      201 → the new head; 200 `unchanged` → the head already is this state;
      `chunk_missing` / `chunk_invalid` → upload the listed chunks again and retry;
@@ -713,6 +728,20 @@ request and 409 for head conflicts), `payload_too_large` 413. The callback carri
   6. download a snapshot: `GET /snapshots/{id}/manifest` (decode with `decode_manifest`;
      `ETag` for caching), `POST /folders/{id}/chunks/download` for the chunks not held
      locally, fetch each `Transfer`, `decode_chunk` with the expected hash, reassemble files.
+     Level 2: the small chunks first through `POST /folders/{id}/chunks/pack/download`
+     (same grouping), every record decoded against its requested hash; whatever a pack
+     left out goes the single way.
+- **Chunk packs** (`cloudit_core::pack`, API level 2) are a wire format only, never
+  stored: `[version 0x01]` then records `[32-byte raw SHA-256][u32 LE length][stored chunk
+  bytes]` to the end of the body; decoding refuses an empty body, other versions, truncated
+  records, lengths of 0 or over `MAX_STORED_CHUNK_BYTES`, more than 1000 records, bodies over
+  16 MiB and duplicate hashes. The server verifies every record before storing any, then
+  stores each chunk exactly like a single `PUT` (`sync::chunks::store_verified`: its own
+  object, its own row through `insert_charged`; objects 8 at a time, rows one at a time so
+  a pack is one database writer); a downloaded pack is read
+  from the objects (8 prefetched) and streamed, its records planned from the rows' stored
+  sizes and cut short (never split) if an object turns out larger; a read failure aborts
+  the body.
 - **Commit** (server): decode + validate the manifest (bounded, blocking pool); kind `normal`
   with `parent` = head and the same manifest hash → 200 unchanged; every referenced chunk must
   have a row, else its object (presigned upload) is verified with a bounded concurrency of 8
@@ -1019,10 +1048,12 @@ crates/client/src/
 │   ├── plan.rs       pure: compare (three-way), upload_manifest (ignored entries carried
 │   │                 over), plan_pull, SafeSet, unsafe_paths, needed_chunks
 │   ├── status.rs     SyncState, FolderStatus, state_of (precedence)
-│   ├── upload.rs     Uploader: chunks/check batches, 6 parallel uploads read back from files
+│   ├── pack.rs       which chunks travel in packs: group (< 256 KiB, ≤ 8 MiB / 1000 a pack)
+│   ├── upload.rs     Uploader: chunks/check batches, 6 parallel requests (packs or single
+│   │                 chunks) read back from files
 │   ├── push.rs       commit (normal or conflict; chunk_missing retries; own-commit 409)
-│   ├── pull.rs       apply_head: refuse unsafe plans, download to the chunk cache, stage +
-│   │                 apply, index, base
+│   ├── pull.rs       apply_head: refuse unsafe plans, download to the chunk cache (packs
+│   │                 first, then single chunks), stage + apply, index, base
 │   └── stage.rs      temp files, ChunkSources, stage, recheck, apply (atomic renames)
 ├── engine/
 │   ├── mod.rs        Engine, EngineConfig: open, login / logout, listings, activity, locks
@@ -1048,8 +1079,9 @@ retention, cancellation mid-upload / download / apply, unreadable files, bad nam
 switch), `auto.rs` (automatic sync settings and switch, `sync_with` without pulls: push
 allowed, remote changes and conflicts deferred untouched), `compat.rs` (older and newer
 servers played with `Server::set_health`, which replaces the `/health` body: sign-in
-refused, operations stopped, the follower's report). SQLite only (`make test-ha` runs
-the server crate).
+refused, operations stopped, the follower's report), `packs.rs` (many small files in one
+pack each way, counted with `Server::take_requests`; a level-1 server gets single
+transfers; cancellation mid-pack). SQLite only (`make test-ha` runs the server crate).
 
 ### Using the engine (desktop app)
 
@@ -1092,6 +1124,8 @@ together (`compat.rs`): the server's `/health` gives `api_level` and `min_client
 {app_version, min_client_version}` when this app (`APP_VERSION` = the client crate version,
 shared with the desktop app) is older than the minimum, else `ServerOutdated {server_version,
 api_level, required_api_level}` when the level is below `REQUIRED_API_LEVEL` (1), else `Ok`.
+The announced level is also kept on the session's `Api` (`set_api_level`): at level 2 or
+later the engine uses chunk packs, below it single transfers only.
 Checked by `begin_login` (an incompatible server is refused before the browser opens), before
 every operation that talks to the server (`checked_api`: the answer is cached in memory 10
 min when compatible, 1 min when not; `check_compatibility` forces a new one,
