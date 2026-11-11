@@ -78,7 +78,8 @@ eslint-plugin-svelte), `clippy.toml` (unwrap/expect allowed in tests only), `rus
 crates/core/src/
 ├── lib.rs            crate docs: shared sync engine, no I/O
 ├── protocol/         API types (ts-rs export under cfg(test)); conventions in mod.rs docs
-│   ├── mod.rs        HealthResponse, ReadyResponse (+ ReadyStatus, ReadyComponents,
+│   ├── mod.rs        API_LEVEL, HealthResponse (+ api_level, min_client_version,
+│   │                 defaulted when missing), ReadyResponse (+ ReadyStatus, ReadyComponents,
 │   │                 ComponentStatus), ErrorCode, ApiErrorBody {code, message, field?,
 │   │                 head_snapshot_id?, hashes?, detail?}
 │   ├── sensitive.rs  Sensitive: password/token string in API bodies, Debug prints `***`
@@ -298,7 +299,8 @@ crates/server/src/
 │   ├── extract.rs    ApiJson (rejections as bad_request / payload_too_large), body_bytes (raw
 │   │                 body with a route limit), optional_json (empty body = default), parse_id,
 │   │                 model → API conversions
-│   ├── health.rs     /health (liveness), /ready (database + storage checks, Redis reported)
+│   ├── health.rs     /health (liveness + API_LEVEL, MIN_CLIENT_VERSION), /ready (database +
+│   │                 storage checks, Redis reported)
 │   ├── setup.rs      /setup
 │   ├── auth.rs       /auth/* (config, register, login, logout, password-reset)
 │   ├── oauth.rs      /auth/oauth/{provider}/start and /callback; begin (shared flow start)
@@ -338,7 +340,12 @@ crates/server/src/
 
 Probes at the root (not under the base path):
 
-- `GET /health` → `HealthResponse {status: "ok", version}`: liveness, never checks dependencies.
+- `GET /health` → `HealthResponse {status: "ok", version, api_level, min_client_version}`:
+  liveness, never checks dependencies (constants only). `api_level` = `protocol::API_LEVEL`
+  (core, 1), `min_client_version` = the oldest app version the server accepts
+  (`MIN_CLIENT_VERSION` in `routes/health.rs`, `0.1.0`); the app checks both ("Client engine",
+  compatibility). Older servers sent neither: clients read them as level 1, no minimum
+  (`#[serde(default)]`). `/api/v1/health` answers the same.
 - `GET /ready` → `ReadyResponse {status: "ok" | "unavailable", version, components: {database,
   storage, redis}}`, each component `ok` / `unavailable` / `disabled`. 200 only if the database
   (`SELECT 1`) and storage (fs: root writable; s3: bucket listable) are `ok`, else 503 with the
@@ -351,7 +358,7 @@ Bearer cld_…`); **admin** (session of an effective admin); **onboarding** (the
 
 | Method and path | Auth | Body → answer |
 | --- | --- | --- |
-| `GET /health` | none | `HealthResponse` |
+| `GET /health` | none | `HealthResponse {status, version, api_level, min_client_version}` |
 | `GET /setup` | none | `SetupStatus {required}` |
 | `POST /setup` | none, rate limited | `SetupRequest {…, public_url?}` → 201 `UserProfile` + cookie (first admin, email verified) |
 | `GET /auth/config` | none | `AuthConfig {setup_required, registration_mode, password_requires_approval, providers: AuthProvider[] {id, kind, display_name, icon}}` (enabled, non-deleted, position order) |
@@ -974,6 +981,8 @@ crates/client/src/
 ├── lib.rs            crate docs: the safety rule, design, status model; re-exports
 ├── error.rs          Error (thiserror) + ErrorKind (stable snake_case kinds for the UI),
 │                     LinkRefusal, LoginFailure
+├── compat.rs         Compat (ok | app_outdated | server_outdated), decide (pure, tested),
+│                     REQUIRED_API_LEVEL, APP_VERSION, cache TTLs
 ├── secret.rs         Secret: token in memory, Debug prints `***`, no Display/Serialize
 ├── progress.rs       OpContext (progress callback + CancellationToken), Phase, Progress
 ├── platform/         the only OS-specific code: default data dir, os / device name, exec
@@ -1019,8 +1028,8 @@ crates/client/src/
 │   │                 (meta switch), refresh_names, local path rules
 │   └── ops.rs        status, sync / sync_with (SyncOptions), keep_local, keep_server,
 │                     decide_later; conflict flow
-└── events.rs         follow: SSE + `/sync/heads` (ETag, polled in both real-time modes)
-                      → RemoteEvent channel
+└── events.rs         follow: compatibility check, SSE + `/sync/heads` (ETag, polled in both
+                      real-time modes) → RemoteEvent channel
 ```
 
 Tests: unit tests next to the code; `crates/client/tests/` runs the **real server
@@ -1034,7 +1043,9 @@ server, decide later, conflicts decided elsewhere, first links over existing con
 retention, cancellation mid-upload / download / apply, unreadable files, bad names),
 `account.rs` (token file fallback across restarts, revoked device, link rules, account
 switch), `auto.rs` (automatic sync settings and switch, `sync_with` without pulls: push
-allowed, remote changes and conflicts deferred untouched). SQLite only (`make test-ha` runs
+allowed, remote changes and conflicts deferred untouched), `compat.rs` (older and newer
+servers played with `Server::set_health`, which replaces the `/health` body: sign-in
+refused, operations stopped, the follower's report). SQLite only (`make test-ha` runs
 the server crate).
 
 ### Using the engine (desktop app)
@@ -1065,9 +1076,26 @@ the server crate).
    as `None`), `notifications_enabled` / `set_notifications_enabled` (`meta` `notifications`,
    default on), `tray_notice_shown` / `set_tray_notice_shown` (`meta` `tray_notice_shown`).
 5. Live updates: `events::follow(&engine, cancel)` → `RemoteEvent::HeadChanged {folder}` →
-   `sync(folder)`; `FoldersChanged` → refresh lists; `SignedOut` → sign in again.
+   `sync(folder)`; `FoldersChanged` → refresh lists; `SignedOut` → sign in again;
+   `Compatibility {compat}` → show it (see "Compatibility with the server").
 6. Errors: map `Error::kind()` (stable names) through i18n; `ScanProblems` carries the
    per-item list (`ScanProblem {path, kind, detail}`). Public data types are `Serialize`.
+
+### Compatibility with the server
+
+The app and the server are released separately, so the engine checks that they work
+together (`compat.rs`): the server's `/health` gives `api_level` and `min_client_version`
+(older servers: level 1, no minimum). `compat::decide` answers `Compat::AppOutdated
+{app_version, min_client_version}` when this app (`APP_VERSION` = the client crate version,
+shared with the desktop app) is older than the minimum, else `ServerOutdated {server_version,
+api_level, required_api_level}` when the level is below `REQUIRED_API_LEVEL` (1), else `Ok`.
+Checked by `begin_login` (an incompatible server is refused before the browser opens), before
+every operation that talks to the server (`checked_api`: the answer is cached in memory 10
+min when compatible, 1 min when not; `check_compatibility` forces a new one,
+`compatibility` reads the cache) and by the follower before every (re)connect: a change is
+sent as `RemoteEvent::Compatibility`; while incompatible it holds no stream and asks again
+every 5 min. Incompatible → errors `app_outdated` / `server_outdated`
+(`Error::compat()` gives the versions).
 
 ### Safety rule and sync model
 
@@ -1254,7 +1282,9 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
   launch unminimizes, shows and focuses the first window and exits **before** `setup`, so the engine
   database, the token store and the server follower are opened by the first process only. No env var
   bypasses it. Verified on Windows with the built binary (two launches: one process, window restored).
-- `src-tauri/src`: `lib.rs` (builder, plugins single-instance / dialog / opener / notification /
+- `src-tauri/src`: `compat.rs` (the server's compatibility as the app knows it: from the
+  follower, every operation's result, `check_compat` and sign-in; a change emits `compat`, tells the
+  scheduler (`Input::Compatible`) and the tray, and becoming incompatible is notified once), `lib.rs` (builder, plugins single-instance / dialog / opener / notification /
   updater / autostart, window events, setup: data dir = Tauri `app_local_data_dir` or `CLOUDIT_DESKTOP_DATA_DIR`,
   logging, `Engine::open`, the tray, showing the window, the updater, the automatic sync scheduler),
   `commands/` (account, folders, linking, auto, misc, updates: one thin command per engine call;
@@ -1269,8 +1299,9 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
   close to the tray, `show_main`), `notifications.rs` (below), `i18n.rs` (the backend's own en / it texts:
   tray and notifications, `Lang` set by the UI through `set_ui_language`, English until then),
   `state.rs` (also the scheduler and tray handles, the scheduler's UI view, when each folder's last
-  operation ended, the UI language, the notification dedupe state), `events.rs`, `error.rs`
-  (`CommandError {kind: ErrorKind, message, details?}`: the UI translates `kind`), `logging.rs` (daily
+  operation ended, the UI language, the notification dedupe state, the server's `Compat`), `events.rs`, `error.rs`
+  (`CommandError {kind: ErrorKind, message, details?}`: the UI translates `kind`; `details` `compat`
+  carries the versions of `app_outdated` / `server_outdated`), `logging.rs` (daily
   rolling file in `<data>/logs`, 7 kept).
 - **Window and tray** (`window.rs`, `tray/`): the main window is created hidden (`"visible": false`)
   and shown in `setup`, except when the process was started by autostart (argument `--minimized`, set
@@ -1280,7 +1311,8 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
   start) closing quits as usual. "Quit" in the tray exits (`RunEvent::Exit` cancels running operations).
   The tray (Tauri's built-in, feature `tray-icon`): `tray/model.rs` is the pure menu (`build(TrayInput)`
   → `TrayModel`, tested): a disabled header ("N folders need attention", "Everything is in sync", "No
-  folders linked yet", "Not signed in", plus "Sync paused until HH:MM"), then up to 8 folders needing
+  folders linked yet", "Not signed in", "Sync stopped: the server needs cloudit X" / "Sync stopped: the
+  server is too old" (then no folder items), plus "Sync paused until HH:MM"), then up to 8 folders needing
   action as "<emoji> <name> — <action>" (from `last_state`, like the UI's `displayState`: `conflict` →
   Resolve = window + `navigate` to the conflict page; `server_conflict` → Resolve, `error` /
   `missing_local_path` / `remote_missing` → Show = window + `navigate` to the folder detail;
@@ -1307,7 +1339,9 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
   folder entering `conflict` or `server_conflict` (from any operation's status: an automatic run ending
   in `NeedsDecision`, the status refresh after `ConflictCreated`), once per entry into the state (states
   known at startup are not news); the first failure of an automatic retry streak (never the quiet
-  locked-files case); "sign in again" once when the server refuses the token (until the next sign-in).
+  locked-files case); "sign in again" once when the server refuses the token (until the next sign-in);
+  "Update cloudit" / "The server is too old" once when the server becomes incompatible (until it works
+  again).
   Never for a finished sync. Off with the device-wide switch (`meta` `notifications`, default on), and
   not shown while the main window is visible and focused. Dedupe rules: the pure `Alerts` (tested). In a
   build without installer Windows shows them under the PowerShell app id (the plugin's fallback for
@@ -1345,8 +1379,8 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
   ignored paths; errors / rescans count as changes), `processes.rs` the `sysinfo` process table with the
   OS-specific name matching in `processes_windows.rs` (image name, case-insensitive, `.exe` optional) and
   `processes_unix.rs` (exe file name, else first argument, else the 15-byte `comm`). A run happens only
-  while signed in, the device-wide switch is on and there is no global pause (`Planner::active`: the one
-  check point), the folder has `auto_sync` and isn't paused, and no run is going on for it.
+  while signed in, the device-wide switch is on, there is no global pause, no update installing and the
+  server is compatible (`Planner::active`: the one check point), the folder has `auto_sync` and isn't paused, and no run is going on for it.
   Triggers: app start / sign-in / folder turned automatic / watcher (re)started → at once; file changes →
   after `quiet_secs` without events (debounce; events during an operation on the folder or within 2 s of
   its end are the engine's own and dropped; ignored while this device's conflict decision is open);
@@ -1358,7 +1392,8 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
   run already going when the process starts finishes). Failures retry after 1, 2, 5, 15, then
   every 15 min (and on any trigger), logged at warn once per streak; locked (`unreadable`-only) files
   retry quietly after 1 min, or at the process exit; `unauthorized` / blocked / signed out stops
-  everything until the next sign-in; a run ending in `NeedsDecision` is not retried. Folders whose path
+  everything until the next sign-in, `app_outdated` / `server_outdated` until the server is compatible
+  again (`Planner::set_compatible`, no retries); a run ending in `NeedsDecision` is not retried. Folders whose path
   is missing get no watcher (status `missing_local_path`); watchers are retried every minute and on
   folder changes. A run that pushed or pulled and ends with `local_changes` / `remote_changes` runs again.
 - **Events** (Tauri): `folder-progress` (`Progress`), `folder-status`, `folder-op` (started / finished with
@@ -1366,8 +1401,8 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
   `auto-state` (`AutoFolderState[] {folder, process_running, deferred, failures}` of the folders synced
   automatically now), `app-settings` (`AppSettings`, after any change: UI, tray, end of a pause),
   `navigate` (`NavigateEvent {folder, page: detail | conflict}`, from the tray), `update-state`
-  (`UpdateState`, every change of the updater). `session` also returns
-  the server stream state, and `auto_states` the last `auto-state`, because the UI may load after the
+  (`UpdateState`, every change of the updater), `compat` (`Compat`, when it changes). `session` also
+  returns the server stream state and `compat`, and `auto_states` the last `auto-state`, because the UI may load after the
   events.
 - **Commands of the settings and automatic sync** (`commands/auto.rs`): `app_settings` /
   `set_app_settings(AppSettingsUpdate {auto_sync?, notifications?, autostart?})` → `AppSettings
@@ -1377,7 +1412,8 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
   `commands/misc.rs`. Updates (`commands/updates.rs`): `update_state`, `check_update`,
   `install_update`, `open_release_page`, `version_info` (`VersionInfo {app_version, server_version?
   (`GET /health`), latest_version? (the newer app release found, or this version after a check found
-  nothing)}`; the server is released separately, so its version is only shown).
+  nothing)}`; the server is released separately, so its version is only shown). `check_compat`
+  (`commands/account.rs`) asks the server again → `Compat`.
 - **Types**: client and desktop types derive ts-rs (client: cargo feature `ts`, enabled by the desktop
   crate's dev-dependency; `PathChange.change` is `PathChangeKind`) and `make types` exports them into
   `@cloudit/api-types` next to the server types.
@@ -1391,6 +1427,9 @@ Tauri 2 shell (`src-tauri`, crate `cloudit-desktop`) over `cloudit-client`, plus
   associated program (free input or a filtered picker of the running ones, clear); the app settings hold
   autostart, the device-wide switch, "Pause for 1 hour" / Resume and notifications, and About (this
   app's, the server's and the latest app version, "Check for updates"). The app shell shows
+  `CompatBanner` while the server is incompatible ("This server needs a newer version of cloudit (X or
+  later)" with the updater's Update / Download when a version is out, else "Check for updates"; or "The
+  server runs X, too old for this app: ask its administrator to update it" with "Check again"),
   `UpdateBanner` (an available version with its notes and Update, or Download for a .deb, a note for
   dev builds; then waiting / download progress / installing / failed with retry) and "Automatic sync
   is paused until HH:MM" with Resume while paused. The root layout sends the language to

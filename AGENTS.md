@@ -155,6 +155,18 @@ and align this project's copies with it:
 - Snapshots are immutable; a restore creates a new snapshot. Deleting data is soft (trash), except
   the retention, GC and trash purge jobs (GC with a grace period, the purge after
   `trash_retention_days` or an explicit permanent delete).
+- **`/api/v1` changes are additive only** (the app and the server are released separately,
+  so installed apps talk to older and newer servers): new endpoints, new optional fields,
+  new error codes (an app that doesn't know a code falls back on the HTTP status); never
+  remove a field, endpoint or code or change its meaning, and a new value of an enum that
+  older apps read in responses (snapshot kinds, roles…) counts as a change. A new
+  request field is optional; a new response field that older servers don't send is
+  `#[serde(default)]` where the app reads it. When the app starts relying on something new,
+  bump `cloudit_core::protocol::API_LEVEL` (server) and `cloudit_client::compat::REQUIRED_API_LEVEL`
+  (app): an older server then gets the "server too old" message instead of failing
+  oddly. Removing or changing something requires raising the server's
+  `MIN_CLIENT_VERSION` (`routes/health.rs`): a breaking server release, my decision.
+  `/health` stays cheap and dependency-free (the container probes call it).
 - Frontend API types are generated from Rust (ts-rs) into `packages/api-types/src/generated/`: run
   `make types` and commit the result; never hand-write API models in TS. `make check` fails if they
   are stale.
@@ -415,6 +427,10 @@ and align this project's copies with it:
    conversion (`routes/extract.rs`) and routes (create **and** update).
 3. Frontend: every view that shows or edits the model.
 4. Tests for the routes (valid value, invalid value, field missing on old rows); update `STRUCTURE.md`.
+5. Compatibility (invariant "`/api/v1` changes are additive only"): the field is optional in
+   requests, and the app copes with servers that don't send it (`#[serde(default)]`, or
+   `Option`). If the app needs it to work, bump `API_LEVEL` and `REQUIRED_API_LEVEL`
+   together. Never remove or repurpose a field instead.
 
 ## Adding an API error code
 
