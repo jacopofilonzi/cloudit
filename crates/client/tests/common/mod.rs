@@ -6,8 +6,12 @@
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use axum::extract::{Request, State};
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
 use cloudit_client::api::RetryPolicy;
 use cloudit_client::{
     Engine, EngineConfig, LinkedFolder, MemoryBackend, OpContext, SecretBackend, TokenVault,
@@ -28,8 +32,27 @@ pub struct Server {
     pub state: AppState,
     pub http: reqwest::Client,
     cookie: String,
+    health: HealthOverride,
     task: tokio::task::JoinHandle<()>,
     _dir: TempDir,
+}
+
+/// A replacement body for the health endpoints (see [`Server::set_health`]).
+type HealthOverride = Arc<Mutex<Option<Value>>>;
+
+async fn override_health(
+    State(health): State<HealthOverride>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let path = request.uri().path();
+    if path == "/health" || path == "/api/v1/health" {
+        let body = health.lock().unwrap().clone();
+        if let Some(body) = body {
+            return axum::Json(body).into_response();
+        }
+    }
+    next.run(request).await
 }
 
 impl Drop for Server {
@@ -67,7 +90,11 @@ impl Server {
             Config::from_lookup(|key| vars.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone()))
                 .unwrap();
         let state = AppState::init(config).await.unwrap();
-        let app = router(state.clone());
+        let health = HealthOverride::default();
+        let app = router(state.clone()).layer(axum::middleware::from_fn_with_state(
+            health.clone(),
+            override_health,
+        ));
         let task = tokio::spawn(async move {
             let _ = axum::serve(
                 listener,
@@ -108,9 +135,16 @@ impl Server {
             state,
             http,
             cookie,
+            health,
             task,
             _dir: dir,
         }
+    }
+
+    /// Makes `/health` and `/api/v1/health` answer `body` (`None`: the real answer),
+    /// e.g. to play an older or newer server.
+    pub fn set_health(&self, body: Option<Value>) {
+        *self.health.lock().unwrap() = body;
     }
 
     /// A JSON call with the admin's web session; the status and the body.

@@ -203,7 +203,7 @@ impl Engine {
     pub async fn status(&self, id: i64, ctx: &OpContext) -> Result<FolderStatus> {
         let _guard = self.lock(id).await?;
         let link = self.folder(id)?;
-        let api = self.api()?;
+        let api = self.checked_api(ctx).await?;
         let f = self.folder_ctx(&api, &link, ctx)?;
         let status = match self.examine(&f).await? {
             Exam::Ready(examined) => examined.status,
@@ -248,7 +248,7 @@ impl Engine {
         let _guard = self.lock(id).await?;
         let link = self.folder(id)?;
         let result = async {
-            let api = self.api()?;
+            let api = self.checked_api(ctx).await?;
             let conflict = self.conflict_to_decide(&link, conflict_id)?;
             let info = api.folder(&link.folder_id, ctx).await?;
             let restored = api
@@ -280,7 +280,7 @@ impl Engine {
         let _guard = self.lock(id).await?;
         let link = self.folder(id)?;
         let result = async {
-            let api = self.api()?;
+            let api = self.checked_api(ctx).await?;
             let conflict = self.conflict_to_decide(&link, conflict_id)?;
             let f = self.folder_ctx(&api, &link, ctx)?;
             // The pending conflict holds the local state: keep it for the safety check.
@@ -343,7 +343,7 @@ impl Engine {
         ctx: &OpContext,
         retry: bool,
     ) -> Result<SyncReport> {
-        let api = self.api()?;
+        let api = self.checked_api(ctx).await?;
         let f = self.folder_ctx(&api, link, ctx)?;
         let examined = match self.examine(&f).await? {
             Exam::Ready(examined) => examined,

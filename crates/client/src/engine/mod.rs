@@ -11,7 +11,10 @@
 //! - sync (`ops.rs`): [`Engine::status`], [`Engine::sync`] / [`Engine::sync_with`], and the
 //!   conflict decisions [`Engine::keep_local`], [`Engine::keep_server`],
 //!   [`Engine::decide_later`];
-//! - [`Engine::activity`]; events: [`crate::events::follow`].
+//! - [`Engine::activity`]; events: [`crate::events::follow`];
+//! - compatibility ([`crate::compat`]): [`Engine::check_compatibility`] and the cached
+//!   [`Engine::compatibility`]; every call to the server goes through `checked_api`,
+//!   which refuses an incompatible server.
 //!
 //! `Engine` is cheap to clone (an `Arc`) and `Send + Sync`. Operations on one linked
 //! folder are serialized by a per-folder lock (a second call waits); different folders
@@ -26,6 +29,7 @@ pub use ops::{SyncOptions, SyncOutcome, SyncReport};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::Instant;
 
 use cloudit_core::protocol::{
     CreateFolderRequest, DeviceTokenRequest, FolderInfo, ScopeInfo, Sensitive,
@@ -34,6 +38,7 @@ use cloudit_core::protocol::{
 use crate::api::{self, Api, RetryPolicy};
 use crate::auth::login::{DEFAULT_LOGIN_TIMEOUT, PendingLogin};
 use crate::auth::tokens::TokenVault;
+use crate::compat::{self, Compat};
 use crate::error::{Error, Result};
 use crate::platform;
 use crate::progress::OpContext;
@@ -85,7 +90,26 @@ pub(crate) struct Inner {
     retry: RetryPolicy,
     login_timeout: std::time::Duration,
     session: RwLock<Option<Session>>,
+    /// The last compatibility answer of the signed-in server (in memory only; cleared
+    /// when the session changes).
+    compat: Mutex<Option<CompatCache>>,
     locks: Mutex<HashMap<i64, Arc<tokio::sync::Mutex<()>>>>,
+}
+
+struct CompatCache {
+    at: Instant,
+    compat: Compat,
+}
+
+impl CompatCache {
+    fn fresh(&self) -> bool {
+        let ttl = if self.compat.is_ok() {
+            compat::OK_TTL
+        } else {
+            compat::INCOMPATIBLE_TTL
+        };
+        self.at.elapsed() < ttl
+    }
 }
 
 /// The sync engine (see the module docs).
@@ -129,6 +153,7 @@ impl Engine {
                 retry: config.retry,
                 login_timeout: config.login_timeout,
                 session: RwLock::new(None),
+                compat: Mutex::new(None),
                 locks: Mutex::new(HashMap::new()),
             }),
         };
@@ -167,7 +192,63 @@ impl Engine {
             .write()
             .map_err(|_| Error::State("session lock poisoned".to_owned()))? =
             Some(Session { account, api });
+        self.forget_compat();
         Ok(())
+    }
+
+    fn forget_compat(&self) {
+        if let Ok(mut cache) = self.inner.compat.lock() {
+            *cache = None;
+        }
+    }
+
+    /// The API client of the signed-in account, once the server is known to be
+    /// compatible (see [`crate::compat`]): what every operation on the server uses.
+    pub(crate) async fn checked_api(&self, ctx: &OpContext) -> Result<Api> {
+        let cached = self
+            .inner
+            .compat
+            .lock()
+            .map_err(|_| Error::State("compat lock poisoned".to_owned()))?
+            .as_ref()
+            .filter(|c| c.fresh())
+            .map(|c| c.compat.clone());
+        let compat = match cached {
+            Some(compat) => compat,
+            None => self.check_compatibility(ctx).await?,
+        };
+        compat.into_result()?;
+        self.api()
+    }
+
+    /// Asks the signed-in server's `/health` whether it works with this app, and
+    /// remembers the answer for the next operations.
+    pub async fn check_compatibility(&self, ctx: &OpContext) -> Result<Compat> {
+        let health = self.api()?.health(ctx).await?;
+        let compat = compat::decide(&health, compat::APP_VERSION, compat::REQUIRED_API_LEVEL);
+        if !compat.is_ok() {
+            tracing::warn!(?compat, "the server and this app are not compatible");
+        }
+        *self
+            .inner
+            .compat
+            .lock()
+            .map_err(|_| Error::State("compat lock poisoned".to_owned()))? = Some(CompatCache {
+            at: Instant::now(),
+            compat: compat.clone(),
+        });
+        Ok(compat)
+    }
+
+    /// The last compatibility answer (no request; `None`: not checked yet).
+    #[must_use]
+    pub fn compatibility(&self) -> Option<Compat> {
+        self.inner
+            .compat
+            .lock()
+            .ok()?
+            .as_ref()
+            .map(|c| c.compat.clone())
     }
 
     /// The API client of the signed-in account.
@@ -192,8 +273,9 @@ impl Engine {
         self.inner.session.read().is_ok_and(|s| s.is_some())
     }
 
-    /// Starts a browser sign-in: checks the server answers, binds the loopback
-    /// listener. Open [`PendingLogin::browser_url`] in the browser, then call
+    /// Starts a browser sign-in: checks the server answers and works with this app
+    /// (`app_outdated` / `server_outdated` otherwise: see [`crate::compat`]), binds the
+    /// loopback listener. Open [`PendingLogin::browser_url`] in the browser, then call
     /// [`Engine::finish_login`].
     pub async fn begin_login(
         &self,
@@ -202,7 +284,7 @@ impl Engine {
         ctx: &OpContext,
     ) -> Result<PendingLogin> {
         let base = api::parse_server_url(server_url)?;
-        Api::new(
+        let health = Api::new(
             self.inner.http.clone(),
             base.clone(),
             None,
@@ -210,6 +292,7 @@ impl Engine {
         )
         .health(ctx)
         .await?;
+        compat::decide(&health, compat::APP_VERSION, compat::REQUIRED_API_LEVEL).into_result()?;
         let name = device_name
             .map(str::trim)
             .filter(|n| !n.is_empty())
@@ -308,6 +391,7 @@ impl Engine {
             .session
             .write()
             .map_err(|_| Error::State("session lock poisoned".to_owned()))? = None;
+        self.forget_compat();
         self.log(&NewActivity {
             action: "logout",
             outcome: "ok",
@@ -318,7 +402,7 @@ impl Engine {
 
     /// Refreshes the cached profile (name, email) from the server.
     pub async fn refresh_profile(&self, ctx: &OpContext) -> Result<Account> {
-        let me = self.api()?.me(ctx).await?;
+        let me = self.checked_api(ctx).await?.me(ctx).await?;
         self.inner.db.update_profile(&me.email, &me.display_name)?;
         let account = self.inner.db.account()?.ok_or(Error::NotSignedIn)?;
         if let Ok(mut session) = self.inner.session.write()
@@ -336,17 +420,17 @@ impl Engine {
 
     /// The scopes the account can see.
     pub async fn scopes(&self, ctx: &OpContext) -> Result<Vec<ScopeInfo>> {
-        self.api()?.scopes(ctx).await
+        self.checked_api(ctx).await?.scopes(ctx).await
     }
 
     /// The folders of a scope.
     pub async fn server_folders(&self, scope_id: &str, ctx: &OpContext) -> Result<Vec<FolderInfo>> {
-        self.api()?.folders(scope_id, ctx).await
+        self.checked_api(ctx).await?.folders(scope_id, ctx).await
     }
 
     /// Creates a scope (owned by the account).
     pub async fn create_scope(&self, name: &str, ctx: &OpContext) -> Result<ScopeInfo> {
-        self.api()?.create_scope(name, ctx).await
+        self.checked_api(ctx).await?.create_scope(name, ctx).await
     }
 
     /// Creates a server folder in a scope (editor or more).
@@ -357,7 +441,8 @@ impl Engine {
         emoji: Option<&str>,
         ctx: &OpContext,
     ) -> Result<FolderInfo> {
-        self.api()?
+        self.checked_api(ctx)
+            .await?
             .create_folder(
                 scope_id,
                 &CreateFolderRequest {

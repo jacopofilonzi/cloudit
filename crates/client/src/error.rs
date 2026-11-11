@@ -6,6 +6,7 @@ use std::fmt;
 use cloudit_core::protocol::{ApiErrorBody, ErrorCode};
 use serde::Serialize;
 
+use crate::compat::Compat;
 use crate::scan::ScanProblem;
 
 /// Result alias of the crate.
@@ -63,6 +64,10 @@ pub enum ErrorKind {
     State,
     /// An argument is invalid (e.g. a malformed server URL or ignore pattern).
     InvalidInput,
+    /// The server needs a newer version of this app (see [`crate::compat`]).
+    AppOutdated,
+    /// The server is too old for this app: its administrator must update it.
+    ServerOutdated,
 }
 
 impl ErrorKind {
@@ -93,6 +98,8 @@ impl ErrorKind {
             Self::TokenStore => "token_store",
             Self::State => "state",
             Self::InvalidInput => "invalid_input",
+            Self::AppOutdated => "app_outdated",
+            Self::ServerOutdated => "server_outdated",
         }
     }
 }
@@ -179,6 +186,19 @@ pub enum Error {
     State(String),
     #[error("invalid input: {0}")]
     InvalidInput(String),
+    #[error("the server needs app version {min_client_version} or later (this is {app_version})")]
+    AppOutdated {
+        app_version: String,
+        min_client_version: String,
+    },
+    #[error(
+        "the server {server_version} has API level {api_level}, this app needs {required_api_level}"
+    )]
+    ServerOutdated {
+        server_version: String,
+        api_level: u32,
+        required_api_level: u32,
+    },
 }
 
 impl Error {
@@ -217,6 +237,8 @@ impl Error {
             Self::TokenStore(_) => ErrorKind::TokenStore,
             Self::State(_) => ErrorKind::State,
             Self::InvalidInput(_) => ErrorKind::InvalidInput,
+            Self::AppOutdated { .. } => ErrorKind::AppOutdated,
+            Self::ServerOutdated { .. } => ErrorKind::ServerOutdated,
         }
     }
 
@@ -236,6 +258,30 @@ impl Error {
     pub fn api_body(&self) -> Option<&ApiErrorBody> {
         match self {
             Self::Api { body, .. } => Some(body),
+            _ => None,
+        }
+    }
+
+    /// The compatibility answer behind an `app_outdated` / `server_outdated` error.
+    #[must_use]
+    pub fn compat(&self) -> Option<Compat> {
+        match self {
+            Self::AppOutdated {
+                app_version,
+                min_client_version,
+            } => Some(Compat::AppOutdated {
+                app_version: app_version.clone(),
+                min_client_version: min_client_version.clone(),
+            }),
+            Self::ServerOutdated {
+                server_version,
+                api_level,
+                required_api_level,
+            } => Some(Compat::ServerOutdated {
+                server_version: server_version.clone(),
+                api_level: *api_level,
+                required_api_level: *required_api_level,
+            }),
             _ => None,
         }
     }

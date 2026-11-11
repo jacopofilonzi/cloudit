@@ -110,7 +110,7 @@ impl Engine {
                 reason: LinkRefusal::FolderAlreadyLinked,
             });
         }
-        let api = self.api()?;
+        let api = self.checked_api(ctx).await?;
         let info = api.folder(folder_id, ctx).await?;
         let scope = api.scope(&info.scope_id, ctx).await?;
         let id = self.db().insert_folder(&NewFolder {
@@ -273,7 +273,7 @@ impl Engine {
 
     /// Refreshes the cached scope and folder names (and emoji) from the server.
     pub async fn refresh_names(&self, ctx: &OpContext) -> Result<Vec<LinkedFolder>> {
-        let api = self.api()?;
+        let api = self.checked_api(ctx).await?;
         for link in self.db().folders()? {
             match api.folder(&link.folder_id, ctx).await {
                 Ok(info) => {

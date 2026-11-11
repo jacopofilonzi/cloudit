@@ -40,6 +40,8 @@
 //! - [`sync`]: three-way comparison, status, push, safe pull.
 //! - [`engine`]: the façade and the orchestration (locks, conflict flow, activity).
 //! - [`events`]: following server events (SSE + heads polling).
+//! - [`compat`]: whether this app and the server work together (API level, minimum app
+//!   version from `/health`); checked at sign-in, before operations and on reconnects.
 //! - [`progress`]: progress reports and cancellation of every long operation.
 //! - [`platform`]: everything OS-specific.
 //!
@@ -54,6 +56,7 @@
 
 pub mod api;
 pub mod auth;
+pub mod compat;
 pub mod engine;
 mod error;
 pub mod events;
@@ -66,6 +69,7 @@ pub mod sync;
 
 pub use auth::login::PendingLogin;
 pub use auth::tokens::{KeyringBackend, MemoryBackend, SecretBackend, TokenVault};
+pub use compat::Compat;
 pub use engine::{AutoSyncSettings, Engine, EngineConfig, SyncOptions, SyncOutcome, SyncReport};
 pub use error::{Error, ErrorKind, LinkRefusal, LoginFailure, Result};
 pub use progress::{CancellationToken, OpContext, Phase, Progress};

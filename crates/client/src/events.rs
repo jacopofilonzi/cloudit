@@ -12,6 +12,11 @@
 //! with exponential backoff (1 s to 60 s). A refused token (`unauthorized`, blocked
 //! account) ends the follower with [`RemoteEvent::SignedOut`].
 //!
+//! Before every (re)connect the follower asks `/health` whether the server works with
+//! this app ([`crate::compat`]); a change is reported as [`RemoteEvent::Compatibility`].
+//! An incompatible server gets no stream: the follower waits [`COMPAT_RECHECK`] and asks
+//! again (no reconnect loop).
+//!
 //! Head changes are reported only for linked folders; the UI typically answers with
 //! [`crate::Engine::status`] or [`crate::Engine::sync`].
 
@@ -24,6 +29,7 @@ use tokio::sync::mpsc;
 
 use crate::Engine;
 use crate::api::Api;
+use crate::compat::Compat;
 use crate::error::{Error, ErrorKind, Result};
 use crate::progress::{CancellationToken, OpContext};
 
@@ -33,6 +39,8 @@ pub const POLL_INTERVAL: Duration = Duration::from_secs(300);
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
 /// Largest SSE line kept (longer ones are dropped).
 const MAX_LINE: usize = 1024 * 1024;
+/// How often an incompatible server is checked again (it may get updated).
+pub const COMPAT_RECHECK: Duration = Duration::from_secs(300);
 
 /// What the follower reports.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -67,6 +75,10 @@ pub enum RemoteEvent {
     /// The token was refused (expired, revoked, account blocked): sign in again. The
     /// follower stops.
     SignedOut { error_kind: ErrorKind },
+    /// The server's compatibility with this app changed (the first report only when it
+    /// is incompatible). While incompatible the follower holds no stream and checks
+    /// again every [`COMPAT_RECHECK`].
+    Compatibility { compat: Compat },
 }
 
 /// Known state of a server folder: head and unresolved conflicts (`None` = unknown).
@@ -83,6 +95,7 @@ pub fn follow(engine: &Engine, cancel: CancellationToken) -> mpsc::Receiver<Remo
             known: HashMap::new(),
             etag: None,
             ctx: OpContext::new().with_cancel(cancel.clone()),
+            compat: Compat::Ok,
         };
         follower.run(&cancel).await;
     });
@@ -95,6 +108,8 @@ struct Follower {
     known: Known,
     etag: Option<String>,
     ctx: OpContext,
+    /// The last compatibility answer reported (initially assumed fine).
+    compat: Compat,
 }
 
 impl Follower {
@@ -116,7 +131,29 @@ impl Follower {
                     return;
                 }
             };
-            let result = self.stream(&api, &mut backoff).await;
+            let result = match self.engine.check_compatibility(&self.ctx).await {
+                Ok(compat) => {
+                    let ok = compat.is_ok();
+                    if compat != self.compat {
+                        self.compat = compat.clone();
+                        self.send(RemoteEvent::Compatibility { compat }).await;
+                    }
+                    if ok {
+                        self.stream(&api, &mut backoff).await
+                    } else {
+                        if cancel
+                            .run_until_cancelled(tokio::time::sleep(COMPAT_RECHECK))
+                            .await
+                            .is_none()
+                        {
+                            return;
+                        }
+                        backoff = Duration::from_secs(1);
+                        continue;
+                    }
+                }
+                Err(e) => Err(e),
+            };
             if cancel.is_cancelled() {
                 return;
             }
