@@ -13,6 +13,7 @@ mod jobs;
 mod me;
 mod oauth;
 mod onboarding;
+mod packs;
 mod presign;
 mod providers;
 mod quota;

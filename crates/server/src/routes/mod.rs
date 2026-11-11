@@ -144,6 +144,15 @@ pub fn router(state: AppState) -> Router {
         .route("/folders/{id}/chunks/check", post(chunks::check))
         .route("/folders/{id}/chunks/download", post(chunks::download_urls))
         .route(
+            "/folders/{id}/chunks/pack",
+            post(chunks::upload_pack)
+                .layer(DefaultBodyLimit::max(cloudit_core::pack::MAX_PACK_BYTES)),
+        )
+        .route(
+            "/folders/{id}/chunks/pack/download",
+            post(chunks::download_pack),
+        )
+        .route(
             "/folders/{id}/chunks/{hash}",
             get(chunks::download)
                 .put(chunks::upload)

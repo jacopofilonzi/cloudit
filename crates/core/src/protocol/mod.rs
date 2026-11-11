@@ -68,7 +68,10 @@ use crate::hash::ChunkHash;
 /// when the server adds something an app may come to rely on; the app then raises its
 /// own required level (`cloudit_client::compat::REQUIRED_API_LEVEL`) and tells the user
 /// when a server is older. Servers from before the field existed are level 1.
-pub const API_LEVEL: u32 = 1;
+///
+/// Levels: 1 = the API up to 0.x with `/health` compatibility fields; 2 = chunk packs
+/// (`POST /folders/{id}/chunks/pack` and `/chunks/pack/download`, see `pack`).
+pub const API_LEVEL: u32 = 2;
 
 /// [`HealthResponse::api_level`] of servers that don't send it (before it existed).
 const LEGACY_API_LEVEL: u32 = 1;

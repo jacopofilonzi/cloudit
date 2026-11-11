@@ -270,6 +270,46 @@ async fn gc_deleting_the_object_of_a_paused_upload() {
 }
 
 #[tokio::test]
+async fn gc_deleting_the_object_of_a_paused_pack_upload() {
+    let app = TestApp::new().await;
+    let t = team(&app).await;
+    let data = pseudo_random(12, 50_000);
+    let hash = ChunkHash::of(&data);
+    let mut writer = cloudit_core::pack::PackWriter::new();
+    writer.push(&hash, &encode_chunk(&data).unwrap()).unwrap();
+    let pack = writer.finish();
+    let pack_request = || {
+        app.raw_request(
+            "POST",
+            &format!("/api/v1/folders/{}/chunks/pack", t.folder),
+            &t.editor,
+            cloudit_core::pack::PACK_CONTENT_TYPE,
+            pack.clone(),
+        )
+    };
+    app.send(pack_request()).await.assert(StatusCode::OK);
+    let gc_pause = hooks::arm(Point::GcRowsDeleted, &t.scope);
+    let gc = spawn_job(&app, JobName::Gc, Duration::ZERO);
+    gc_pause.reached().await;
+    // The pack goes through the same write path as a single upload: paused with its
+    // object stored and no row, GC deletes the object, the upload stores it again.
+    let upload_pause = hooks::arm(Point::UploadStored, &t.scope);
+    let upload = spawn_send(&app, pack_request());
+    upload_pause.reached().await;
+    gc_pause.release();
+    let attempt = gc.await.unwrap();
+    assert_eq!(succeeded(&attempt).get("objects_deleted"), 1);
+    assert!(!has_object(&app, &t.scope, &hash).await);
+    upload_pause.release();
+    let (status, body) = upload.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!({ "chunks": 1, "stored": 1 }));
+    assert!(has_row(&app, &t.scope, &hash).await);
+    assert!(has_object(&app, &t.scope, &hash).await);
+    assert_consistent(&app, &t.scope).await;
+}
+
+#[tokio::test]
 async fn sweep_deleting_the_object_of_a_paused_upload() {
     let app = TestApp::new().await;
     let t = team(&app).await;

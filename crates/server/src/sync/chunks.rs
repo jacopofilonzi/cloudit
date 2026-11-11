@@ -1,5 +1,6 @@
 //! The `chunks` table and chunk objects: lookups, verification with `cloudit-core`,
-//! adoption of objects uploaded through presigned URLs.
+//! storing verified uploads (single or packed: the same path), adoption of objects
+//! uploaded through presigned URLs.
 
 use std::collections::HashMap;
 
@@ -50,6 +51,31 @@ pub async fn sizes(
     Ok(found)
 }
 
+/// The stored sizes of those of `hashes` the scope has rows for.
+pub async fn stored_sizes(
+    db: &impl ConnectionTrait,
+    scope: Uuid,
+    hashes: &[ChunkHash],
+) -> anyhow::Result<HashMap<ChunkHash, u64>> {
+    let mut found = HashMap::with_capacity(hashes.len());
+    for batch in hashes.chunks(IN_BATCH) {
+        let rows = chunks::Entity::find()
+            .filter(chunks::Column::ScopeId.eq(scope))
+            .filter(chunks::Column::Hash.is_in(batch.iter().map(ToString::to_string)))
+            .all(db)
+            .await
+            .context("looking up chunks")?;
+        for row in rows {
+            let hash: ChunkHash = row
+                .hash
+                .parse()
+                .with_context(|| format!("stored chunk hash {:?}", row.hash))?;
+            found.insert(hash, u64::try_from(row.stored_size).unwrap_or(u64::MAX));
+        }
+    }
+    Ok(found)
+}
+
 /// Whether the scope has a row for `hash`.
 pub async fn exists(
     db: &impl ConnectionTrait,
@@ -71,6 +97,77 @@ pub async fn decode(stored: Bytes, hash: ChunkHash) -> anyhow::Result<Result<u32
     })
     .await
     .context("chunk decoding task")
+}
+
+/// Decodes many stored chunks in one blocking task (a pack): the uncompressed size or
+/// the error of each, in order.
+pub async fn decode_many(
+    stored: Vec<(ChunkHash, Bytes)>,
+) -> anyhow::Result<Vec<Result<u32, ChunkError>>> {
+    tokio::task::spawn_blocking(move || {
+        stored
+            .iter()
+            .map(|(hash, bytes)| {
+                decode_chunk(bytes, hash).map(|data| u32::try_from(data.len()).unwrap_or(u32::MAX))
+            })
+            .collect()
+    })
+    .await
+    .context("chunk decoding task")
+}
+
+/// Stores an uploaded chunk that was verified (`decode`) to be `hash` with `size`
+/// uncompressed bytes: the object first, then its row, charged to the scope owner
+/// (`usage::insert_charged`: scope lock, object re-check, exact quota). Idempotent.
+/// The one write path of proxy uploads: a single upload calls it, a pack runs its two
+/// halves ([`put_verified`] for every chunk, concurrently, then [`charge_verified`] for
+/// each, one at a time so a pack holds at most one database writer).
+pub async fn store_verified(
+    state: &AppState,
+    scope: &scopes::Model,
+    quota: Option<u64>,
+    hash: &ChunkHash,
+    size: u32,
+    stored: &Bytes,
+) -> Result<(), ApiError> {
+    put_verified(state, scope.id, hash, stored).await?;
+    charge_verified(state, scope, quota, hash, size, stored).await
+}
+
+/// First half of [`store_verified`]: the object.
+pub async fn put_verified(
+    state: &AppState,
+    scope: Uuid,
+    hash: &ChunkHash,
+    stored: &Bytes,
+) -> Result<(), ApiError> {
+    state
+        .blobs
+        .put(&keys::chunk(scope, hash), stored.clone())
+        .await?;
+    hooks::reached(Point::UploadStored, &scope.to_string()).await;
+    Ok(())
+}
+
+/// Second half of [`store_verified`]: the row, charged under the scope lock (the object
+/// is checked again and stored again if a collector removed it meanwhile).
+pub async fn charge_verified(
+    state: &AppState,
+    scope: &scopes::Model,
+    quota: Option<u64>,
+    hash: &ChunkHash,
+    size: u32,
+    stored: &Bytes,
+) -> Result<(), ApiError> {
+    usage::insert_charged(
+        state,
+        scope,
+        NewObject::Chunk { hash, size },
+        Stored::Bytes(stored),
+        quota,
+    )
+    .await?;
+    Ok(())
 }
 
 /// Outcome of [`adopt`].

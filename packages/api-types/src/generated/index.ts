@@ -23,6 +23,8 @@ export type { ChunkDownload } from './ChunkDownload';
 export type { ChunkDownloadRequest } from './ChunkDownloadRequest';
 export type { ChunkDownloadResponse } from './ChunkDownloadResponse';
 export type { ChunkHash } from './ChunkHash';
+export type { ChunkPackRequest } from './ChunkPackRequest';
+export type { ChunkPackUploadResponse } from './ChunkPackUploadResponse';
 export type { ChunkRef } from './ChunkRef';
 export type { ChunkSpec } from './ChunkSpec';
 export type { CodeChallengeMethod } from './CodeChallengeMethod';
